@@ -10,6 +10,9 @@ format; read-only adapters cover existing tools.
 
 > Status: pre-release. Nothing to install yet; v0.1 is in design.
 
+The record format is specified in [docs/spec.md](docs/spec.md), with a JSON
+Schema in [schema/v1/](schema/v1/) and examples in [examples/v1/](examples/v1/).
+
 ## Planned for v0.1
 
 - v1 record spec (`run`, `job`, `inbox_item`) with JSON Schema and a validator

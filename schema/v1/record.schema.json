@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nurockplayer/tachiko-fleetglint/schema/v1/record.schema.json",
+  "title": "Fleetglint record, format version 1",
+  "description": "One NDJSON line. See docs/spec.md; the spec wins where this schema cannot express a rule (ordering, liveness, redaction).",
+  "type": "object",
+  "required": ["v", "type", "id", "source_id", "updated_at"],
+  "properties": {
+    "v": {"const": 1},
+    "type": {"enum": ["run", "job", "inbox_item"]},
+    "id": {"$ref": "#/$defs/id"},
+    "source_id": {"$ref": "#/$defs/source_id"},
+    "updated_at": {"$ref": "#/$defs/timestamp"},
+    "observed_at": {"$ref": "#/$defs/timestamp"},
+    "stale_after_s": {"type": "integer", "minimum": 1},
+    "project": {"type": "string", "minLength": 1, "maxLength": 200},
+    "title": {"type": "string", "maxLength": 200},
+    "links": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/link"}}
+  },
+  "allOf": [
+    {"if": {"properties": {"type": {"const": "run"}}}, "then": {"$ref": "#/$defs/run"}},
+    {"if": {"properties": {"type": {"const": "job"}}}, "then": {"$ref": "#/$defs/job"}},
+    {"if": {"properties": {"type": {"const": "inbox_item"}}}, "then": {"$ref": "#/$defs/inbox_item"}}
+  ],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\s\\x00-\\x1f\\x7f]+$"},
+    "source_id": {"type": "string", "maxLength": 128, "pattern": "^[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._-]*)?$"},
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "role_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "summary": {"type": "string", "maxLength": 2000},
+    "http_url": {"type": "string", "maxLength": 2000, "pattern": "^https?://"},
+    "abs_path": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^/"},
+
+    "record_ref": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"type": "string", "minLength": 1, "maxLength": 64, "not": {"const": "external"}},
+        "id": {"$ref": "#/$defs/id"},
+        "source_id": {"$ref": "#/$defs/source_id"}
+      }
+    },
+    "external_ref": {
+      "type": "object",
+      "required": ["type", "kind"],
+      "anyOf": [{"required": ["key"]}, {"required": ["url"]}],
+      "properties": {
+        "type": {"const": "external"},
+        "kind": {"type": "string", "minLength": 1, "maxLength": 64},
+        "key": {"type": "string", "minLength": 1, "maxLength": 200},
+        "url": {"$ref": "#/$defs/http_url"}
+      }
+    },
+    "ref": {"oneOf": [{"$ref": "#/$defs/record_ref"}, {"$ref": "#/$defs/external_ref"}]},
+
+    "link": {
+      "type": "object",
+      "required": ["label"],
+      "oneOf": [{"required": ["url"]}, {"required": ["path"]}],
+      "properties": {
+        "label": {"type": "string", "minLength": 1, "maxLength": 80},
+        "url": {"$ref": "#/$defs/http_url"},
+        "path": {"$ref": "#/$defs/abs_path"}
+      }
+    },
+    "process": {
+      "type": "object",
+      "required": ["host", "pid"],
+      "properties": {
+        "host": {"type": "string", "minLength": 1, "maxLength": 255},
+        "pid": {"type": "integer", "minimum": 1},
+        "start_time": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "usage": {
+      "type": "object",
+      "required": ["basis"],
+      "properties": {
+        "basis": {"enum": ["measured", "estimated"]},
+        "input_tokens": {"type": "integer", "minimum": 0},
+        "cached_input_tokens": {"type": "integer", "minimum": 0},
+        "output_tokens": {"type": "integer", "minimum": 0},
+        "cost": {
+          "type": "object",
+          "required": ["amount", "currency", "basis"],
+          "properties": {
+            "amount": {"type": "number", "minimum": 0},
+            "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+            "basis": {"enum": ["billed", "api_equivalent", "estimated"]}
+          }
+        }
+      }
+    },
+
+    "started_rule": {
+      "if": {"properties": {"state": {"enum": ["running", "waiting", "done", "failed", "cancelled"]}}},
+      "then": {"required": ["started_at"]}
+    },
+    "ended_rule": {
+      "if": {"properties": {"state": {"enum": ["done", "failed", "cancelled"]}}},
+      "then": {"required": ["ended_at"]}
+    },
+
+    "run": {
+      "required": ["state", "agent"],
+      "properties": {
+        "state": {"enum": ["queued", "running", "waiting", "done", "failed", "cancelled", "unknown"]},
+        "agent": {"type": "string", "minLength": 1, "maxLength": 64},
+        "model": {"type": "string", "minLength": 1, "maxLength": 128},
+        "provider": {"type": "string", "minLength": 1, "maxLength": 64},
+        "effort": {"type": "string", "minLength": 1, "maxLength": 32},
+        "role_id": {"$ref": "#/$defs/role_id"},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 200},
+        "parent_run": {"$ref": "#/$defs/record_ref"},
+        "resume_of": {"$ref": "#/$defs/record_ref"},
+        "waits_on": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/ref"}},
+        "started_at": {"$ref": "#/$defs/timestamp"},
+        "ended_at": {"$ref": "#/$defs/timestamp"},
+        "exit_code": {"type": ["integer", "null"]},
+        "process": {"$ref": "#/$defs/process"},
+        "usage": {"$ref": "#/$defs/usage"},
+        "summary": {"$ref": "#/$defs/summary"}
+      },
+      "allOf": [{"$ref": "#/$defs/started_rule"}, {"$ref": "#/$defs/ended_rule"}]
+    },
+    "job": {
+      "required": ["state", "command_summary"],
+      "properties": {
+        "state": {"enum": ["queued", "running", "done", "failed", "cancelled", "unknown"]},
+        "command_summary": {"type": "string", "minLength": 1, "maxLength": 200},
+        "kind": {"type": "string", "minLength": 1, "maxLength": 64},
+        "run": {"$ref": "#/$defs/record_ref"},
+        "role_id": {"$ref": "#/$defs/role_id"},
+        "started_at": {"$ref": "#/$defs/timestamp"},
+        "ended_at": {"$ref": "#/$defs/timestamp"},
+        "exit_code": {"type": ["integer", "null"]},
+        "signal": {"type": ["string", "null"], "maxLength": 32},
+        "process": {"$ref": "#/$defs/process"},
+        "log_path": {"$ref": "#/$defs/abs_path"},
+        "result_path": {"$ref": "#/$defs/abs_path"},
+        "summary": {"$ref": "#/$defs/summary"}
+      },
+      "allOf": [{"$ref": "#/$defs/started_rule"}, {"$ref": "#/$defs/ended_rule"}]
+    },
+    "inbox_item": {
+      "required": ["role_id", "state", "kind", "subject", "created_at"],
+      "properties": {
+        "role_id": {"$ref": "#/$defs/role_id"},
+        "state": {"enum": ["open", "acked"]},
+        "kind": {"type": "string", "minLength": 1, "maxLength": 64},
+        "subject": {"$ref": "#/$defs/ref"},
+        "outcome": {"type": "string", "maxLength": 80},
+        "action_required": {"type": "boolean"},
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "acked_at": {"$ref": "#/$defs/timestamp"},
+        "detail": {"type": "string", "maxLength": 4000}
+      },
+      "if": {"properties": {"state": {"const": "acked"}}},
+      "then": {"required": ["acked_at"]}
+    }
+  }
+}
