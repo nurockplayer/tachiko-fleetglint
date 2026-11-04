@@ -371,9 +371,11 @@ explicit user action.
   item. Otherwise a rebuild could not recover that record. A writer whose
   records stay non-terminal for a long time SHOULD re-emit them (for
   example on each `observed_at` refresh), which moves their latest version
-  into a newer segment. Deletion MUST NOT make an older version the newest
-  surviving one: a segment may be deleted only if every record in it is
-  superseded by a later version in another segment that is kept.
+  into a newer segment. Segments are deleted oldest first: a segment may
+  be deleted only if every segment with a lower `<seq>` has already been
+  deleted. Deletion therefore never makes an older version of a record its
+  newest surviving one, and segments missing below the lowest retained
+  `<seq>` are retention, not a discontinuity (§7.4).
 - History in SQLite has its own retention (default 30 days). Latest records
   in a terminal state, and acked inbox items, are dropped with their
   history. Non-terminal latest records are kept while their source exists.
