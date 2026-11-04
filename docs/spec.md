@@ -369,10 +369,14 @@ explicit user action.
   than the retention period (default 30 days, configurable), **and** it
   holds no latest record (§7.2) that is non-terminal or an open inbox
   item, unless that record is abandoned. Otherwise a rebuild could not
-  recover that record. A record is abandoned when its `updated_at` is older
-  than the abandonment period (default 90 days, configurable, never shorter
-  than the retention period); this keeps a writer that died with a
-  non-terminal record from blocking retention forever. A writer whose
+  recover that record. A `run` or `job` record is abandoned when its
+  `updated_at` is older than the abandonment period (default 90 days,
+  configurable, never shorter than the retention period); this keeps a
+  writer that died with a non-terminal run from blocking retention forever.
+  An open inbox item is never abandoned: it still asks someone to act, so
+  it holds its segment until it is acked or closed. While an open inbox
+  item blocks deletion, Fleetglint shows it under Needs attention as
+  blocking retention. A writer whose
   records stay non-terminal for a long time SHOULD re-emit them (for
   example on each `observed_at` refresh), which moves their latest version
   into a newer segment. Segments are deleted oldest first: a segment may
@@ -384,8 +388,8 @@ explicit user action.
   in a terminal state, and acked inbox items, are dropped with their
   history. Non-terminal latest records are kept while their source exists.
 - Rebuilding the database replays the segments still present. Because of
-  the first rule, every non-terminal latest record and open inbox item that
-  is not abandoned is recovered. Abandoned records whose segments were
+  the first rule, every open inbox item and every non-terminal latest
+  record that is not abandoned is recovered. Abandoned records whose segments were
   deleted, and history older than the oldest retained segment, are gone,
   which is expected.
 
