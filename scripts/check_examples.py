@@ -1,4 +1,4 @@
-"""Check examples/v1 against schema/v1/record.schema.json (dev only; needs jsonschema)."""
+"""Check examples/v1 against schema/v1/record.schema.json (dev only; needs jsonschema[format-nongpl])."""
 import json
 import pathlib
 import sys
@@ -8,7 +8,9 @@ import jsonschema
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 schema = json.loads((ROOT / "schema/v1/record.schema.json").read_text())
 jsonschema.Draft202012Validator.check_schema(schema)
-validator = jsonschema.Draft202012Validator(schema)
+validator = jsonschema.Draft202012Validator(
+    schema, format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER
+)
 failures = 0
 
 for path in sorted((ROOT / "examples/v1/valid").glob("*.ndjson")):

@@ -13,5 +13,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install "jsonschema>=4.23,<5"
+      - run: pip install "jsonschema[format-nongpl]>=4.23,<5"
       - run: python scripts/check_examples.py

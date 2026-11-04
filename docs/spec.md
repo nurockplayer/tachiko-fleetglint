@@ -54,7 +54,10 @@ control characters. `source_id` is further restricted (§6.1).
 
 **Timestamps** are RFC 3339 strings with an explicit offset
 (`2026-11-05T05:50:26+09:00` or `2026-11-05T20:50:26Z`). A timestamp without
-an offset is invalid. Timestamps are displayed, compared against the current
+an offset is invalid, and so is a date or time that does not exist
+(`2026-02-30`, `25:00`); the schema's `pattern` checks the shape and its
+`format: date-time` the calendar, so validators MUST enable format checks.
+Timestamps are displayed, compared against the current
 time for staleness (§8) and used for retention; they are **never** used to
 order versions of a record (§7.2).
 
