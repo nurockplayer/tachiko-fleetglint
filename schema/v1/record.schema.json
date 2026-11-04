@@ -24,11 +24,11 @@
   ],
   "$defs": {
     "id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\s\\x00-\\x1f\\x7f]+$"},
-    "source_id": {"type": "string", "maxLength": 128, "pattern": "^[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._-]*)?$"},
+    "source_id": {"type": "string", "maxLength": 128, "pattern": "^(?!.*\\n)[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._-]*)?$"},
     "timestamp": {
       "type": "string",
       "format": "date-time",
-      "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])T([01]\\d|2[0-3]):[0-5]\\d:([0-5]\\d|60)(\\.\\d+)?(Z|[+-]([01]\\d|2[0-3]):[0-5]\\d)$"
+      "pattern": "^(?!.*\\n)\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])T([01]\\d|2[0-3]):[0-5]\\d:([0-5]\\d|60)(\\.\\d+)?(Z|[+-]([01]\\d|2[0-3]):[0-5]\\d)$"
     },
     "role_id": {"type": "string", "minLength": 1, "maxLength": 200},
     "summary": {"type": "string", "maxLength": 2000},
@@ -43,6 +43,10 @@
         "id": {"$ref": "#/$defs/id"},
         "source_id": {"$ref": "#/$defs/source_id"}
       }
+    },
+    "run_ref": {
+      "allOf": [{"$ref": "#/$defs/record_ref"}],
+      "properties": {"type": {"const": "run"}}
     },
     "external_ref": {
       "type": "object",
@@ -115,8 +119,8 @@
         "effort": {"type": "string", "minLength": 1, "maxLength": 32},
         "role_id": {"$ref": "#/$defs/role_id"},
         "session_id": {"type": "string", "minLength": 1, "maxLength": 200},
-        "parent_run": {"$ref": "#/$defs/record_ref"},
-        "resume_of": {"$ref": "#/$defs/record_ref"},
+        "parent_run": {"$ref": "#/$defs/run_ref"},
+        "resume_of": {"$ref": "#/$defs/run_ref"},
         "waits_on": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/ref"}},
         "started_at": {"$ref": "#/$defs/timestamp"},
         "ended_at": {"$ref": "#/$defs/timestamp"},
@@ -133,7 +137,7 @@
         "state": {"enum": ["queued", "running", "done", "failed", "cancelled", "unknown"]},
         "command_summary": {"type": "string", "minLength": 1, "maxLength": 200},
         "kind": {"type": "string", "minLength": 1, "maxLength": 64},
-        "run": {"$ref": "#/$defs/record_ref"},
+        "run": {"$ref": "#/$defs/run_ref"},
         "role_id": {"$ref": "#/$defs/role_id"},
         "started_at": {"$ref": "#/$defs/timestamp"},
         "ended_at": {"$ref": "#/$defs/timestamp"},
