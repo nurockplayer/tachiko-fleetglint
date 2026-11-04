@@ -89,6 +89,9 @@ A reference to another record is an object:
 A reference to a record Fleetglint has not seen is kept and shown as
 unresolved; it is not an error. The referenced record may arrive later.
 
+Where this spec says "reference to a run", the reference's `type` MUST be
+`run`.
+
 ### 3.2 External references
 
 A reference to something outside Fleetglint (a pull request, a CI run, an
@@ -139,8 +142,8 @@ A session that is paused and later resumed produces a **new** run with
 | `effort` | string | no | Reasoning effort or similar setting, as the tool names it. |
 | `role_id` | string | no | The role responsible for this run, usually the one that dispatched it (§4.4). |
 | `session_id` | string | no | The tool's own session or conversation id, if it has one. Runs that share a `session_id` are segments of one conversation. |
-| `parent_run` | RecordRef | no | The run that **spawned** this run. |
-| `resume_of` | RecordRef | no | The run this run **continues** (same conversation, later segment). |
+| `parent_run` | RecordRef to a run | no | The run that **spawned** this run. |
+| `resume_of` | RecordRef to a run | no | The run this run **continues** (same conversation, later segment). |
 | `waits_on` | array of Ref | no | At most 32 record or external references this run is currently blocked on. Meaningful only while `state` is `waiting`. |
 | `started_at` | timestamp | no | Required when `state` is `running`, `waiting` or terminal. |
 | `ended_at` | timestamp | no | Required when `state` is terminal. |
@@ -178,7 +181,7 @@ process: a test suite, a build, a review chain, a "wait for this PR" helper.
 | `state` | JobState | yes | See below. |
 | `command_summary` | string | yes | A short description of the command, at most 200 characters. MUST NOT be the full argv; writers SHOULD drop arguments that may hold secrets. |
 | `kind` | string | no | `test`, `build`, `review`, `wait`, … free-form. |
-| `run` | RecordRef | no | The run that started the job and owns its result. |
+| `run` | RecordRef to a run | no | The run that started the job and owns its result. |
 | `role_id` | string | no | The role that should act on the result, if different from the owning run's role. |
 | `started_at` | timestamp | no | Required when `state` is `running`, `waiting` or terminal. |
 | `ended_at` | timestamp | no | Required when `state` is terminal. |
@@ -313,7 +316,9 @@ same results.
 
 The reader keeps, per source, the last committed position
 `(seq, byte_offset)`: the segment and the offset just past the last
-complete line it has ingested.
+complete line it has ingested. For every closed segment it has fully
+ingested it also keeps the segment's length and a fingerprint of its
+content, so a later compression can be told apart from a change.
 
 ### 7.2 Ordering and the latest record
 
@@ -347,7 +352,11 @@ source's records as `unknown` (§8) until it is resolved, when:
 
 - the current segment is shorter than the checkpoint offset (truncated), or
   was replaced (different inode or a changed prefix fingerprint);
-- a segment with a lower `<seq>` than the checkpoint appears or changes;
+- a segment with a lower `<seq>` than the checkpoint appears, or its
+  content changes. Compressing a closed, fully ingested segment from
+  `<seq>.ndjson` to `<seq>.ndjson.gz` (§6.2) is not a change: the reader
+  identifies segments by `<seq>`, and if it checks a compressed segment it
+  compares the decompressed length and fingerprint with what it ingested;
 - a segment is missing between two present ones before it was ingested.
 
 The reader never skips data silently. Resolving a discontinuity
@@ -356,13 +365,33 @@ explicit user action.
 
 ### 7.5 Retention
 
-- A segment may be deleted only after it is fully ingested, closed, and
-  older than the retention period (default 30 days, configurable).
+- A segment may be deleted only when it is fully ingested, closed, older
+  than the retention period (default 30 days, configurable), **and** it
+  holds no latest record (§7.2) that is non-terminal or an open inbox
+  item, unless that record is abandoned. Otherwise a rebuild could not
+  recover that record. A `run` or `job` record is abandoned when its
+  `updated_at` is older than the abandonment period (default 90 days,
+  configurable, never shorter than the retention period); this keeps a
+  writer that died with a non-terminal run from blocking retention forever.
+  An open inbox item is never abandoned: it still asks someone to act, so
+  it holds its segment until it is acked or closed. While an open inbox
+  item blocks deletion, Fleetglint shows it under Needs attention as
+  blocking retention. A writer whose
+  records stay non-terminal for a long time SHOULD re-emit them (for
+  example on each `observed_at` refresh), which moves their latest version
+  into a newer segment. Segments are deleted oldest first: a segment may
+  be deleted only if every segment with a lower `<seq>` has already been
+  deleted. Deletion therefore never makes an older version of a record its
+  newest surviving one, and segments missing below the lowest retained
+  `<seq>` are retention, not a discontinuity (§7.4).
 - History in SQLite has its own retention (default 30 days). Latest records
   in a terminal state, and acked inbox items, are dropped with their
   history. Non-terminal latest records are kept while their source exists.
-- Rebuilding the database replays the segments still present; history older
-  than the oldest retained segment is gone, which is expected.
+- Rebuilding the database replays the segments still present. Because of
+  the first rule, every open inbox item and every non-terminal latest
+  record that is not abandoned is recovered. Abandoned records whose segments were
+  deleted, and history older than the oldest retained segment, are gone,
+  which is expected.
 
 ### 7.6 Adapters
 

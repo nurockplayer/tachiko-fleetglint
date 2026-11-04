@@ -1,0 +1,1 @@
+{"v":1,"type":"job","id":"j1","source_id":"demo","updated_at":"2026-11-05T09:00:00Z","state":"queued","command_summary":"make","run":{"type":"inbox_item","id":"i1"}}
