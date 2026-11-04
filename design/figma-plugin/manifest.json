@@ -1,0 +1,10 @@
+{
+  "name": "Fleetglint Design System",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": ["none"],
+    "reasoning": "The builder only creates variables, styles, components and frames in the open file."
+  }
+}
