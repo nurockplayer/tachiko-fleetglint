@@ -3,6 +3,7 @@ import gzip
 import io
 import json
 import os
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -10,7 +11,7 @@ from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fleetglint import cli, config, ingest, store
+from fleetglint import cli, config, ingest, schema, store
 from fleetglint.adapters.base import ScanResult
 
 BASE = datetime(2026, 11, 6, 3, 0, tzinfo=timezone.utc)
@@ -216,6 +217,131 @@ class IngestTest(unittest.TestCase):
         self.ing.scan_roots()
         self.assertEqual(len(store.quarantine_for(self.conn, "s@host")), 1)
         self.assertEqual(self.history_count(), 2)
+
+    # --- real validator ---------------------------------------------------
+
+    def real_ingestor(self):
+        return ingest.Ingestor(self.conn, self.cfg, clock=self.clock)
+
+    def test_real_validator_ingests_a_valid_record(self):
+        self.write_segment([run(id="r1", started_at=stamp())])
+        self.real_ingestor().scan_roots()
+        self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r1"))
+        self.assertEqual(store.quarantine_for(self.conn, "s@host"), [])
+
+    def test_real_validator_quarantines_malformed_json(self):
+        self.segment_path().write_bytes(
+            b'{"v": 1\n' + (json.dumps(run(id="r1", started_at=stamp())) + "\n").encode())
+        self.real_ingestor().scan_roots()
+        rows = store.quarantine_for(self.conn, "s@host")
+        self.assertEqual([row["reason"] for row in rows], ["invalid_json"])
+        self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r1"))
+
+    def test_real_validator_quarantines_a_wrong_source_id(self):
+        self.write_segment([run(id="r1", source_id="other@host", started_at=stamp())])
+        self.real_ingestor().scan_roots()
+        rows = store.quarantine_for(self.conn, "s@host")
+        self.assertEqual([row["reason"] for row in rows], ["source_mismatch"])
+        self.assertIsNone(store.get_latest(self.conn, "s@host", "run", "r1"))
+
+    def test_real_validator_quarantines_an_oversize_line_and_keeps_reading(self):
+        big = b"x" * (5 * 1024 * 1024)
+        valid = (json.dumps(run(id="r1", started_at=stamp())) + "\n").encode()
+        path = self.segment_path()
+        path.write_bytes(big + b"\n" + valid)
+        self.real_ingestor().scan_roots()
+        rows = store.quarantine_for(self.conn, "s@host")
+        self.assertEqual([row["reason"] for row in rows], ["too_large"])
+        self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r1"))
+        self.assertEqual(store.get_checkpoint(self.conn, "s@host")["byte_offset"],
+                         path.stat().st_size)
+
+    # --- bounded lines ----------------------------------------------------
+
+    def test_iter_lines_clips_an_overlong_line(self):
+        path = self.dir / "big.ndjson"
+        path.write_bytes(b"a" * (5 * 1024 * 1024) + b"\ntail")
+        lines = list(ingest._iter_lines(path, False, 0))
+        self.assertEqual(len(lines), 1)
+        raw, end = lines[0]
+        self.assertEqual(len(raw), schema.MAX_LINE_BYTES + 1)
+        self.assertEqual(end, 5 * 1024 * 1024 + 1)
+
+    def test_an_overlong_line_split_across_appends_is_quarantined_once(self):
+        path = self.segment_path()
+        path.write_bytes(b"x" * (5 * 1024 * 1024))
+        ingestor = self.real_ingestor()
+        ingestor.scan_roots()
+        self.assertEqual(store.quarantine_for(self.conn, "s@host"), [])
+        self.assertEqual(store.get_checkpoint(self.conn, "s@host")["byte_offset"], 0)
+
+        valid = (json.dumps(run(id="r1", started_at=stamp())) + "\n").encode()
+        with open(path, "ab") as handle:
+            handle.write(b"y" * 1024 + b"\n" + valid)
+        ingestor.scan_roots()
+        rows = store.quarantine_for(self.conn, "s@host")
+        self.assertEqual([row["reason"] for row in rows], ["too_large"])
+        self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r1"))
+        self.assertEqual(store.get_checkpoint(self.conn, "s@host")["byte_offset"],
+                         path.stat().st_size)
+
+    def test_iter_lines_streams_a_compressed_segment_from_an_offset(self):
+        path = self.dir / "seg.ndjson.gz"
+        overlong = b"x" * (5 * 1024 * 1024) + b"\n"
+        path.write_bytes(gzip.compress(overlong + b"tail\n"))
+        raw, end = next(iter(ingest._iter_lines(path, True, 0)))
+        self.assertEqual(len(raw), schema.MAX_LINE_BYTES + 1)
+        self.assertEqual(end, 5 * 1024 * 1024 + 1)
+        self.assertEqual(list(ingest._iter_lines(path, True, end)), [(b"tail", end + 5)])
+        self.assertEqual(list(ingest._iter_lines(path, True, end + 5)), [])
+        with self.assertRaises(ingest._Discontinuity):
+            list(ingest._iter_lines(path, True, end + 6))
+
+    # --- vanished directories ---------------------------------------------
+
+    def test_a_vanished_source_directory_is_a_discontinuity_and_reset_recovers(self):
+        self.write_segment([run(id="r1")])
+        self.ing.scan_roots()
+        shutil.rmtree(self.source_dir())
+        self.ing.scan_roots()
+        source = store.get_source(self.conn, "s@host")
+        self.assertEqual((source["status"], source["detail"]),
+                         ("discontinuity", "source directory is missing"))
+
+        self.write_segment([run(id="r1")])
+        self.ing.reset_source("s@host")
+        self.assertEqual(self.status(), "ok")
+        self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r1"))
+
+    def test_a_vanished_root_marks_its_sources(self):
+        self.write_segment([run(id="r1")])
+        self.ing.scan_roots()
+        shutil.rmtree(self.root)
+        self.ing.scan_roots()
+        source = store.get_source(self.conn, "s@host")
+        self.assertEqual((source["status"], source["detail"]),
+                         ("discontinuity", "source directory is missing"))
+
+    def test_a_vanished_directory_after_retention_is_not_a_discontinuity(self):
+        self.write_segment([run(id="r1", state="done")], seq=1)
+        self.write_segment([run(id="r2", state="done", updated_at=stamp(minutes=1))], seq=2)
+        self.ing.scan_roots()
+        store.set_meta(self.conn, "retention_deleted:s@host", "2")
+        self.conn.execute("DELETE FROM segments WHERE source_id = 's@host'")
+        shutil.rmtree(self.source_dir())
+        self.ing.scan_roots()
+        self.assertEqual(self.status(), "ok")
+
+    def test_a_vanished_demo_directory_removes_the_source(self):
+        self.write_segment([run(id="r1", source_id="demo@fleetglint")],
+                           source_id="demo@fleetglint")
+        self.ing.scan_roots()
+        self.assertIsNotNone(store.get_latest(self.conn, "demo@fleetglint", "run", "r1"))
+        shutil.rmtree(self.source_dir("demo@fleetglint"))
+        self.ing.scan_roots()
+        self.assertIsNone(store.get_source(self.conn, "demo@fleetglint"))
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) FROM records WHERE source_id = 'demo@fleetglint'").fetchone()[0], 0)
 
     def test_all_segments_missing_is_a_discontinuity(self):
         self.write_segment([run()], seq=1)
@@ -501,6 +627,26 @@ class IngestTest(unittest.TestCase):
                 self.retain()
         self.assertTrue(self.segment_path(1).exists())
         self.assertIsNotNone(store.get_segment(self.conn, "s@host", 1))
+
+    def test_reset_drops_retention_tombstones_so_restored_segments_reingest(self):
+        self.write_segment([run(id="r1", state="done")], seq=1)
+        self.write_segment([run(id="r2", state="done", updated_at=stamp(minutes=1))], seq=2)
+        self.ing.scan_roots()
+        self.make_old(self.segment_path(1))
+        # A crash after retention's COMMIT leaves the file and its tombstone behind.
+        with mock.patch.object(Path, "unlink", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.retain()
+        self.assertTrue(self.segment_path(1).exists())
+        self.assertIsNotNone(store.get_meta(self.conn, "retired:s@host:1"))
+        self.assertIsNotNone(store.get_meta(self.conn, "retention_deleted:s@host"))
+
+        self.ing.reset_source("s@host")
+        self.assertEqual(self.status(), "ok")
+        self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r1"))
+        self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r2"))
+        self.assertIsNone(store.get_meta(self.conn, "retired:s@host:1"))
+        self.assertIsNone(store.get_meta(self.conn, "retention_deleted:s@host"))
 
     def test_crash_after_commit_leaves_a_retired_file_that_is_skipped_then_removed(self):
         self.write_segment([run(state="done")], seq=1)

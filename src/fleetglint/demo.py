@@ -195,6 +195,6 @@ def _clear(root, out=None):
         return 0
     shutil.rmtree(path)
     print(f"removed {path}")
-    print("the demo rows disappear from the board after the next rebuild "
-          "(fleetglint rebuild, or fleetglint source reset demo@fleetglint)")
+    print("the demo rows disappear from the board on the next ingest pass "
+          "(fleetglint serve polls, or run fleetglint ingest --once)")
     return 0

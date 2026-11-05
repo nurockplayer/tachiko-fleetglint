@@ -97,8 +97,8 @@ class DemoTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(self.path.exists())
         self.assertTrue(other.exists())
-        self.assertIn("disappear from the board after the next rebuild", text)
-        self.assertIn("source reset demo@fleetglint", text)
+        self.assertIn("disappear from the board on the next ingest pass", text)
+        self.assertIn("fleetglint ingest --once", text)
 
     def test_clear_refuses_a_symlink(self):
         self.root.mkdir(parents=True)
