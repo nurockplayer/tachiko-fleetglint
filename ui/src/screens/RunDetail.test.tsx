@@ -212,6 +212,42 @@ describe("RunDetail", () => {
     expect(await screen.findByText(/worker started/)).toBeInTheDocument();
   });
 
+  it("fetches the final log when the record ends during a slow request", async () => {
+    const running = structuredClone(recordRun);
+    running.record.state = "running";
+    running.record.display_state = "running";
+    const done = structuredClone(running);
+    done.record.state = "done";
+    done.record.display_state = "done";
+    done.record.updated_at = "2026-11-06T00:00:00+09:00";
+    const final = structuredClone(fileReadable);
+    final.text += "12:59:00 final line\n";
+    let release: (response: Response) => void = () => {};
+    let ended = false;
+    let fileCalls = 0;
+    const fetcher = routeFetcher({
+      "/api/record": () => jsonResponse(ended ? done : running),
+      "/api/file": () => {
+        fileCalls += 1;
+        if (fileCalls > 1) return jsonResponse(final);
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      },
+    });
+    render(<RunDetail params={runParams} fetcher={fetcher} pollMs={20} />);
+    await until(() => fileCalls === 1);
+    ended = true;
+    await until(() =>
+      document.querySelector('header.detail-head .badge[data-state="done"]') !== null,
+    );
+    await act(async () => {
+      release(jsonResponse(fileReadable));
+    });
+    await until(() => screen.queryByText(/final line/) !== null);
+    expect(fileCalls).toBe(2);
+  });
+
   it("does not refetch the log once the record is terminal", async () => {
     const done = structuredClone(recordRun);
     done.record.state = "done";

@@ -358,6 +358,8 @@ export function RunDetail({
     : "";
   const fileTargetRef = useRef("");
   const fileRequestRef = useRef<object | null>(null);
+  const fileSkippedRef = useRef(false);
+  const [fileRetry, setFileRetry] = useState(0);
 
   useEffect(
     () => () => {
@@ -375,10 +377,19 @@ export function RunDetail({
     }
     const sameTarget = fileTargetRef.current === targetKey;
     fileTargetRef.current = targetKey;
-    // A slow tail is left to finish: the next poll fetches again after it.
-    if (sameTarget && fileRequestRef.current) return;
+    // A slow tail is left to finish, then fetched once more: the record may
+    // already be terminal, and then no later poll would fetch it.
+    if (sameTarget && fileRequestRef.current) {
+      fileSkippedRef.current = true;
+      return;
+    }
+    fileSkippedRef.current = false;
     const request = {};
     fileRequestRef.current = request;
+    const finish = () => {
+      fileRequestRef.current = null;
+      if (fileSkippedRef.current) setFileRetry((count) => count + 1);
+    };
     // A refetch of the same tail keeps the text on screen: no loading flash
     // and no empty panel while the request is in flight.
     if (!sameTarget) setFile({ loading: true, data: null, error: null });
@@ -389,12 +400,12 @@ export function RunDetail({
         const body = (await response.json()) as FileResponse;
         if (body.api !== 1) throw new Error("unsupported API version");
         if (fileRequestRef.current === request) {
-          fileRequestRef.current = null;
+          finish();
           setFile({ loading: false, data: body, error: null });
         }
       } catch (error) {
         if (fileRequestRef.current === request) {
-          fileRequestRef.current = null;
+          finish();
           setFile((previous) => ({
             loading: false,
             data: previous.data,
@@ -404,7 +415,7 @@ export function RunDetail({
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetcher, fileKey]);
+  }, [fetcher, fileKey, fileRetry]);
 
   const receivedClock =
     detail.receivedAt != null
