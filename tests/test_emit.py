@@ -64,6 +64,18 @@ class AppendRecordTest(unittest.TestCase):
         segment = emit.append_record(make_record(), self.root)
         self.assertEqual(segment.name, "0000000002.ndjson")
 
+    def test_never_appends_below_a_compressed_higher_segment(self):
+        self.dir.mkdir()
+        (self.dir / "0000000001.ndjson").write_text("")
+        (self.dir / "0000000002.ndjson.gz").write_bytes(b"")
+        segment = emit.append_record(make_record(), self.root)
+        self.assertEqual(segment.name, "0000000003.ndjson")
+        self.assertEqual((self.dir / "0000000001.ndjson").read_text(), "")
+
+    def test_final_line_over_the_limit_is_refused(self):
+        with self.assertRaises(ValueError):
+            emit.append_record(make_record(title="x" * 200, x_pad="y" * 70000), self.root)
+
     def test_never_truncates_an_existing_segment(self):
         self.dir.mkdir()
         existing = json.dumps(make_record(id="old"), separators=(",", ":")) + "\n"

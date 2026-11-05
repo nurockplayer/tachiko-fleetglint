@@ -20,7 +20,10 @@ def append_record(record, root):
     line = json.dumps(record, separators=(",", ":"), ensure_ascii=False, allow_nan=False) + "\n"
     directory = Path(root) / record["source_id"]
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    remaining = memoryview(line.encode("utf-8"))
+    data = line.encode("utf-8")
+    if len(data) > MAX_RECORD_BYTES:
+        raise ValueError(f"record line is larger than {MAX_RECORD_BYTES} bytes")
+    remaining = memoryview(data)
     with _locked(directory / ".lock"):
         segment = _current_segment(directory)
         if segment.exists() and segment.stat().st_size >= SEGMENT_LIMIT:
@@ -58,7 +61,7 @@ def run(args):
         root = config.expand(args.root) if args.root else config.load(args.config).roots[0]
         append_record(record, root)
     except ValueError as exc:
-        print(f"fleetglint emit: not serialisable as JSON: {exc}", file=sys.stderr)
+        print(f"fleetglint emit: {exc}", file=sys.stderr)
         return 1
     except (OSError, config.ConfigError) as exc:
         print(f"fleetglint emit: {exc}", file=sys.stderr)
@@ -109,7 +112,8 @@ def _next_segment(directory):
 
 
 def _current_segment(directory):
-    plain, _ = _seqs(directory)
-    if plain:
+    """The highest seq if it is still plain; a compressed or missing highest seq means start the next one."""
+    plain, gz = _seqs(directory)
+    if plain and max(plain) > max(gz, default=0):
         return directory / f"{max(plain):010d}.ndjson"
     return _next_segment(directory)
