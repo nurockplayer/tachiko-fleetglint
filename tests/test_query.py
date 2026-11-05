@@ -382,6 +382,21 @@ class QueryTest(unittest.TestCase):
         self.assertEqual([item["ref"]["id"] for item in snap["runs"]],
                          ["resumed-1", "waiting-1"])
 
+    def test_attention_and_counts_use_rows_beyond_the_list_limit(self):
+        self.backend.list_limit = 1
+        snap = self.snapshot()
+        self.assertTrue(snap["truncated"]["inbox"])
+        self.assertEqual([item["ref"]["id"] for item in snap["inbox"]], ["i-acked"])
+        # The old action_required item is behind newer inbox rows but still leads attention.
+        self.assertEqual(len(snap["attention"]), 1)
+        action = snap["attention"][0]
+        self.assertEqual(action["reason"], "action_required")
+        self.assertEqual(action["subject"]["id"], "j-1")
+        self.assertIn("review the PR", action["text"])
+        self.assertEqual(snap["counts"]["attention"], 4)
+        self.assertEqual(snap["counts"]["running"], 4)
+        self.assertEqual(snap["counts"]["sessions_recent"], 2)
+
     def test_demo_flag_only_for_demo_sources(self):
         snap = self.snapshot()
         self.assertTrue(snap["demo"])
@@ -638,15 +653,19 @@ class RedactionTest(unittest.TestCase):
                        "url": f"https://example.com/{SECRET}"}])
         free_form = run("usage-1", usage={"basis": "measured", "id": SECRET,
                                           "source_id": {"api_token": SECRET}})
+        secret_session = session("usage-s", usage={"basis": "measured",
+                                                   "x_token": {"deep": [SECRET]}})
         path = root / "work@mbp" / "0000000001.ndjson"
         path.parent.mkdir(parents=True)
-        path.write_text(json.dumps(secret_run) + "\n" + json.dumps(free_form) + "\n",
+        path.write_text("".join(json.dumps(record) + "\n"
+                                for record in (secret_run, free_form, secret_session)),
                         encoding="utf-8")
         ingestor.scan_roots()
         backend = query.QueryBackend(cfg)
         snap = backend.snapshot(NOW)
         self.assertEqual({item["ref"]["id"] for item in snap["runs"]}, {"url-1", "usage-1"})
         self.assertNotIn(SECRET, json.dumps(snap))
+        self.assertEqual(snap["sessions"][0]["usage"]["x_token"]["deep"], ["[redacted]"])
         detail = backend.record(NOW, "work@mbp", "run", "url-1")
         self.assertEqual(detail["record"]["ref"], {"type": "run", "id": "url-1",
                                                    "source_id": "work@mbp"})
@@ -654,6 +673,9 @@ class RedactionTest(unittest.TestCase):
         usage = backend.record(NOW, "work@mbp", "run", "usage-1")
         self.assertEqual(usage["usage"]["id"], "[redacted]")
         self.assertNotIn(SECRET, json.dumps(usage))
+        session_detail = backend.record(NOW, "work@mbp", "session", "usage-s")
+        self.assertEqual(session_detail["usage"]["x_token"]["deep"], ["[redacted]"])
+        self.assertNotIn(SECRET, json.dumps(session_detail))
 
     def test_long_summary_is_cut_after_redaction(self):
         tmp = tempfile.TemporaryDirectory()
