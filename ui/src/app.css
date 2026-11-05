@@ -415,6 +415,12 @@ summary:focus-visible {
   margin-bottom: var(--space-8);
 }
 
+.truncation-note {
+  color: var(--state-waiting-fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+}
+
 /* ------------------------------------------------------------------- tiles */
 
 .tiles {

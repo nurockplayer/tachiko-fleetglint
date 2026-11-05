@@ -15,6 +15,7 @@ import {
   ageSince,
   formatAbsolute,
   formatAge,
+  formatClock,
   formatCost,
   formatNumber,
 } from "../format";
@@ -228,10 +229,12 @@ function LinksPanel({ record }: { record: Summary }) {
   );
 }
 
-type DetailState =
-  | { status: "loading" }
-  | { status: "error"; error: string }
-  | { status: "ok"; data: RecordResponse };
+interface DetailState {
+  data: RecordResponse | null;
+  receivedAt: number | null;
+  error: string | null;
+  loading: boolean;
+}
 
 interface FileState {
   loading: boolean;
@@ -239,38 +242,106 @@ interface FileState {
   error: string | null;
 }
 
-export function RunDetail({ params, fetcher }: { params: DetailParams; fetcher: Fetcher }) {
-  const [detail, setDetail] = useState<DetailState>({ status: "loading" });
+export function RunDetail({
+  params,
+  fetcher,
+  pollMs = 3000,
+}: {
+  params: DetailParams;
+  fetcher: Fetcher;
+  pollMs?: number;
+}) {
+  const [detail, setDetail] = useState<DetailState>({
+    data: null,
+    receivedAt: null,
+    error: null,
+    loading: true,
+  });
   const [file, setFile] = useState<FileState>({ loading: false, data: null, error: null });
 
   useEffect(() => {
-    let cancelled = false;
-    setDetail({ status: "loading" });
-    (async () => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let etag: string | null = null;
+    let last: { data: RecordResponse; receivedAt: number } | null = null;
+    setDetail({ data: null, receivedAt: null, error: null, loading: true });
+
+    const schedule = () => {
+      if (!stopped) timer = setTimeout(tick, pollMs);
+    };
+
+    // The detail page polls like the board: a 304 keeps the record, a failure
+    // keeps it on screen greyed and labelled with its time, and recovery is
+    // automatic. A changed updated_at refetches the log tail.
+    async function tick() {
+      if (document.hidden) {
+        schedule();
+        return;
+      }
       try {
-        const response = await fetcher(recordUrl(params), { cache: "no-store" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const body = (await response.json()) as RecordResponse;
-        if (body.api !== 1) throw new Error("unsupported API version");
-        if (!cancelled) setDetail({ status: "ok", data: body });
-      } catch (error) {
-        if (!cancelled) {
+        const headers: Record<string, string> = {};
+        if (etag) headers["If-None-Match"] = etag;
+        const response = await fetcher(recordUrl(params), {
+          headers,
+          cache: "no-store",
+        });
+        let next: { data: RecordResponse; receivedAt: number } | null = null;
+        if (response.status === 304) {
+          if (!last) throw new Error("HTTP 304 without cached data");
+          next = { data: last.data, receivedAt: Date.now() };
+        } else if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        } else {
+          const body = (await response.json()) as RecordResponse;
+          if (body.api !== 1) throw new Error("unsupported API version");
+          const tag = response.headers.get("ETag");
+          if (tag) etag = tag;
+          next = { data: body, receivedAt: Date.now() };
+        }
+        if (!next) throw new Error("no record");
+        last = next;
+        if (!stopped) {
           setDetail({
-            status: "error",
-            error: error instanceof Error ? error.message : String(error),
+            data: next.data,
+            receivedAt: next.receivedAt,
+            error: null,
+            loading: false,
+          });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!stopped) {
+          setDetail({
+            data: last?.data ?? null,
+            receivedAt: last?.receivedAt ?? null,
+            error: message,
+            loading: false,
           });
         }
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [fetcher, params.source_id, params.type, params.id]);
+      schedule();
+    }
 
-  const record = detail.status === "ok" ? detail.data.record : null;
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        clearTimeout(timer);
+        void tick();
+      }
+    };
+
+    void tick();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [fetcher, params.source_id, params.type, params.id, pollMs]);
+
+  const record = detail.data?.record ?? null;
   const target = record ? logTarget(record) : null;
   const targetKey = target
-    ? `${target.source_id}/${target.type}/${target.id}/${target.field}/${target.index ?? ""}`
+    ? `${target.source_id}/${target.type}/${target.id}/${target.field}/${target.index ?? ""}/${record?.updated_at ?? ""}`
     : "";
 
   useEffect(() => {
@@ -303,7 +374,12 @@ export function RunDetail({ params, fetcher }: { params: DetailParams; fetcher: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher, targetKey]);
 
-  if (detail.status === "loading") {
+  const receivedClock =
+    detail.receivedAt != null
+      ? formatClock(new Date(detail.receivedAt).toISOString())
+      : null;
+
+  if (detail.loading && !detail.data) {
     return (
       <main className="screen detail">
         <p className="muted">loading record…</p>
@@ -311,10 +387,10 @@ export function RunDetail({ params, fetcher }: { params: DetailParams; fetcher: 
     );
   }
 
-  if (detail.status === "error") {
+  if (!detail.data) {
     return (
       <main className="screen detail">
-        <Banner kind="unavailable">{detail.error}</Banner>
+        <Banner kind="unavailable">{detail.error ?? "the record could not be read"}</Banner>
         <p className="muted" style={{ marginTop: "16px" }}>
           The record could not be read. Reload to try again.
         </p>
@@ -322,7 +398,7 @@ export function RunDetail({ params, fetcher }: { params: DetailParams; fetcher: 
     );
   }
 
-  const { data } = detail;
+  const data = detail.data;
   const current = data.record;
   const usage = data.usage ?? (current.ref.type === "session" ? (current as SessionSummary).usage : null);
   const ownedJobs = current.ref.type === "run" ? data.relations.jobs : [];
@@ -330,6 +406,22 @@ export function RunDetail({ params, fetcher }: { params: DetailParams; fetcher: 
 
   return (
     <main className="screen detail">
+      {detail.error ? (
+        <>
+          <Banner kind="unavailable">
+            {detail.error}
+            {receivedClock
+              ? ` — last good data from ${receivedClock}`
+              : " — no data available"}
+          </Banner>
+          <p className="stale-note">
+            Showing last good data from {receivedClock ?? "an earlier poll"} — not
+            current.
+          </p>
+        </>
+      ) : null}
+
+      <div className="stale-data" data-stale={detail.error ? "true" : undefined}>
       <Header record={current} />
 
       {ownedJobs.length > 0 ? (
@@ -380,6 +472,7 @@ export function RunDetail({ params, fetcher }: { params: DetailParams; fetcher: 
         <summary>Raw fields (redacted)</summary>
         <pre>{JSON.stringify(data.full, null, 2)}</pre>
       </details>
+      </div>
     </main>
   );
 }

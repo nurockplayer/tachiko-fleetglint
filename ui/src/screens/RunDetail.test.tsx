@@ -60,6 +60,31 @@ describe("RunDetail", () => {
     expect(screen.getByText("outside the allowed roots")).toBeInTheDocument();
   });
 
+  it("shows done when the record changes between polls", async () => {
+    const done = structuredClone(recordRun);
+    done.record.state = "done";
+    done.record.display_state = "done";
+    done.record.updated_at = "2026-11-06T03:25:00+09:00";
+    let recordCalls = 0;
+    const fetcher = routeFetcher({
+      "/api/record": () => {
+        recordCalls += 1;
+        return jsonResponse(recordCalls === 1 ? recordRun : done);
+      },
+      "/api/file": () => jsonResponse(fileReadable),
+    });
+    render(<RunDetail params={runParams} fetcher={fetcher} pollMs={100} />);
+
+    expect(
+      await screen.findByText("migration replay: checkpoint rebuild"),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        document.querySelector('header.detail-head .badge[data-state="done"]'),
+      ).toBeTruthy(),
+    );
+  });
+
   it("hides sections that do not apply to a job", async () => {
     const fetcher = routeFetcher({
       "/api/record": () => jsonResponse(recordJob),

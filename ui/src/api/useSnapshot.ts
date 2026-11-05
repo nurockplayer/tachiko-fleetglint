@@ -49,11 +49,16 @@ export function useSnapshot(fetcher: Fetcher, pollMs: number): SnapshotState {
 
         if (response.status === 304) {
           if (!lastGood.current) throw new Error("HTTP 304 without cached data");
+          // 304 is a successful validation: the data is still current, so the
+          // last-refresh time moves to the 304's time.
+          const receivedAt = Date.now();
+          const current = { snapshot: lastGood.current.snapshot, receivedAt };
+          lastGood.current = current;
           if (!stopped) {
             setState({
               status: "ok",
-              snapshot: lastGood.current.snapshot,
-              receivedAt: lastGood.current.receivedAt,
+              snapshot: current.snapshot,
+              receivedAt,
               error: null,
             });
           }

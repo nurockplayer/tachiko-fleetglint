@@ -57,6 +57,23 @@ const BANNER_LABEL: Record<BannerKind, string> = {
   demo: "DEMO DATA",
 };
 
+export function TruncationNote({
+  truncated,
+  shown,
+  noun,
+}: {
+  truncated: boolean;
+  shown: number;
+  noun: string;
+}) {
+  if (!truncated) return null;
+  return (
+    <span className="truncation-note">
+      showing the newest {shown} {noun}; more exist
+    </span>
+  );
+}
+
 export function Banner({ kind, children }: { kind: BannerKind; children: ReactNode }) {
   return (
     <div

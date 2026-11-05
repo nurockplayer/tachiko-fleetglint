@@ -10,6 +10,12 @@ export function Attention({ snapshot }: { snapshot: Snapshot }) {
         <p className="summary-line">
           who must act, about what · {entries.length} item{entries.length === 1 ? "" : "s"}
         </p>
+        {snapshot.truncated.inbox ? (
+          <p className="truncation-note">
+            the inbox list is cut at {snapshot.inbox.length} items; more exist, so
+            some entries here may be missing
+          </p>
+        ) : null}
       </div>
       {entries.length === 0 ? (
         <p className="muted">Nothing needs attention.</p>

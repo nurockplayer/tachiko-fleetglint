@@ -39,6 +39,24 @@ describe("Overview", () => {
     ).toBeInTheDocument();
   });
 
+  it("says a cut list is not the whole list", () => {
+    const cut = structuredClone(snapshot);
+    cut.truncated.runs = true;
+    cut.truncated.sessions = true;
+    render(<Overview snapshot={cut} />);
+
+    const runs = screen.getByLabelText("Runs");
+    expect(
+      within(runs).getByText(/showing the newest 10 runs; more exist/),
+    ).toBeInTheDocument();
+    expect(within(runs).queryByText(/\d+ active/)).toBeNull();
+
+    const sessions = screen.getByLabelText("Sessions");
+    expect(
+      within(sessions).getByText(/showing the newest 3 sessions; more exist/),
+    ).toBeInTheDocument();
+  });
+
   it("groups non-terminal runs by project and keeps terminal runs collapsed", () => {
     const { container } = render(<Overview snapshot={snapshot} />);
     const groups = Array.from(container.querySelectorAll(".row-group-head strong")).map(

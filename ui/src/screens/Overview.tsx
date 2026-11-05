@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { RunSummary, Snapshot } from "../api/types";
 import { isTerminal } from "../states";
 import { CountTile, JobRow, RunRow, SessionRow } from "../components/Rows";
-import { EmptyState } from "../components/Panels";
+import { EmptyState, TruncationNote } from "../components/Panels";
 
 type Grouping = "project" | "role";
 
@@ -49,8 +49,9 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
       <div className="screen-head">
         <h1>Overview</h1>
         <p className="summary-line">
-          {projects.size} projects · {snapshot.runs.length} runs · {snapshot.jobs.length} jobs
-          · read-only
+          {projects.size} projects · {snapshot.runs.length}
+          {snapshot.truncated.runs ? "+" : ""} runs · {snapshot.jobs.length}
+          {snapshot.truncated.jobs ? "+" : ""} jobs · read-only
         </p>
       </div>
 
@@ -84,7 +85,11 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
       <section className="section" aria-label="Runs">
         <div className="section-head">
           <h2>Runs</h2>
-          <span className="count">{active.length} active</span>
+          {snapshot.truncated.runs ? (
+            <TruncationNote truncated shown={snapshot.runs.length} noun="runs" />
+          ) : (
+            <span className="count">{active.length} active</span>
+          )}
           <div className="grouping">
             <span className="label">group by</span>
             <button
@@ -119,7 +124,11 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
       <section className="section" aria-label="Jobs">
         <div className="section-head">
           <h2>Jobs</h2>
-          <span className="count">{snapshot.jobs.length}</span>
+          {snapshot.truncated.jobs ? (
+            <TruncationNote truncated shown={snapshot.jobs.length} noun="jobs" />
+          ) : (
+            <span className="count">{snapshot.jobs.length}</span>
+          )}
         </div>
         {snapshot.jobs.map((job) => (
           <JobRow key={`${job.ref.source_id}/${job.ref.id}`} job={job} />
@@ -129,7 +138,11 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
       <section className="section" aria-label="Sessions">
         <div className="section-head">
           <h2>Sessions</h2>
-          <span className="count">{snapshot.sessions.length}</span>
+          {snapshot.truncated.sessions ? (
+            <TruncationNote truncated shown={snapshot.sessions.length} noun="sessions" />
+          ) : (
+            <span className="count">{snapshot.sessions.length}</span>
+          )}
         </div>
         <p className="hint">
           found in local history; activity, not proof of execution
@@ -144,7 +157,8 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
       {terminal.length > 0 ? (
         <details className="terminal-runs">
           <summary>
-            Recent terminal runs ({terminal.length}) — done work recedes
+            Recent terminal runs ({terminal.length}
+            {snapshot.truncated.runs ? "+" : ""}) — done work recedes
           </summary>
           {terminal.map((run) => (
             <RunRow key={`${run.ref.source_id}/${run.ref.id}`} run={run} />
