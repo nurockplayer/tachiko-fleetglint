@@ -132,8 +132,7 @@ class Ingestor:
     def _ingest_source(self, source_id, segments):
         # Files retention retired in the database but did not unlink yet (crash after COMMIT).
         segments = {seq: value for seq, value in segments.items()
-                    if not (self._retention_explains(source_id, seq)
-                            and store.get_segment(self.conn, source_id, seq) is None)}
+                    if self._retired(source_id, seq) is None}
         seqs = sorted(segments)
         if not seqs:
             checkpoint = store.get_checkpoint(self.conn, source_id)
@@ -543,15 +542,52 @@ class Ingestor:
             conn.execute("ROLLBACK")
             self._pending_unlink = []
             raise
-        for path in self._pending_unlink:
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
+        self._unlink_retired(self._pending_unlink)
         self._pending_unlink = []
 
+    @staticmethod
+    def _retired_key(source_id, seq):
+        return f"retired:{source_id}:{seq}"
+
+    def _unlink_retired(self, retired):
+        """Unlink retired files that still match what was ingested, then forget them."""
+        done = []
+        for source_id, seq, paths, length, fingerprint in retired:
+            for path in paths:
+                try:
+                    current, current_length = _fingerprint(path, path.name.endswith(".gz"))
+                except FileNotFoundError:
+                    continue
+                except (OSError, EOFError, zlib.error):
+                    break
+                if (current_length, current) != (length, fingerprint):
+                    break  # replaced since it was retired: never delete someone else's file
+                path.unlink(missing_ok=True)
+            else:
+                done.append(self._retired_key(source_id, seq))
+        if done:
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                self.conn.executemany("DELETE FROM meta WHERE key = ?", [(key,) for key in done])
+                self.conn.execute("COMMIT")
+            except BaseException:
+                self.conn.execute("ROLLBACK")
+                raise
+
+    def _retired(self, source_id, seq):
+        """(length, fingerprint) recorded when retention retired this segment, or None."""
+        value = store.get_meta(self.conn, self._retired_key(source_id, seq))
+        if value is None:
+            return None
+        try:
+            data = json.loads(value)
+            return data["length"], data["fingerprint"]
+        except (ValueError, KeyError, TypeError):
+            return None
+
     def _unlink_retired_leftovers(self, allowed_roots):
-        """Remove files retention already retired in the database (seq <= marker, no row)."""
+        """Finish deletions a crash interrupted after COMMIT (verified against the recorded content)."""
+        retired = []
         for source in self.conn.execute(
                 "SELECT * FROM sources WHERE kind = 'ndjson' AND root IS NOT NULL").fetchall():
             directory = self._retention_dir(source, allowed_roots)
@@ -562,12 +598,10 @@ class Ingestor:
             except OSError:
                 continue
             for seq, (path, _compressed) in segments.items():
-                if (self._retention_explains(source["source_id"], seq)
-                        and store.get_segment(self.conn, source["source_id"], seq) is None):
-                    try:
-                        path.unlink()
-                    except FileNotFoundError:
-                        pass
+                recorded = self._retired(source["source_id"], seq)
+                if recorded is not None:
+                    retired.append((source["source_id"], seq, [path], *recorded))
+        self._unlink_retired(retired)
 
     def _retain_segments(self, source, segment_cutoff, abandon_cutoff, allowed_roots):
         conn = self.conn
@@ -604,7 +638,9 @@ class Ingestor:
                 if _blocks_retention(record, abandon_cutoff)]
             if blockers:
                 return changed, blockers
-            self._pending_unlink.extend(paths)
+            self._pending_unlink.append((source_id, seq, paths, row["length"], row["fingerprint"]))
+            store.set_meta(conn, self._retired_key(source_id, seq),
+                           json.dumps({"length": row["length"], "fingerprint": row["fingerprint"]}))
             store.delete_segment(conn, source_id, seq)
             store.set_meta(conn, self._retention_marker_key(source_id), seq)
             changed = True

@@ -517,6 +517,18 @@ class IngestTest(unittest.TestCase):
         self.retain()
         self.assertFalse(self.segment_path(1).exists())
 
+    def test_crash_cleanup_never_deletes_a_replaced_file(self):
+        self.write_segment([run(state="done")], seq=1)
+        self.write_segment([run(id="r2", state="done", updated_at=stamp(minutes=1))], seq=2)
+        self.ing.scan_roots()
+        self.make_old(self.segment_path(1))
+        with mock.patch.object(Path, "unlink", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.retain()
+        self.segment_path(1).write_text("someone else's file\n")
+        self.retain()
+        self.assertEqual(self.segment_path(1).read_text(), "someone else's file\n")
+
     def test_retention_keeps_segment_with_non_terminal_record(self):
         self.write_segment([run(id="r1")], seq=1)
         self.write_segment([run(id="r2", updated_at=stamp(minutes=1))], seq=2)
