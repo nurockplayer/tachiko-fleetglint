@@ -2,6 +2,7 @@
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 
 _NOT_UTF8_RATIO = 0.10
@@ -16,6 +17,27 @@ def _inside(path, roots):
     return any(path.is_relative_to(root) for root in roots)
 
 
+def _opened_path(fd):
+    """The path the open fd names, or None when the OS cannot report it.
+
+    Re-checking containment on this closes the window in which an intermediate
+    directory can be swapped for a symlink between realpath and open.
+    """
+    if sys.platform.startswith("linux"):
+        try:
+            return os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            return None
+    if sys.platform == "darwin":
+        import fcntl
+        try:
+            value = fcntl.fcntl(fd, fcntl.F_GETPATH, b"\0" * 1024)
+        except (OSError, ValueError):
+            return None
+        return os.fsdecode(value.split(b"\0", 1)[0])
+    return None
+
+
 def _open_regular(path, allowed_roots):
     """(fd, size) for an allowed regular file, else (None, reason)."""
     try:
@@ -26,8 +48,9 @@ def _open_regular(path, allowed_roots):
         return None, "no_path"
     if not os.path.isabs(path):
         return None, "outside_allowed_roots"
+    roots = _resolved_roots(allowed_roots)
     resolved = Path(os.path.realpath(path))
-    if not _inside(resolved, _resolved_roots(allowed_roots)):
+    if not _inside(resolved, roots):
         return None, "outside_allowed_roots"
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
@@ -44,6 +67,10 @@ def _open_regular(path, allowed_roots):
     if not stat.S_ISREG(info.st_mode):
         os.close(fd)
         return None, "not_regular_file"
+    actual = _opened_path(fd)
+    if actual is None or not _inside(Path(actual), roots):
+        os.close(fd)
+        return None, "outside_allowed_roots"
     return fd, info.st_size
 
 

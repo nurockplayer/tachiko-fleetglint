@@ -233,6 +233,10 @@ class ProcessCheckerTest(unittest.TestCase):
         child = subprocess.Popen([sys.executable, "-c", "pass"])
         child.wait()
         self.assertIs(self.checker.check({"host": short_hostname(), "pid": child.pid}), False)
+        # A recorded start_time must not turn a dead pid into "cannot check".
+        self.assertIs(self.checker.check({"host": short_hostname(), "pid": child.pid,
+                                          "start_time": datetime.now(timezone.utc).isoformat()}),
+                      False)
 
 
 if __name__ == "__main__":

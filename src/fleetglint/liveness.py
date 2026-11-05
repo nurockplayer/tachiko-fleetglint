@@ -191,14 +191,13 @@ class ProcessChecker:
             return False
         want = _parse_ts(process.get("start_time"))
         actual = _process_start_time(pid)
+        alive = _alive(pid)
+        if alive is not True:
+            return alive  # False: the pid is gone; None: the OS will not tell us
         if actual is None:
-            # The start time is unavailable: fall back to plain existence, which
-            # cannot answer the question when the record gives one.
-            if want is not None:
-                return None
-            return _alive(pid)
-        if not _alive(pid):
-            return False
+            # The process exists but its start time cannot be read. Without a
+            # start_time in the record that is still evidence it is alive.
+            return None if want is not None else True
         if want is None:
             return True
         return abs(actual - want.timestamp()) <= START_TIME_TOLERANCE_S

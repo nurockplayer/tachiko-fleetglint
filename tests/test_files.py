@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from fleetglint import files
 
@@ -54,6 +55,28 @@ class ReadTailTest(unittest.TestCase):
         secret = self.write("secret.txt", b"secret", root=outside)
         path = self.root / ".." / "outside" / secret.name
         self.assertEqual(self.read(path), {"readable": False, "reason": "outside_allowed_roots"})
+
+    def test_intermediate_symlink_swap_is_caught(self):
+        outside = self.base / "outside"
+        outside.mkdir()
+        (outside / "key").write_bytes(b"secret")
+        job = self.root / "job"
+        job.mkdir()
+        (job / "key").write_bytes(b"inside")
+
+        real_open = os.open
+        swapped = []
+
+        def swapping_open(target, flags, *args, **kwargs):
+            if not swapped:  # runs between realpath and open
+                swapped.append(True)
+                job.rename(self.base / "job-old")
+                job.symlink_to(outside)
+            return real_open(target, flags, *args, **kwargs)
+
+        with mock.patch.object(files.os, "open", side_effect=swapping_open):
+            result = self.read(job / "key")
+        self.assertEqual(result, {"readable": False, "reason": "outside_allowed_roots"})
 
     def test_prefix_sibling_directory_is_outside(self):
         sibling = self.base / "root2"
