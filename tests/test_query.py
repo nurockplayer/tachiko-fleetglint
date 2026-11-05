@@ -39,8 +39,10 @@ def stamp(**delta):
 
 
 def run(id="r1", state="running", source_id="work@mbp", **extra):
+    # `started_at` is required by schema/v1 for every non-queued/unknown state.
     record = {"v": 1, "type": "run", "id": id, "source_id": source_id,
-              "updated_at": stamp(seconds=-30), "state": state, "agent": "codex-cli"}
+              "updated_at": stamp(seconds=-30), "state": state, "agent": "codex-cli",
+              "started_at": stamp(minutes=-10)}
     record.update(extra)
     return record
 
@@ -48,7 +50,7 @@ def run(id="r1", state="running", source_id="work@mbp", **extra):
 def job(id="j1", state="running", source_id="work@mbp", **extra):
     record = {"v": 1, "type": "job", "id": id, "source_id": source_id,
               "updated_at": stamp(seconds=-30), "state": state,
-              "command_summary": "orb-test"}
+              "command_summary": "orb-test", "started_at": stamp(minutes=-10)}
     record.update(extra)
     return record
 
@@ -124,7 +126,8 @@ class QueryTest(unittest.TestCase):
             run("unknown-1", state="unknown", updated_at=stamp(minutes=-5)),
             run("done-1", state="done", updated_at=stamp(minutes=-10),
                 ended_at=stamp(minutes=-10), exit_code=0),
-            run("old-done", state="done", updated_at=stamp(hours=-30)),
+            run("old-done", state="done", updated_at=stamp(hours=-30),
+                ended_at=stamp(hours=-30)),
         ])
         self.write("work@mbp", [
             job("j-1", run={"type": "run", "id": "lead-1"},
@@ -132,7 +135,8 @@ class QueryTest(unittest.TestCase):
                 log_path=str(self.log_path)),
             job("j-done", state="done", run={"type": "run", "id": "lead-1"},
                 updated_at=stamp(minutes=-20), ended_at=stamp(minutes=-20), exit_code=0),
-            job("j-old", state="failed", updated_at=stamp(hours=-30)),
+            job("j-old", state="failed", updated_at=stamp(hours=-30),
+                ended_at=stamp(hours=-30)),
         ], seq=2)
         self.write("work@mbp", [
             inbox("i-action", role_id="lead", action_required=True,
@@ -175,9 +179,15 @@ class QueryTest(unittest.TestCase):
         for adapter in (cfg.harness, cfg.claude_code, cfg.codex):
             adapter.enabled = "false"
 
-    def write(self, source_id, records, seq=1):
+    def write(self, source_id, records, seq=None):
         directory = self.root / source_id
         directory.mkdir(parents=True, exist_ok=True)
+        if seq is None:
+            # Segments must be contiguous (spec §7.4), so continue after the last one.
+            existing = [int(path.name[:10]) for path in directory.iterdir()
+                        if path.name[:10].isdigit()
+                        and path.name.endswith((".ndjson", ".ndjson.gz"))]
+            seq = max(existing, default=0) + 1
         path = directory / f"{seq:010d}.ndjson"
         path.write_text("".join(json.dumps(record) + "\n" for record in records),
                         encoding="utf-8")
@@ -318,7 +328,7 @@ class QueryTest(unittest.TestCase):
     def test_unresolved_refs(self):
         self.write("work@mbp", [
             run("r-ghost", parent_run={"type": "run", "id": "missing"}),
-        ], seq=5)
+        ])
         self.ing.scan_roots()
         item = self.by_id(self.snapshot()["runs"])["r-ghost"]
         self.assertEqual(item["parent_run"],
@@ -444,7 +454,7 @@ class QueryTest(unittest.TestCase):
         # Written oldest first, as a real writer appends them.
         records = [run("busy", updated_at=stamp(minutes=-(59 - index)))
                    for index in range(60)]
-        self.write("work@mbp", records, seq=6)
+        self.write("work@mbp", records)
         self.ing.scan_roots()
         data = self.backend.record(NOW, "work@mbp", "run", "busy")
         self.assertEqual(len(data["history"]), 50)
@@ -487,7 +497,7 @@ class QueryTest(unittest.TestCase):
             job("j-out", log_path=str(self.outside_path)),
             job("j-missing", log_path=str(self.root / "work@mbp" / "nope.log")),
             job("j-nopath"),
-        ], seq=7)
+        ])
         self.ing.scan_roots()
         outside = self.backend.file(NOW, "work@mbp", "job", "j-out", "log_path", None)
         self.assertEqual(outside, {"api": 1, "readable": False,
@@ -547,7 +557,7 @@ class QueryTest(unittest.TestCase):
 
     def test_change_counter_moves_with_ingestion(self):
         before = self.backend.change_counter()
-        self.write("work@mbp", [run("counter-1", updated_at=stamp(seconds=-1))], seq=8)
+        self.write("work@mbp", [run("counter-1", updated_at=stamp(seconds=-1))])
         self.ing.scan_roots()
         self.assertGreater(self.backend.change_counter(), before)
 

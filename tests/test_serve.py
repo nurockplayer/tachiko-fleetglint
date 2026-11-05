@@ -19,7 +19,8 @@ def real_stamp():
 
 def job(id, state, **extra):
     record = {"v": 1, "type": "job", "id": id, "source_id": "work@mbp",
-              "updated_at": real_stamp(), "state": state, "command_summary": "sleep 5"}
+              "updated_at": real_stamp(), "state": state, "command_summary": "sleep 5",
+              "started_at": real_stamp()}
     record.update(extra)
     return record
 
@@ -92,7 +93,8 @@ class ServeTest(unittest.TestCase):
         self.assertEqual(item["evidence"]["kind"], "observed")
 
         # A terminal update shows up without a restart.
-        emit.append_record(job("live-1", "done", exit_code=0), self.root)
+        emit.append_record(job("live-1", "done", exit_code=0, ended_at=real_stamp()),
+                           self.root)
         snap = self.poll("/api/snapshot", lambda snap: any(
             item["ref"]["id"] == "live-1" and item["state"] == "done"
             for item in snap["jobs"]))
