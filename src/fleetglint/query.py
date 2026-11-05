@@ -26,6 +26,9 @@ _SOURCES_SQL = (
     " FROM sources s ORDER BY s.source_id")
 
 
+_LOOKUP_KEYS = frozenset({"id", "source_id"})
+
+
 def _text(value, limit=None):
     """A redacted string (spec §9), optionally cut to `limit` characters."""
     if not isinstance(value, str):
@@ -42,6 +45,18 @@ def _redact_json(value):
         return [_redact_json(item) for item in value]
     if isinstance(value, dict):
         return {key: _redact_json(item) for key, item in value.items()}
+    return value
+
+
+def _redact_response(value):
+    """Every string leaving the API is redacted (spec §9), except the ids clients look records up by."""
+    if isinstance(value, str):
+        return redact.redact(value)[0]
+    if isinstance(value, list):
+        return [_redact_response(item) for item in value]
+    if isinstance(value, dict):
+        return {key: item if key in _LOOKUP_KEYS else _redact_response(item)
+                for key, item in value.items()}
     return value
 
 
@@ -322,7 +337,7 @@ class QueryBackend:
         if conn is None:
             return self._empty_snapshot(now)
         try:
-            return self._snapshot(conn, now)
+            return _redact_response(self._snapshot(conn, now))
         finally:
             conn.close()
 
@@ -417,7 +432,7 @@ class QueryBackend:
             view = self._view(conn, now)
             record = view.record(row)
             usage = record.get("usage")
-            return {
+            return _redact_response({
                 "api": 1,
                 "generated_at": now.isoformat(),
                 "record": view.summary(row),
@@ -425,7 +440,7 @@ class QueryBackend:
                 "relations": _relations(view, row, record),
                 "history": self._history(conn, row),
                 "usage": usage if isinstance(usage, dict) else None,
-            }
+            })
         finally:
             conn.close()
 
@@ -457,7 +472,7 @@ class QueryBackend:
             return {"api": 1, "readable": False, "reason": "no_path"}
         result = files.read_tail(path, self.allowed_roots,
                                  self.cfg.max_tail_kib * 1024, redact=redact.redact)
-        return {"api": 1, **result}
+        return _redact_response({"api": 1, **result})
 
     def quarantine(self, source_id):
         conn = self._open()
@@ -468,7 +483,7 @@ class QueryBackend:
                 return None
             return [{
                 "position": f"{row['seq']:010d}:{row['byte_offset']}",
-                "reason": row["reason"],
+                "reason": _text(row["reason"]),
                 "excerpt": _text(row["excerpt"]),
             } for row in store.quarantine_for(conn, source_id, QUARANTINE_LIMIT)]
         finally:
