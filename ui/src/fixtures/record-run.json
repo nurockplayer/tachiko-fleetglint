@@ -1,0 +1,104 @@
+{
+  "api": 1,
+  "generated_at": "2026-11-06T04:00:00+09:00",
+  "record": {
+    "ref": { "type": "run", "id": "old-worker-88", "source_id": "tachiko-harness@mbp" },
+    "state": "running",
+    "display_state": "stale",
+    "evidence": { "kind": "expired", "age_s": 2520, "detail": null },
+    "updated_at": "2026-11-06T03:18:00+09:00",
+    "observed_at": "2026-11-06T03:18:00+09:00",
+    "project": "tachiko-harness",
+    "title": "migration replay: checkpoint rebuild",
+    "links": [
+      {
+        "label": "worker log",
+        "path": "/Users/me/.local/state/ds-exec/old-worker-88.log",
+        "readable": true
+      },
+      {
+        "label": "PR",
+        "url": "https://github.com/nurockplayer/tachiko-harness/pull/412"
+      }
+    ],
+    "agent": "codex-cli",
+    "model": "gpt-6.1-terra",
+    "provider": "openai",
+    "effort": "high",
+    "role_id": "gteki-ops",
+    "session_id": "019a4b2e-7ee4-7d0a-9b52-1f9f4c1a2b3c",
+    "started_at": "2026-11-06T02:36:00+09:00",
+    "ended_at": null,
+    "exit_code": null,
+    "summary": "Replaying the checkpoint rebuild against the retained segments.",
+    "parent_run": null,
+    "resume_of": null,
+    "waits_on": []
+  },
+  "full": {
+    "v": 1,
+    "type": "run",
+    "id": "old-worker-88",
+    "source_id": "tachiko-harness@mbp",
+    "updated_at": "2026-11-06T03:18:00+09:00",
+    "observed_at": "2026-11-06T03:18:00+09:00",
+    "stale_after_s": 900,
+    "project": "tachiko-harness",
+    "title": "migration replay: checkpoint rebuild",
+    "state": "running",
+    "agent": "codex-cli",
+    "model": "gpt-6.1-terra",
+    "provider": "openai",
+    "effort": "high",
+    "role_id": "gteki-ops",
+    "started_at": "2026-11-06T02:36:00+09:00",
+    "summary": "Replaying the checkpoint rebuild against the retained segments.",
+    "links": [
+      {
+        "label": "worker log",
+        "path": "/Users/me/.local/state/ds-exec/old-worker-88.log"
+      },
+      {
+        "label": "PR",
+        "url": "https://github.com/nurockplayer/tachiko-harness/pull/412"
+      }
+    ]
+  },
+  "relations": {
+    "parent": null,
+    "resume_of": null,
+    "children": [
+      {
+        "type": "run",
+        "id": "old-worker-88-retry",
+        "source_id": "tachiko-harness@mbp",
+        "resolved": false
+      }
+    ],
+    "resumed_by": [],
+    "jobs": [],
+    "inbox": [],
+    "waited_on_by": []
+  },
+  "history": [
+    {
+      "seq": 4,
+      "byte_offset": 1832,
+      "updated_at": "2026-11-06T03:18:00+09:00",
+      "state": "running"
+    },
+    {
+      "seq": 4,
+      "byte_offset": 1204,
+      "updated_at": "2026-11-06T02:36:10+09:00",
+      "state": "running"
+    }
+  ],
+  "usage": {
+    "basis": "measured",
+    "input_tokens": 48210,
+    "cached_input_tokens": 30000,
+    "output_tokens": 3120,
+    "cost": { "amount": 0.74, "currency": "USD", "basis": "api_equivalent" }
+  }
+}

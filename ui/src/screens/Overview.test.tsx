@@ -1,0 +1,52 @@
+import { render, screen, within } from "@testing-library/react";
+import { Overview } from "./Overview";
+import { snapshot, snapshotEmpty } from "../test-fixtures";
+
+describe("Overview", () => {
+  it("renders the empty state when there are no sources and no records", () => {
+    render(<Overview snapshot={snapshotEmpty} />);
+    expect(screen.getByText("No sources yet")).toBeInTheDocument();
+    expect(screen.getByText(/Claude Code transcripts/)).toBeInTheDocument();
+    expect(screen.getByText(/Codex rollouts/)).toBeInTheDocument();
+    expect(screen.getByText(/tachiko-harness state/)).toBeInTheDocument();
+    expect(screen.getByText(/NDJSON root/)).toBeInTheDocument();
+    expect(screen.getByText("fleetglint doctor")).toBeInTheDocument();
+    expect(screen.getByText("fleetglint demo")).toBeInTheDocument();
+    expect(screen.getByText(/fleetglint emit <<'EOF'/)).toBeInTheDocument();
+  });
+
+  it("lists sessions with a neutral explanation and activity ages", () => {
+    render(<Overview snapshot={snapshot} />);
+    const sessions = screen.getByLabelText("Sessions");
+    expect(
+      within(sessions).getByText(
+        "found in local history; activity, not proof of execution",
+      ),
+    ).toBeInTheDocument();
+    const activities = Array.from(sessions.querySelectorAll(".session-activity")).map(
+      (node) => node.textContent,
+    );
+    expect(activities[0]).toMatch(/^recent \d/);
+    expect(activities[1]).toMatch(/^idle \d/);
+    expect(activities[2]).toBe("ended");
+    expect(within(sessions).getAllByText(/claude-opus-5-5/).length).toBeGreaterThan(0);
+  });
+
+  it("shows the waits-on reference for a waiting run", () => {
+    render(<Overview snapshot={snapshot} />);
+    expect(
+      screen.getByText(/waits on → github_pr · nurockplayer\/eddington-1919#176/),
+    ).toBeInTheDocument();
+  });
+
+  it("groups non-terminal runs by project and keeps terminal runs collapsed", () => {
+    const { container } = render(<Overview snapshot={snapshot} />);
+    const groups = Array.from(container.querySelectorAll(".row-group-head strong")).map(
+      (node) => node.textContent,
+    );
+    expect(groups).toEqual(["eddington-1919", "tachiko-harness", "fleetglint"]);
+    const terminal = container.querySelector("details.terminal-runs");
+    expect(terminal).toBeTruthy();
+    expect(terminal?.hasAttribute("open")).toBe(false);
+  });
+});

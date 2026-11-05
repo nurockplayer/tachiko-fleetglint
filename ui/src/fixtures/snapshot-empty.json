@@ -1,0 +1,21 @@
+{
+  "api": 1,
+  "generated_at": "2026-11-06T04:00:00+09:00",
+  "server": { "version": "0.1.0", "host": "mbp", "read_only": true },
+  "window_hours": 24,
+  "sources": [],
+  "counts": {
+    "running": 0,
+    "waiting": 0,
+    "attention": 0,
+    "stale_lost_unknown": 0,
+    "sessions_recent": 0
+  },
+  "runs": [],
+  "jobs": [],
+  "inbox": [],
+  "sessions": [],
+  "attention": [],
+  "truncated": { "runs": false, "jobs": false, "inbox": false, "sessions": false },
+  "demo": false
+}

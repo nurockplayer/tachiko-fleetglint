@@ -1,0 +1,172 @@
+/*
+ * Fleetglint design tokens (v0.1).
+ * Hand-generated from the TOKENS object in design/figma-plugin/code.js:
+ * primitives (for reference), then the semantic layer used by the app.
+ * Dark mode only; the brief leaves room for a light mode later.
+ */
+:root {
+  /* primitives: neutral */
+  --neutral-0: #04060a;
+  --neutral-50: #080c11;
+  --neutral-100: #0d1218;
+  --neutral-115: #0f1620;
+  --neutral-150: #10151b;
+  --neutral-200: #111820;
+  --neutral-250: #131b24;
+  --neutral-300: #141a22;
+  --neutral-350: #17202a;
+  --neutral-380: #1a2430;
+  --neutral-400: #1a1d21;
+  --neutral-450: #1f2a36;
+  --neutral-500: #26333f;
+  --neutral-600: #2b3743;
+  --neutral-650: #3e4c5c;
+  --neutral-700: #4a5766;
+  --neutral-750: #5a6a80;
+  --neutral-760: #5c6b7d;
+  --neutral-780: #6b7480;
+  --neutral-800: #6e8199;
+  --neutral-820: #7a8798;
+  --neutral-840: #8593a5;
+  --neutral-900: #a8b0ba;
+  --neutral-950: #9fb0c4;
+  --neutral-1000: #b8c4d2;
+  --neutral-1050: #c9d6e4;
+  --neutral-1100: #e8eef6;
+
+  /* primitives: accents */
+  --accent-950: #0c2c23;
+  --accent-900: #0a2a22;
+  --accent-700: #14795e;
+  --accent-600: #1fa37d;
+  --accent-500: #33d1a0;
+  --accent-400: #6bebc0;
+  --green-900: #0d2417;
+  --green-700: #2e7d4f;
+  --green-500: #62c98a;
+  --green-400: #8fe0ac;
+  --amber-900: #2b1f0a;
+  --amber-700: #8a5d14;
+  --amber-500: #d9a03f;
+  --amber-400: #f0c270;
+  --red-900: #2b1012;
+  --red-650: #c24a4a;
+  --red-500: #e86a6a;
+  --red-400: #ff8f8f;
+  --violet-900: #1d1330;
+  --violet-600: #8a5ec2;
+  --violet-500: #b37be8;
+  --violet-400: #cda2f5;
+  --grey-900: #161c23;
+  --grey-750: #5f6e7e;
+  --grey-500: #9aa6b5;
+  --warm-900: #1a1712;
+  --warm-700: #7a6e55;
+  --warm-500: #c7b89c;
+  --orange-900: #3a1a05;
+  --orange-400: #ff7a3d;
+  --orange-200: #ffd9a8;
+  --blue-900: #0e2233;
+  --blue-400: #8cc4ff;
+
+  /* semantic: surfaces */
+  --surface-canvas: var(--neutral-50);
+  --surface-chrome: var(--neutral-100);
+  --surface-panel: var(--neutral-200);
+  --surface-raised: var(--neutral-350);
+  --surface-overlay: var(--neutral-450);
+  --surface-row-hover: var(--neutral-250);
+  --surface-row-selected: var(--accent-950);
+
+  /* semantic: text */
+  --text-primary: var(--neutral-1100);
+  --text-secondary: var(--neutral-1000);
+  --text-meta: var(--neutral-840);
+  --text-disabled: var(--neutral-760);
+  --text-mono-data: var(--neutral-1050);
+  --text-link: var(--blue-400);
+
+  /* semantic: lines */
+  --line-divider: var(--neutral-600);
+  --line-boundary: var(--neutral-750);
+  --line-focus: var(--blue-400);
+  --line-relationship: var(--neutral-800);
+  --line-unresolved: var(--amber-500);
+
+  /* semantic: state families (fg / bg / border) */
+  --state-queued-fg: var(--neutral-840);
+  --state-queued-bg: var(--neutral-115);
+  --state-queued-border: var(--neutral-750);
+  --state-running-fg: var(--accent-500);
+  --state-running-bg: var(--accent-900);
+  --state-running-border: var(--accent-600);
+  --state-waiting-fg: var(--amber-400);
+  --state-waiting-bg: var(--amber-900);
+  --state-waiting-border: var(--amber-500);
+  --state-done-fg: var(--green-400);
+  --state-done-bg: var(--green-900);
+  --state-done-border: var(--green-700);
+  --state-failed-fg: var(--red-400);
+  --state-failed-bg: var(--red-900);
+  --state-failed-border: var(--red-650);
+  --state-cancelled-fg: var(--grey-500);
+  --state-cancelled-bg: var(--grey-900);
+  --state-cancelled-border: var(--grey-750);
+  --state-stale-fg: var(--warm-500);
+  --state-stale-bg: var(--warm-900);
+  --state-stale-border: var(--warm-700);
+  --state-lost-fg: var(--violet-400);
+  --state-lost-bg: var(--violet-900);
+  --state-lost-border: var(--violet-600);
+  --state-unknown-fg: var(--neutral-900);
+  --state-unknown-bg: var(--neutral-400);
+  --state-unknown-border: var(--neutral-780);
+  --state-attention-fg: var(--orange-200);
+  --state-attention-bg: var(--orange-900);
+  --state-attention-border: var(--orange-400);
+  --state-inbox-open-fg: var(--neutral-1000);
+  --state-inbox-open-bg: var(--neutral-300);
+  --state-inbox-open-border: var(--neutral-750);
+  --state-inbox-acked-fg: var(--neutral-820);
+  --state-inbox-acked-bg: var(--neutral-150);
+  --state-inbox-acked-border: var(--neutral-750);
+
+  /* semantic: provenance */
+  --provenance-source-chip-bg: var(--neutral-380);
+  --provenance-source-chip-fg: var(--neutral-950);
+  --provenance-age-fresh: var(--neutral-840);
+  --provenance-age-old: var(--amber-500);
+
+  /* typography */
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text-row: 13px;
+  --text-meta: 12px;
+  --text-badge: 12px;
+  --text-heading: 16px;
+  --text-heading-lg: 20px;
+  --text-number: 28px;
+
+  /* spacing on a 4 px base */
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+
+  /* geometry */
+  --radius-0: 0;
+  --radius-2: 2px;
+  --radius-4: 4px;
+  --radius-8: 8px;
+  --row-compact: 28px;
+  --row-default: 32px;
+
+  /* motion */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-ambient: 1600ms;
+}

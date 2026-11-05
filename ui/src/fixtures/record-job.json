@@ -1,0 +1,85 @@
+{
+  "api": 1,
+  "generated_at": "2026-11-06T04:00:00+09:00",
+  "record": {
+    "ref": { "type": "job", "id": "build-fg-1", "source_id": "my-workflow@mbp" },
+    "state": "failed",
+    "display_state": "failed",
+    "evidence": { "kind": "terminal", "age_s": null, "detail": null },
+    "updated_at": "2026-11-06T03:34:00+09:00",
+    "observed_at": "2026-11-06T03:34:00+09:00",
+    "project": "fleetglint",
+    "title": "web build",
+    "links": [],
+    "kind": "build",
+    "command_summary": "pnpm build --filter web",
+    "run": {
+      "type": "run",
+      "id": "ds-fg-2-20261105-0800",
+      "source_id": "my-workflow@mbp",
+      "resolved": true,
+      "display_state": "failed",
+      "title": "figma plugin: build the token builder"
+    },
+    "role_id": "fleetglint-lead",
+    "started_at": "2026-11-06T03:30:00+09:00",
+    "ended_at": "2026-11-06T03:34:00+09:00",
+    "exit_code": 1,
+    "signal": null,
+    "summary": "Build failed: TS2304 in packages/web/src/board.ts.",
+    "log": { "path": "/Users/me/.local/state/job-run/build-fg-1/log", "readable": true },
+    "result": null
+  },
+  "full": {
+    "v": 1,
+    "type": "job",
+    "id": "build-fg-1",
+    "source_id": "my-workflow@mbp",
+    "updated_at": "2026-11-06T03:34:00+09:00",
+    "project": "fleetglint",
+    "title": "web build",
+    "state": "failed",
+    "command_summary": "pnpm build --filter web",
+    "kind": "build",
+    "run": { "type": "run", "id": "ds-fg-2-20261105-0800" },
+    "started_at": "2026-11-06T03:30:00+09:00",
+    "ended_at": "2026-11-06T03:34:00+09:00",
+    "exit_code": 1,
+    "signal": null,
+    "summary": "Build failed: TS2304 in packages/web/src/board.ts.",
+    "log_path": "/Users/me/.local/state/job-run/build-fg-1/log"
+  },
+  "relations": {
+    "parent": null,
+    "resume_of": null,
+    "children": [],
+    "resumed_by": [],
+    "jobs": [],
+    "inbox": [
+      {
+        "type": "inbox_item",
+        "id": "ev-20261106-033410-8c1a",
+        "source_id": "my-workflow@mbp",
+        "resolved": true,
+        "display_state": "open",
+        "title": "build failed"
+      }
+    ],
+    "waited_on_by": []
+  },
+  "history": [
+    {
+      "seq": 6,
+      "byte_offset": 2201,
+      "updated_at": "2026-11-06T03:34:00+09:00",
+      "state": "failed"
+    },
+    {
+      "seq": 6,
+      "byte_offset": 1850,
+      "updated_at": "2026-11-06T03:30:00+09:00",
+      "state": "running"
+    }
+  ],
+  "usage": null
+}
