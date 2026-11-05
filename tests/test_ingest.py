@@ -569,10 +569,12 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(store.get_source(self.conn, "tool@host")["kind"], "adapter")
         self.assertEqual(store.get_checkpoint(self.conn, "tool@host")["byte_offset"], 1)
 
+        counter = store.get_change_counter(self.conn)
         refreshed = dict(run(source_id="tool@host"), observed_at=stamp(minutes=5))
         adapter.records = [refreshed]
         ingestor.scan_adapters()
         self.assertEqual(self.history_count(), 1)
+        self.assertEqual(store.get_change_counter(self.conn), counter)
         row = store.get_latest(self.conn, "tool@host", "run", "r1")
         self.assertEqual(json.loads(row["json"])["observed_at"], stamp(minutes=5))
         self.assertEqual(row["observed_ts"], store.epoch(stamp(minutes=5)))

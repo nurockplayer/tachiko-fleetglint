@@ -96,9 +96,12 @@ def _run(exe):
 
             assets = re.findall(rb'(?:src|href)="(/assets/[^"]+)"', body)
             assert assets, "GET / links no built asset (the wheel does not ship the UI)"
-            asset = assets[0].decode("utf-8")
-            status, asset_body = _get(port, asset)
-            assert status == 200 and asset_body, f"GET {asset} returned {status}"
+            for asset in {link.decode("utf-8") for link in assets}:
+                status, asset_body = _get(port, asset)
+                assert status == 200 and asset_body, f"GET {asset} returned {status}"
+                # The server falls back to index.html for unknown paths.
+                assert not asset_body.lstrip().lower().startswith(b"<!doctype"), \
+                    f"GET {asset} returned the index page: the wheel lacks this asset"
 
             stamp = datetime.now(timezone.utc).astimezone().isoformat()
             record = {"v": 1, "type": "run", "id": "wheel-smoke",

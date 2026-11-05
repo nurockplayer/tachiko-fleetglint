@@ -486,9 +486,10 @@ class Ingestor:
                     conn.execute("RELEASE record")
                     return False
                 if _without_observed(previous) == _without_observed(record):
+                    # A fresh observed_at alone reaches clients with the ETag's time bucket.
                     store.put_latest(conn, record, 0, position)
                     conn.execute("RELEASE record")
-                    return True
+                    return False
                 changed = True
             if changed:
                 store.insert_history(conn, record, 0, position, ingested_ts)
