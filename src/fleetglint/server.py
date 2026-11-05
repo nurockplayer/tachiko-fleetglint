@@ -3,6 +3,8 @@ import http.server
 import importlib.resources
 import json
 import math
+import signal
+import socketserver
 import sqlite3
 import sys
 import threading
@@ -378,10 +380,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._respond(200, data, CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream"))
 
 
+class _Server(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer.server_bind calls socket.getfqdn, which took 35 s on a Mac with slow DNS.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
+def _raise_interrupt(signum, frame):
+    raise KeyboardInterrupt
+
+
 def make_server(backend: Backend, port: int, web_dir: Path | None = None, clock=None) -> http.server.ThreadingHTTPServer:
     """Bind 127.0.0.1:`port` (0 = ephemeral) and return the server; call serve_forever()."""
     root = Path(web_dir).resolve() if web_dir is not None else default_web_dir()
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = _Server(("127.0.0.1", port), Handler)
     server.backend = backend
     server.web_root = root
     server.clock = clock or _default_clock
@@ -429,6 +442,8 @@ def run(args) -> int:
         print(f"fleetglint serve: {exc}", file=sys.stderr)
         return 3
 
+    # `brew services stop` and launchd send SIGTERM: shut down as for Ctrl-C.
+    signal.signal(signal.SIGTERM, _raise_interrupt)
     url = f"http://127.0.0.1:{server.server_address[1]}/"
     print(f"Fleetglint on {url} (read-only)", flush=True)
     if getattr(args, "open", False):

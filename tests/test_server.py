@@ -5,7 +5,10 @@ import http.client
 import io
 import json
 import math
+import os
 import pathlib
+import signal
+import subprocess
 import sys
 import tempfile
 import threading
@@ -448,6 +451,24 @@ class ServerTest(unittest.TestCase):
 
 
 class RunTest(unittest.TestCase):
+    def test_sigterm_stops_serve_cleanly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {**os.environ, "PYTHONPATH": "src", "XDG_STATE_HOME": str(pathlib.Path(tmp) / "state"),
+                   "XDG_CONFIG_HOME": str(pathlib.Path(tmp) / "config")}
+            process = subprocess.Popen(
+                [sys.executable, "-m", "fleetglint", "serve", "--port", "0"],
+                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                self.assertIn("read-only", process.stdout.readline())
+                process.send_signal(signal.SIGTERM)
+                _, err = process.communicate(timeout=15)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+        self.assertEqual(process.returncode, 0, err)
+        self.assertNotIn("Traceback", err)
+
     def test_service_lock_held_exits_3_without_traceback(self):
         from fleetglint import config, ingest
         with tempfile.TemporaryDirectory() as tmp:
@@ -465,6 +486,16 @@ class RunTest(unittest.TestCase):
 
 
 class MakeServerTest(unittest.TestCase):
+    def test_binding_does_not_resolve_the_host_name(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch("socket.getfqdn", side_effect=AssertionError("getfqdn called")):
+            srv, thread = start_server(pathlib.Path(tmp))
+            try:
+                self.assertEqual(srv.server_name, "127.0.0.1")
+                self.assertEqual(srv.server_port, srv.server_address[1])
+            finally:
+                stop_server(srv, thread)
+
     def test_binds_loopback_only_and_reports_port(self):
         with tempfile.TemporaryDirectory() as tmp:
             srv, thread = start_server(pathlib.Path(tmp))
