@@ -22,7 +22,6 @@ jobs:
         include:
           - {os: ubuntu-latest, python: "3.11"}
           - {os: ubuntu-latest, python: "3.13"}
-          - {os: macos-latest, python: "3.13"}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -31,3 +30,26 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install -e .
       - run: python -m unittest discover -s tests -t . -v
+  python-macos:
+    # macOS arm64 hosted runners are often not acquired at all (capacity), so this runs on main only
+    # and never blocks a PR; process checks (liveness.py) are the macOS-specific code.
+    if: github.event_name == 'push'
+    continue-on-error: true
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e .
+      - run: python -m unittest discover -s tests -t . -v
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: test ! -f ui/package.json || (cd ui && pnpm install --frozen-lockfile && pnpm typecheck && pnpm test --run && pnpm build)
