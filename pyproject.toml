@@ -34,4 +34,4 @@ version = {attr = "fleetglint.__version__"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-fleetglint = ["data/*.json", "web/**/*"]
+fleetglint = ["data/*.json", "web/*", "web/**/*"]

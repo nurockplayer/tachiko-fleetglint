@@ -1,0 +1,8 @@
+include LICENSE
+include README.md
+graft src/fleetglint/web
+include src/fleetglint/data/*.json
+prune ui
+prune tests
+prune design
+prune .github

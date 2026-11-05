@@ -1,0 +1,73 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and verify everything, but do not create a GitHub Release"
+        type: boolean
+        default: true
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build UI
+        run: |
+          corepack enable
+          cd ui && pnpm install --frozen-lockfile && pnpm build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install build
+      - name: Resolve version
+        run: |
+          version=$(python -c 'import sys; sys.path.insert(0, "src"); from fleetglint import __version__; print(__version__)')
+          echo "version=$version" >> "$GITHUB_ENV"
+          echo "tag=v$version" >> "$GITHUB_ENV"
+      - name: Assert tag matches version
+        if: github.event_name == 'push'
+        run: |
+          if [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "tag $GITHUB_REF_NAME does not match v$version" >&2
+            exit 1
+          fi
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Check distributions
+        run: python scripts/check_dist.py dist
+      - name: Smoke test the wheel
+        run: |
+          python -m venv /tmp/v
+          /tmp/v/bin/pip install dist/*.whl
+          /tmp/v/bin/fleetglint version
+      - name: Write checksums
+        run: sha256sum dist/* > dist/SHA256SUMS
+      - name: Render Homebrew formula
+        run: python scripts/render_formula.py "$version" "dist/fleetglint-$version.tar.gz" > fleetglint.rb
+      - name: Create GitHub Release
+        if: github.event_name == 'push' || inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=$(mktemp)
+          if [ -f CHANGELOG.md ] && grep -q "^## \[$version\]" CHANGELOG.md; then
+            awk -v heading="## [$version]" '
+              index($0, heading) == 1 { inside = 1; next }
+              inside && /^## / { exit }
+              inside { print }
+            ' CHANGELOG.md > "$notes"
+          else
+            echo "Fleetglint $version: sdist, wheel and Homebrew formula." > "$notes"
+          fi
+          gh release create "$tag" dist/* fleetglint.rb \
+            --title "Fleetglint $tag" \
+            --notes-file "$notes"
