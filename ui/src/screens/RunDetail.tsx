@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   FileResponse,
   InboxSummary,
@@ -264,6 +264,7 @@ export function RunDetail({
     let timer: ReturnType<typeof setTimeout> | undefined;
     let etag: string | null = null;
     let last: { data: RecordResponse; receivedAt: number } | null = null;
+    let inFlight = false;
     setDetail({ data: null, receivedAt: null, error: null, loading: true });
 
     const schedule = () => {
@@ -272,12 +273,15 @@ export function RunDetail({
 
     // The detail page polls like the board: a 304 keeps the record, a failure
     // keeps it on screen greyed and labelled with its time, and recovery is
-    // automatic. A changed updated_at refetches the log tail.
+    // automatic. One request is in flight at a time, so a visibility change
+    // cannot start a second loop or let an older response win.
     async function tick() {
+      if (inFlight) return;
       if (document.hidden) {
         schedule();
         return;
       }
+      inFlight = true;
       try {
         const headers: Record<string, string> = {};
         if (etag) headers["If-None-Match"] = etag;
@@ -318,12 +322,14 @@ export function RunDetail({
             loading: false,
           });
         }
+      } finally {
+        inFlight = false;
+        schedule();
       }
-      schedule();
     }
 
     const onVisibilityChange = () => {
-      if (!document.hidden) {
+      if (!document.hidden && !inFlight) {
         clearTimeout(timer);
         void tick();
       }
@@ -341,38 +347,75 @@ export function RunDetail({
   const record = detail.data?.record ?? null;
   const target = record ? logTarget(record) : null;
   const targetKey = target
-    ? `${target.source_id}/${target.type}/${target.id}/${target.field}/${target.index ?? ""}/${record?.updated_at ?? ""}`
+    ? `${target.source_id}/${target.type}/${target.id}/${target.field}/${target.index ?? ""}`
     : "";
+  // A non-terminal record's log can grow without its updated_at moving, even
+  // once it shows stale, so refetch the tail on every poll; a terminal record
+  // only refetches when the record does.
+  const live = record != null && !["done", "failed", "cancelled"].includes(record.state);
+  const fileKey = target
+    ? `${targetKey}/${live ? (detail.receivedAt ?? "") : (record?.updated_at ?? "")}`
+    : "";
+  const fileTargetRef = useRef("");
+  const fileRequestRef = useRef<object | null>(null);
+  const fileSkippedRef = useRef(false);
+  const [fileRetry, setFileRetry] = useState(0);
+
+  useEffect(
+    () => () => {
+      fileRequestRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!target) {
+      fileTargetRef.current = "";
+      fileRequestRef.current = null;
       setFile({ loading: false, data: null, error: null });
       return;
     }
-    let cancelled = false;
-    setFile({ loading: true, data: null, error: null });
+    const sameTarget = fileTargetRef.current === targetKey;
+    fileTargetRef.current = targetKey;
+    // A slow tail is left to finish, then fetched once more: the record may
+    // already be terminal, and then no later poll would fetch it.
+    if (sameTarget && fileRequestRef.current) {
+      fileSkippedRef.current = true;
+      return;
+    }
+    fileSkippedRef.current = false;
+    const request = {};
+    fileRequestRef.current = request;
+    const finish = () => {
+      fileRequestRef.current = null;
+      if (fileSkippedRef.current) setFileRetry((count) => count + 1);
+    };
+    // A refetch of the same tail keeps the text on screen: no loading flash
+    // and no empty panel while the request is in flight.
+    if (!sameTarget) setFile({ loading: true, data: null, error: null });
     (async () => {
       try {
         const response = await fetcher(fileUrl(target), { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const body = (await response.json()) as FileResponse;
         if (body.api !== 1) throw new Error("unsupported API version");
-        if (!cancelled) setFile({ loading: false, data: body, error: null });
+        if (fileRequestRef.current === request) {
+          finish();
+          setFile({ loading: false, data: body, error: null });
+        }
       } catch (error) {
-        if (!cancelled) {
-          setFile({
+        if (fileRequestRef.current === request) {
+          finish();
+          setFile((previous) => ({
             loading: false,
-            data: null,
+            data: previous.data,
             error: error instanceof Error ? error.message : String(error),
-          });
+          }));
         }
       }
     })();
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetcher, targetKey]);
+  }, [fetcher, fileKey, fileRetry]);
 
   const receivedClock =
     detail.receivedAt != null
