@@ -3,6 +3,7 @@ import gzip
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from unittest import mock
@@ -489,6 +490,32 @@ class IngestTest(unittest.TestCase):
 
         self.ing.scan_roots()
         self.assertEqual(self.status(), "ok")
+
+    def test_retention_failure_before_commit_deletes_no_file(self):
+        self.write_segment([run(state="done")], seq=1)
+        self.write_segment([run(id="r2", state="done", updated_at=stamp(minutes=1))], seq=2)
+        self.ing.scan_roots()
+        self.make_old(self.segment_path(1))
+        with mock.patch.object(store, "set_meta", side_effect=sqlite3.OperationalError("boom")):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.retain()
+        self.assertTrue(self.segment_path(1).exists())
+        self.assertIsNotNone(store.get_segment(self.conn, "s@host", 1))
+
+    def test_crash_after_commit_leaves_a_retired_file_that_is_skipped_then_removed(self):
+        self.write_segment([run(state="done")], seq=1)
+        self.write_segment([run(id="r2", state="done", updated_at=stamp(minutes=1))], seq=2)
+        self.ing.scan_roots()
+        self.make_old(self.segment_path(1))
+        with mock.patch.object(Path, "unlink", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.retain()
+        self.assertTrue(self.segment_path(1).exists())
+        self.assertIsNone(store.get_segment(self.conn, "s@host", 1))
+        self.ing.scan_roots()
+        self.assertEqual(self.status(), "ok")
+        self.retain()
+        self.assertFalse(self.segment_path(1).exists())
 
     def test_retention_keeps_segment_with_non_terminal_record(self):
         self.write_segment([run(id="r1")], seq=1)

@@ -130,6 +130,10 @@ class Ingestor:
         self._touch_source(source_id, "ndjson", str(root), detail)
 
     def _ingest_source(self, source_id, segments):
+        # Files retention retired in the database but did not unlink yet (crash after COMMIT).
+        segments = {seq: value for seq, value in segments.items()
+                    if not (self._retention_explains(source_id, seq)
+                            and store.get_segment(self.conn, source_id, seq) is None)}
         seqs = sorted(segments)
         if not seqs:
             checkpoint = store.get_checkpoint(self.conn, source_id)
@@ -505,7 +509,12 @@ class Ingestor:
         abandon_cutoff = now_ts - self.cfg.abandon_days * 86400
         history_cutoff = now_ts - self.cfg.history_days * 86400
         allowed_roots = {Path(root).resolve() for root in self.cfg.roots}
+        self._unlink_retired_leftovers(allowed_roots)
         changed = False
+        # Files are unlinked only after COMMIT: a failure before it must not lose data
+        # whose metadata is rolled back. A crash after COMMIT leaves retired files that
+        # the scanner skips and the next pass removes.
+        self._pending_unlink = []
         conn.execute("BEGIN IMMEDIATE")
         try:
             cursor = conn.execute("UPDATE records SET blocks_retention = 0 WHERE blocks_retention != 0")
@@ -532,7 +541,33 @@ class Ingestor:
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")
+            self._pending_unlink = []
             raise
+        for path in self._pending_unlink:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        self._pending_unlink = []
+
+    def _unlink_retired_leftovers(self, allowed_roots):
+        """Remove files retention already retired in the database (seq <= marker, no row)."""
+        for source in self.conn.execute(
+                "SELECT * FROM sources WHERE kind = 'ndjson' AND root IS NOT NULL").fetchall():
+            directory = self._retention_dir(source, allowed_roots)
+            if directory is None:
+                continue
+            try:
+                segments, _ = _list_segments(directory)
+            except OSError:
+                continue
+            for seq, (path, _compressed) in segments.items():
+                if (self._retention_explains(source["source_id"], seq)
+                        and store.get_segment(self.conn, source["source_id"], seq) is None):
+                    try:
+                        path.unlink()
+                    except FileNotFoundError:
+                        pass
 
     def _retain_segments(self, source, segment_cutoff, abandon_cutoff, allowed_roots):
         conn = self.conn
@@ -569,11 +604,7 @@ class Ingestor:
                 if _blocks_retention(record, abandon_cutoff)]
             if blockers:
                 return changed, blockers
-            for path in paths:
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
+            self._pending_unlink.extend(paths)
             store.delete_segment(conn, source_id, seq)
             store.set_meta(conn, self._retention_marker_key(source_id), seq)
             changed = True
