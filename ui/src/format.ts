@@ -16,9 +16,14 @@ export function ageSince(iso: string | null, now: number = Date.now()): number |
   return Math.max(0, (now - t) / 1000);
 }
 
+// dateStyle/timeStyle cannot be combined with timeZoneName (TypeError), so spell the fields out.
 const absoluteFormat = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "medium",
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
   timeZoneName: "short",
 });
 
