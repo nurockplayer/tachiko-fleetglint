@@ -1,0 +1,12 @@
+{
+  "id": "build-20261105-090000-777",
+  "status": "ok",
+  "exit_code": 0,
+  "signal": null,
+  "artifacts": [],
+  "log": "/Users/example/.local/state/job-run/build-20261105-090000-777/log",
+  "cwd": "/Users/example/Developer/alpha",
+  "cmd": ["make", "test"],
+  "started": "2026-11-05T09:00:00+09:00",
+  "ended": "2026-11-05T09:10:00+09:00"
+}

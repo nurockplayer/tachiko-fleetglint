@@ -1,0 +1,12 @@
+{
+  "id": "kill-20261105-080000-555",
+  "status": "failed",
+  "exit_code": 143,
+  "signal": 15,
+  "artifacts": [],
+  "log": "/Users/example/.local/state/job-run/kill-20261105-080000-555/log",
+  "cwd": "/Users/example/Developer/alpha",
+  "cmd": ["sleep", "30"],
+  "started": "2026-11-05T08:00:00+09:00",
+  "ended": "2026-11-05T08:05:00+09:00"
+}

@@ -1,0 +1,7 @@
+started	ended	tool	project	worker	model	lead_pane	exit	advice	log	note
+2026-11-05 04:00 JST	2026-11-05 04:30 JST	cx	alpha	terra-a	gpt-6.1-terra	pane:1	0	routine/cx	/Users/example/.local/state/cx-exec/terra-a.log	handed off
+2026-11-05 05:00 JST	2026-11-05 05:20 JST	ds	alpha	flash-b	deepseek-flash	pane:2	3	routine/ds	/Users/example/.local/state/ds-exec/flash-b.log
+2026-11-05 06:00 JST	2026-11-05 06:10 JST	agy	beta	agy-c	-	pane:3	lost	routine/agy	-
+2026-11-05 07:00	2026-11-05 07:10 JST	cx	alpha	terra-b	gpt-6.1-terra	pane:4	0	-	-
+2026-11-05 08:00 JST	cx	short row
+2026-11-05 09:00 JST	2026-11-05 09:30 JST	haiku	beta	haiku-d	claude-haiku-5-5	pane:5	0	-	/Users/example/.local/state/haiku-exec/haiku-d.log
