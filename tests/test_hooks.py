@@ -38,11 +38,11 @@ class HooksTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def run_hooks(self, action, yes=True):
-        args = argparse.Namespace(config=None, action=action, tool="claude", yes=yes)
+    def run_hooks(self, action, yes=True, config=None):
+        args = argparse.Namespace(config=config, action=action, tool="claude", yes=yes)
         out = io.StringIO()
         with mock.patch.object(hooks, "executable_path", return_value=EXECUTABLE), \
-                contextlib.redirect_stdout(out):
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             code = hooks.run(args)
         return code, out.getvalue()
 
@@ -118,8 +118,56 @@ class HooksTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(self.settings.read_text(encoding="utf-8"), original)
 
-    def sent(self, payload):
-        code = hooks.record_claude(stream=io.BytesIO(json.dumps(payload).encode()), now=NOW)
+    def test_backups_keep_permissions_and_never_overwrite_each_other(self):
+        self.write_settings({"hooks": {}})
+        os.chmod(self.settings, 0o600)
+        previous = os.umask(0o022)
+        try:
+            with mock.patch.object(hooks, "datetime") as fake:
+                fake.now.return_value = datetime(2026, 11, 6, 5, 0, 0, tzinfo=timezone.utc)
+                self.assertEqual(self.run_hooks("install")[0], 0)
+                self.assertEqual(self.run_hooks("uninstall")[0], 0)
+        finally:
+            os.umask(previous)
+        backups = sorted(self.settings.parent.glob("settings.json.fleetglint-backup-*"))
+        self.assertEqual(len(backups), 2)
+        self.assertNotEqual(backups[0].name, backups[1].name)
+        for backup in backups:
+            self.assertEqual(backup.stat().st_mode & 0o777, 0o600, backup)
+        self.assertEqual(self.settings.stat().st_mode & 0o777, 0o600)
+
+    def test_settings_changed_while_waiting_aborts(self):
+        self.write_settings({"hooks": {}})
+        changed = json.dumps({"model": "changed"}, indent=2) + "\n"
+
+        def confirm():
+            self.settings.write_text(changed, encoding="utf-8")
+            return True
+
+        with mock.patch.object(hooks, "_confirm", side_effect=confirm):
+            code, text = self.run_hooks("install", yes=False)
+        self.assertEqual(code, 1)
+        self.assertIn("changed while waiting; run again", text)
+        self.assertEqual(self.settings.read_text(encoding="utf-8"), changed)
+        self.assertEqual(list(self.settings.parent.glob("*.fleetglint-backup-*")), [])
+
+    def test_install_and_uninstall_carry_the_config_path(self):
+        config_file = self.dir / "config.toml"
+        command = f"{EXECUTABLE} --config {config_file} hooks record claude"
+        self.write_settings({"hooks": {}})
+        self.assertEqual(self.run_hooks("install", config=str(config_file))[0], 0)
+        data = json.loads(self.settings.read_text(encoding="utf-8"))
+        for event in hooks.EVENTS:
+            commands = {hook.get("command") for group in data["hooks"][event]
+                        for hook in group["hooks"]}
+            self.assertEqual(commands, {command})
+
+        self.assertEqual(self.run_hooks("uninstall", config=str(config_file))[0], 0)
+        data = json.loads(self.settings.read_text(encoding="utf-8"))
+        self.assertNotIn(command, json.dumps(data))
+
+    def sent(self, payload, now=NOW):
+        code = hooks.record_claude(stream=io.BytesIO(json.dumps(payload).encode()), now=now)
         self.assertEqual(code, 0)
 
     def records(self):
@@ -162,6 +210,18 @@ class HooksTest(unittest.TestCase):
             self.assertEqual(schema.validate(record), [])
             self.assertNotIn("transcript", json.dumps(record))
             self.assertNotIn("/private", json.dumps(record))
+
+    def test_a_second_session_start_keeps_the_first_started_at(self):
+        self.sent({"hook_event_name": "SessionStart", "session_id": "sess-1",
+                   "cwd": "/work/atlas", "source": "startup"})
+        later = NOW + timedelta(minutes=10)
+        self.sent({"hook_event_name": "SessionStart", "session_id": "sess-1",
+                   "cwd": "/work/atlas", "source": "compact"}, now=later)
+        record = self.latest("session", "sess-1")
+        self.assertEqual(record["started_at"], NOW.isoformat())
+        self.assertEqual(record["last_activity_at"], later.isoformat())
+        self.assertEqual(record["summary"], "start: compact")
+        self.assertEqual(schema.validate(record), [])
 
     def test_subagent_records(self):
         self.sent({"hook_event_name": "SessionStart", "session_id": "sess-1",

@@ -33,6 +33,7 @@ def run(args):
     if args.action == "record":
         return record_claude(config_path=getattr(args, "config", None))
     path = settings_path()
+    config_file = config.expand(args.config) if getattr(args, "config", None) else None
     try:
         data, before, error = _load_settings(path)
     except OSError as exc:
@@ -44,9 +45,9 @@ def run(args):
     executable = executable_path()
     try:
         if args.action == "install":
-            changed = _add_hooks(data, executable)
+            changed = _add_hooks(data, executable, config_file)
         else:
-            changed = _remove_hooks(data, executable)
+            changed = _remove_hooks(data, executable, config_file)
     except HookError as exc:
         print(f"fleetglint hooks: {exc}", file=sys.stderr)
         return 1
@@ -59,8 +60,11 @@ def run(args):
         print("not applied", file=sys.stderr)
         return 1
     try:
-        backup = _backup(path, before)
+        if _read_text(path) != before:
+            print(f"fleetglint hooks: {path} changed while waiting; run again", file=sys.stderr)
+            return 1
         mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+        backup = _backup(path, before, mode)
         _write_atomic(path, after, mode)
     except OSError as exc:
         print(f"fleetglint hooks: {exc}", file=sys.stderr)
@@ -85,12 +89,16 @@ def executable_path():
     return f"{sys.executable} -m fleetglint"
 
 
-def _command(executable):
-    return f"{executable} {COMMAND_SUFFIX}"
+def _command(executable, config_file=None):
+    parts = [executable]
+    if config_file:
+        parts += ["--config", str(config_file)]
+    parts.append(COMMAND_SUFFIX)
+    return " ".join(parts)
 
 
-def _entry(executable):
-    return {"type": "command", "command": _command(executable), "timeout": 5}
+def _entry(executable, config_file=None):
+    return {"type": "command", "command": _command(executable, config_file), "timeout": 5}
 
 
 def _load_settings(path):
@@ -119,29 +127,29 @@ def _check_structure(data):
             raise HookError(f"settings hooks.{event} is not an array")
 
 
-def _add_hooks(data, executable):
+def _add_hooks(data, executable, config_file=None):
     _check_structure(data)
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
         hooks = {}
         data["hooks"] = hooks
-    command = _command(executable)
+    command = _command(executable, config_file)
     changed = False
     for event in EVENTS:
         groups = hooks.setdefault(event, [])
         if _has_command(groups, command):
             continue
-        groups.append({"matcher": "", "hooks": [_entry(executable)]})
+        groups.append({"matcher": "", "hooks": [_entry(executable, config_file)]})
         changed = True
     return changed
 
 
-def _remove_hooks(data, executable):
+def _remove_hooks(data, executable, config_file=None):
     _check_structure(data)
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
         return False
-    command = _command(executable)
+    command = _command(executable, config_file)
     changed = False
     for event in EVENTS:
         groups = hooks.get(event)
@@ -212,12 +220,26 @@ def _confirm():
     return answer in ("y", "yes")
 
 
-def _backup(path, text):
+def _read_text(path):
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def _backup(path, text, mode):
+    """Write a uniquely named backup that keeps the original permission bits."""
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup = path.with_name(f"{path.name}.fleetglint-backup-{stamp}")
-    backup.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    backup.write_text(text, encoding="utf-8")
-    return backup
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for counter in range(1000):
+        suffix = f"{stamp}-{os.getpid()}" + (f"-{counter}" if counter else "")
+        backup = path.with_name(f"{path.name}.fleetglint-backup-{suffix}")
+        try:
+            fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        except FileExistsError:
+            continue
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return backup
+    raise OSError(f"could not create a backup next to {path}")
 
 
 def _write_atomic(path, text, mode):
@@ -296,7 +318,7 @@ def _build(event, payload, now, state):
                       last_activity_at=stamp)
         record.pop("ended_at", None)
         if event == "SessionStart":
-            record["started_at"] = stamp
+            record.setdefault("started_at", stamp)
             record["summary"] = "start: " + (_text(payload.get("source")) or "unknown")
             project = _project(payload.get("cwd"))
             if project:

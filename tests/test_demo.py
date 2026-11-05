@@ -23,13 +23,13 @@ class DemoTest(unittest.TestCase):
         self.root = self.dir / "sources"
         self.path = self.root / demo.SOURCE_ID
 
-    def run_demo(self, clear=False):
+    def run_demo(self, clear=False, now=NOW):
         config_file = self.dir / "config.toml"
         config_file.write_text(f'[server]\nport = 1\n[ingest]\nroots = ["{self.root}"]\n')
         args = argparse.Namespace(config=str(config_file), clear=clear)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = demo.run(args, now=NOW)
+            code = demo.run(args, now=now)
         return code, out.getvalue()
 
     def records(self):
@@ -97,7 +97,7 @@ class DemoTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(self.path.exists())
         self.assertTrue(other.exists())
-        self.assertIn("fleetglint rebuild", text)
+        self.assertIn("disappear from the board after the next rebuild", text)
         self.assertIn("source reset demo@fleetglint", text)
 
     def test_clear_refuses_a_symlink(self):
@@ -110,11 +110,23 @@ class DemoTest(unittest.TestCase):
         self.assertTrue(self.path.is_symlink())
         self.assertTrue(target.is_dir())
 
-    def test_rerun_replaces_the_previous_sample(self):
+    def test_rerun_appends_new_versions_to_the_same_segment(self):
         self.assertEqual(self.run_demo()[0], 0)
-        first = len(self.records())
-        self.assertEqual(self.run_demo()[0], 0)
-        self.assertEqual(len(self.records()), first)
+        first = self.records()
+        later = NOW + timedelta(minutes=5)
+        self.assertEqual(self.run_demo(now=later)[0], 0)
+        records = self.records()
+
+        segments = sorted(self.path.glob("*.ndjson"))
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(len(records), 2 * len(first))
+        self.assertEqual([record["id"] for record in records[:len(first)]],
+                         [record["id"] for record in records[len(first):]])
+        for record in records:
+            self.assertEqual(schema.validate(record), [], record["id"])
+        latest = self.latest(records)
+        self.assertEqual(latest[("run", "demo-lead-2")]["updated_at"],
+                         (later - timedelta(minutes=2)).isoformat())
 
 
 if __name__ == "__main__":

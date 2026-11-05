@@ -15,7 +15,7 @@ WORKER_SESSION = "3c90f0b2-3a04-4c2e-9060-3e3cf5507ce5"
 
 
 def run(args, now=None):
-    """Write the sample source (clearing any previous one) or remove it with `--clear`."""
+    """Append the sample source (same ids, fresh versions) or remove it with `--clear`."""
     now = now or datetime.now().astimezone()
     try:
         cfg = config.load(args.config)
@@ -26,8 +26,6 @@ def run(args, now=None):
     if args.clear:
         return _clear(root)
     try:
-        if _clear(root, quiet=True):
-            return 1
         records = build(now)
         for record in records:
             errors = schema.validate(record)
@@ -185,7 +183,7 @@ def _dead_pid():
     return 999_999
 
 
-def _clear(root, quiet=False, out=None):
+def _clear(root, out=None):
     """Delete `<root>/demo@fleetglint`; return 0, or 1 when it is a symlink."""
     out = out or sys.stdout
     path = Path(root) / SOURCE_ID
@@ -193,12 +191,10 @@ def _clear(root, quiet=False, out=None):
         print(f"fleetglint demo: refusing to remove {path}: it is a symlink", file=sys.stderr)
         return 1
     if not path.exists():
-        if not quiet:
-            print(f"no demo source at {path}")
+        print(f"no demo source at {path}")
         return 0
     shutil.rmtree(path)
-    if not quiet:
-        print(f"removed {path}")
-        print("the database keeps its demo rows until the next `fleetglint rebuild` "
-              "(or `fleetglint source reset demo@fleetglint`)")
+    print(f"removed {path}")
+    print("the demo rows disappear from the board after the next rebuild "
+          "(fleetglint rebuild, or fleetglint source reset demo@fleetglint)")
     return 0
