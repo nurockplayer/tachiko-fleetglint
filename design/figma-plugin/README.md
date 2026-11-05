@@ -36,7 +36,8 @@ It owns three things: its pages `Foundations`, `Components` and `Screens`
 place, never deleted, so text bound to them elsewhere keeps its binding), and
 the variables it defines in the `Primitives` and `Semantic` collections
 (created or updated by name; a variable is removed only if this plugin
-created it and it is no longer in `code.js`). Other pages, styles and
+created it and it is no longer in `code.js`; a same-name variable that
+already existed is updated but never removed). Other pages, styles and
 variables are left alone.
 
 ## Changing tokens

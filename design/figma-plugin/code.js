@@ -667,8 +667,10 @@ async function syncCollection(collection, desired, register) {
     let v = keep[name];
     if (!v) {
       v = figma.variables.createVariable(name, collection, d.type);
+      // Mark only what this plugin creates; a same-name variable that was
+      // already there is updated but never becomes removable.
+      v.setPluginData(OWNER_KEY, "1");
     }
-    v.setPluginData(OWNER_KEY, "1");
     if (d.type === "COLOR") {
       let value;
       if (typeof d.value === "string" && d.value.indexOf("color/") === 0) {
