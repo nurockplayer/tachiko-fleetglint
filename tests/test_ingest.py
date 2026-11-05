@@ -194,6 +194,48 @@ class IngestTest(unittest.TestCase):
         self.ing.scan_roots()
         self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r2"))
 
+    def test_unterminated_line_in_a_closed_segment_is_quarantined_once(self):
+        first = run(state="running")
+        second = run(id="r2", state="running", updated_at=stamp(minutes=1))
+        partial = json.dumps(run(id="r3", state="running", updated_at=stamp(minutes=2)))[:17]
+        self.segment_path(1).write_text(json.dumps(first) + "\n" + partial, encoding="utf-8")
+        self.write_segment([second], seq=2)
+        self.ing.scan_roots()
+
+        self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r1"))
+        self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r2"))
+        self.assertIsNone(store.get_latest(self.conn, "s@host", "run", "r3"))
+        rows = store.quarantine_for(self.conn, "s@host")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["seq"], rows[0]["reason"], rows[0]["detail"]),
+                         (1, "invalid_json", "unterminated line in a closed segment"))
+        self.assertTrue(rows[0]["excerpt"])
+        self.assertEqual(store.get_checkpoint(self.conn, "s@host")["seq"], 2)
+
+        self.ing.scan_roots()
+        self.assertEqual(len(store.quarantine_for(self.conn, "s@host")), 1)
+        self.assertEqual(self.history_count(), 2)
+
+    def test_all_segments_missing_is_a_discontinuity(self):
+        self.write_segment([run()], seq=1)
+        self.ing.scan_roots()
+        self.segment_path(1).unlink()
+        self.ing.scan_roots()
+        self.assertEqual(self.status(), "discontinuity")
+        self.assertIn("all segments are missing",
+                      store.get_source(self.conn, "s@host")["detail"])
+
+    def test_all_segments_missing_after_retention_is_not_a_discontinuity(self):
+        self.write_segment([run(state="done")], seq=1)
+        self.write_segment([run(id="r2", state="done", updated_at=stamp(minutes=1))], seq=2)
+        self.ing.scan_roots()
+        # Simulate a retention pass that recorded deleting the checkpointed segment too.
+        store.set_meta(self.conn, "retention_deleted:s@host", "2")
+        self.segment_path(1).unlink()
+        self.segment_path(2).unlink()
+        self.ing.scan_roots()
+        self.assertEqual(self.status(), "ok")
+
     def test_crash_rolls_back_the_open_batch_without_loss_or_duplicates(self):
         self.assertEqual(self.ing.MAX_BATCH_LINES, 1000)
         self.assertEqual(self.ing.MAX_BATCH_BYTES, 4 * 1024 * 1024)
@@ -524,6 +566,32 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(self.history_count(), 0)
         self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r1"))
 
+    def test_retention_does_not_follow_a_symlinked_source_dir(self):
+        self.write_segment([run(state="done")], seq=1)
+        self.write_segment([run(id="r2", state="done", updated_at=stamp(minutes=1))], seq=2)
+        self.ing.scan_roots()
+        self.make_old(self.segment_path(1))
+        outside = self.dir / "outside"
+        outside.mkdir()
+        moved = outside / "s@host"
+        os.rename(self.source_dir(), moved)
+        os.symlink(moved, self.root / "s@host")
+        self.retain()
+        self.assertTrue((moved / "0000000001.ndjson").exists())
+        self.assertIsNotNone(store.get_segment(self.conn, "s@host", 1))
+
+    def test_retention_does_not_delete_a_symlinked_segment_target(self):
+        self.write_segment([run(state="done")], seq=1)
+        self.write_segment([run(id="r2", state="done", updated_at=stamp(minutes=1))], seq=2)
+        self.ing.scan_roots()
+        self.make_old(self.segment_path(1))
+        outside = self.dir / "outside.ndjson"
+        outside.write_bytes(self.segment_path(1).read_bytes())
+        self.segment_path(1).unlink()
+        os.symlink(outside, self.segment_path(1))
+        self.retain()
+        self.assertTrue(outside.exists())
+
     # --- rebuild and CLI --------------------------------------------------
 
     def test_rebuild_replays_retained_segments(self):
@@ -546,19 +614,19 @@ class IngestTest(unittest.TestCase):
 
     def run_cli(self, *args):
         parsed = cli.build_parser().parse_args(["--config", str(self.write_config()), *args])
-        out = io.StringIO()
+        out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(ingest, "_classify_line", fake_validator), \
-                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = ingest.run(parsed)
-        return code, out.getvalue()
+        return code, out.getvalue(), err.getvalue()
 
     def test_cli_once_status_reset_rebuild(self):
         self.write_segment([run(id="r1")])
-        code, out = self.run_cli("ingest", "--once")
+        code, out, err = self.run_cli("ingest", "--once")
         self.assertEqual(code, 0)
         self.assertIn("ingest:", out)
 
-        code, out = self.run_cli("status")
+        code, out, err = self.run_cli("status")
         self.assertEqual(code, 0)
         self.assertIn("s@host", out)
         self.assertIn("db:", out)
@@ -566,14 +634,46 @@ class IngestTest(unittest.TestCase):
         self.segment_path().write_bytes(b'{"v": 1')
         self.run_cli("ingest", "--once")
         self.assertEqual(self.status(), "discontinuity")
-        code, out = self.run_cli("source", "reset", "s@host")
+        code, out, err = self.run_cli("source", "reset", "s@host")
         self.assertEqual(code, 0)
         self.assertEqual(self.status(), "ok")
 
         self.conn.close()
-        code, out = self.run_cli("rebuild")
+        code, out, err = self.run_cli("rebuild")
         self.assertEqual(code, 0)
         self.assertTrue(self.cfg.db_path.exists())
+
+    def test_service_lock_blocks_rebuild_reset_and_once(self):
+        self.write_segment([run(id="r1")])
+        self.ing.scan_roots()
+        before = self.cfg.db_path.read_bytes()
+        with ingest.hold_service_lock(self.cfg):
+            for command in (("rebuild",), ("ingest", "--once"),
+                            ("source", "reset", "s@host")):
+                code, out, err = self.run_cli(*command)
+                self.assertEqual(code, 3, command)
+                self.assertIn("fleetglint is running", err)
+                self.assertNotIn("Traceback", err)
+                self.assertTrue(self.cfg.db_path.exists())
+                self.assertEqual(self.cfg.db_path.read_bytes(), before)
+        self.assertEqual(self.status(), "ok")
+        self.assertIsNotNone(store.get_latest(self.conn, "s@host", "run", "r1"))
+
+    def test_cli_reports_validator_import_error(self):
+        self.write_segment([run()])
+        parsed = cli.build_parser().parse_args(
+            ["--config", str(self.write_config()), "ingest", "--once"])
+
+        def unavailable(raw, expected_source_id):
+            raise ImportError("cannot import name 'classify_line'")
+
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(ingest, "_classify_line", unavailable), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = ingest.run(parsed)
+        self.assertEqual(code, 3)
+        self.assertIn("validator", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
 
 
 if __name__ == "__main__":

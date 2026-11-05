@@ -1,4 +1,5 @@
 """NDJSON segment and adapter ingestion into the SQLite read model (spec §7, architecture §5.1, §6)."""
+import fcntl
 import gzip
 import hashlib
 import json
@@ -7,6 +8,7 @@ import re
 import sqlite3
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +17,32 @@ from fleetglint import config, store
 _SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._-]*)?$")
 _SEGMENT_RE = re.compile(r"^(\d{10})\.ndjson(\.gz)?$")
 _EXCERPT_BYTES = 1024
+
+SERVICE_LOCK_BUSY = ("fleetglint is running (stop it first: brew services stop fleetglint, "
+                     "or Ctrl-C the serve process)")
+
+
+class ServiceLockBusy(Exception):
+    """Another Fleetglint process holds the service lock."""
+
+
+@contextmanager
+def hold_service_lock(cfg, blocking=True):
+    """Hold <db_path>.lock exclusively; serve/ingest keep it for their lifetime (architecture §5)."""
+    path = Path(str(cfg.db_path) + ".lock")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    handle = open(path, "a")
+    flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+    try:
+        fcntl.flock(handle, flags)
+    except BlockingIOError:
+        handle.close()
+        raise ServiceLockBusy(SERVICE_LOCK_BUSY) from None
+    try:
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
 
 
 class _Discontinuity(Exception):
@@ -103,6 +131,11 @@ class Ingestor:
     def _ingest_source(self, source_id, segments):
         seqs = sorted(segments)
         if not seqs:
+            checkpoint = store.get_checkpoint(self.conn, source_id)
+            if checkpoint is not None and not self._retention_explains(source_id, checkpoint["seq"]):
+                raise _Discontinuity(
+                    f"missing: all segments are missing (checkpoint segment "
+                    f"{checkpoint['seq']:010d})")
             return
         for lower, higher in zip(seqs, seqs[1:]):
             if higher != lower + 1:
@@ -135,6 +168,20 @@ class Ingestor:
             offset = checkpoint["byte_offset"] if checkpoint is not None and seq == checkpoint["seq"] else 0
             self._process_segment(source_id, seq, path, compressed, offset,
                                   has_higher=index + 1 < len(seqs))
+
+    @staticmethod
+    def _retention_marker_key(source_id):
+        return f"retention_deleted:{source_id}"
+
+    def _retention_explains(self, source_id, checkpoint_seq):
+        """Did retention record deleting every segment up to this checkpoint (spec §7.5)?"""
+        value = store.get_meta(self.conn, self._retention_marker_key(source_id))
+        if value is None:
+            return False
+        try:
+            return checkpoint_seq <= int(value)
+        except ValueError:
+            return False
 
     def _verify_closed(self, source_id, seq, path, compressed, row):
         """Compare a fully ingested segment with what was stored (compression is not a change)."""
@@ -184,18 +231,24 @@ class Ingestor:
         elif row is not None and row["closed"]:
             self._verify_closed(source_id, seq, path, True, row)
 
-        self._ingest_lines(source_id, seq, path, compressed, offset, stat, prefix)
+        position = self._ingest_lines(source_id, seq, path, compressed, offset, stat, prefix)
 
         conn = self.conn
         if has_higher:
             fingerprint, length = _fingerprint(path, compressed)
             stat = os.stat(path)
+            trailing = _trailing_bytes(path, compressed, position)
             conn.execute("BEGIN IMMEDIATE")
             try:
                 store.put_segment(conn, source_id, seq, length=length, fingerprint=fingerprint,
                                   inode=stat.st_ino, closed=1, compressed=int(compressed),
                                   file_size=stat.st_size, file_mtime=stat.st_mtime)
                 store.set_checkpoint(conn, source_id, seq + 1, 0)
+                if trailing:
+                    store.add_quarantine(
+                        conn, source_id, seq, position, "invalid_json",
+                        "unterminated line in a closed segment", _excerpt(trailing),
+                        self._now_text())
                 store.bump_change_counter(conn)
                 conn.execute("COMMIT")
             except BaseException:
@@ -203,12 +256,18 @@ class Ingestor:
                 raise
         elif compressed:
             fingerprint, length = _fingerprint(path, True)
+            trailing = _trailing_bytes(path, True, position)
             conn.execute("BEGIN IMMEDIATE")
             try:
                 store.put_segment(conn, source_id, seq, length=length, fingerprint=fingerprint,
                                   inode=stat.st_ino, closed=1, compressed=1,
                                   file_size=stat.st_size, file_mtime=stat.st_mtime)
                 store.set_checkpoint(conn, source_id, seq, length)
+                if trailing:
+                    store.add_quarantine(
+                        conn, source_id, seq, position, "invalid_json",
+                        "unterminated line in a closed segment", _excerpt(trailing),
+                        self._now_text())
                 store.bump_change_counter(conn)
                 conn.execute("COMMIT")
             except BaseException:
@@ -234,6 +293,7 @@ class Ingestor:
             self._commit_batch(source_id, seq, batch, position, stat, prefix, compressed)
         else:
             self._commit_batch(source_id, seq, (), position, stat, prefix, compressed)
+        return position
 
     def _commit_batch(self, source_id, seq, batch, position, stat, prefix, compressed):
         conn = self.conn
@@ -426,6 +486,7 @@ class Ingestor:
         conn.execute("BEGIN IMMEDIATE")
         try:
             store.delete_source_rows(conn, source_id)
+            conn.execute("DELETE FROM meta WHERE key = ?", (self._retention_marker_key(source_id),))
             store.bump_change_counter(conn)
             conn.execute("COMMIT")
         except BaseException:
@@ -442,6 +503,7 @@ class Ingestor:
         segment_cutoff = now_ts - self.cfg.segment_days * 86400
         abandon_cutoff = now_ts - self.cfg.abandon_days * 86400
         history_cutoff = now_ts - self.cfg.history_days * 86400
+        allowed_roots = {Path(root).resolve() for root in self.cfg.roots}
         changed = False
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -450,7 +512,8 @@ class Ingestor:
             sources = conn.execute(
                 "SELECT * FROM sources WHERE kind = 'ndjson' AND root IS NOT NULL").fetchall()
             for source in sources:
-                deleted, blockers = self._retain_segments(source, segment_cutoff, abandon_cutoff)
+                deleted, blockers = self._retain_segments(source, segment_cutoff, abandon_cutoff,
+                                                          allowed_roots)
                 changed = changed or deleted
                 if blockers:
                     changed = self._flag_blockers(blockers) or changed
@@ -470,13 +533,15 @@ class Ingestor:
             conn.execute("ROLLBACK")
             raise
 
-    def _retain_segments(self, source, segment_cutoff, abandon_cutoff):
+    def _retain_segments(self, source, segment_cutoff, abandon_cutoff, allowed_roots):
         conn = self.conn
         source_id = source["source_id"]
         checkpoint = store.get_checkpoint(conn, source_id)
         if checkpoint is None:
             return False, []
-        directory = Path(source["root"]) / source_id
+        directory = self._retention_dir(source, allowed_roots)
+        if directory is None:
+            return False, []  # a symlinked or foreign source directory is never followed
         changed = False
         for row in store.segments_for(conn, source_id):
             seq = row["seq"]
@@ -505,8 +570,26 @@ class Ingestor:
                 except FileNotFoundError:
                     pass
             store.delete_segment(conn, source_id, seq)
+            store.set_meta(conn, self._retention_marker_key(source_id), seq)
             changed = True
         return changed, []
+
+    def _retention_dir(self, source, allowed_roots):
+        """The resolved source directory, only when it is a real dir directly under a root."""
+        root = Path(source["root"])
+        try:
+            resolved_root = root.resolve()
+            if resolved_root not in allowed_roots:
+                return None
+            candidate = root / source["source_id"]
+            if candidate.is_symlink():
+                return None
+            resolved = candidate.resolve()
+        except OSError:
+            return None
+        if resolved.parent != resolved_root:
+            return None
+        return resolved
 
     def _flag_blockers(self, blockers):
         conn = self.conn
@@ -548,11 +631,14 @@ def _list_segments(directory):
 
 
 def _segment_paths(directory, seq):
+    """Real files named for this seq directly inside a resolved source directory."""
     paths = []
     for name in (f"{seq:010d}.ndjson", f"{seq:010d}.ndjson.gz"):
         path = directory / name
         try:
             if path.is_symlink() or not path.is_file():
+                continue
+            if path.resolve().parent != directory:
                 continue
         except OSError:
             continue
@@ -622,6 +708,27 @@ def _fingerprint(path, compressed):
     return digest.hexdigest(), length
 
 
+def _trailing_bytes(path, compressed, position):
+    """The first bytes after the last complete line, or b'' when the segment ends on a newline."""
+    if compressed:
+        skip = position
+        with gzip.open(path, "rb") as handle:
+            while skip > 0:
+                chunk = handle.read(min(skip, 256 * 1024))
+                if not chunk:
+                    return b""
+                skip -= len(chunk)
+            return handle.read(_EXCERPT_BYTES)
+    try:
+        if os.stat(path).st_size <= position:
+            return b""
+        with open(path, "rb") as handle:
+            handle.seek(position)
+            return handle.read(_EXCERPT_BYTES)
+    except OSError:
+        return b""
+
+
 def _excerpt(raw):
     return raw[:_EXCERPT_BYTES].decode("utf-8", "replace")
 
@@ -681,15 +788,16 @@ def default_adapters(cfg):
 
 def rebuild(cfg, adapters=()):
     """Delete the database and ingest everything retained again."""
-    for suffix in ("", "-wal", "-shm"):
-        Path(str(cfg.db_path) + suffix).unlink(missing_ok=True)
-    conn = store.open_db(cfg.db_path)
-    try:
-        ingestor = Ingestor(conn, cfg, adapters=adapters)
-        ingestor.scan_roots()
-        ingestor.scan_adapters()
-    finally:
-        conn.close()
+    with hold_service_lock(cfg, blocking=False):
+        for suffix in ("", "-wal", "-shm"):
+            Path(str(cfg.db_path) + suffix).unlink(missing_ok=True)
+        conn = store.open_db(cfg.db_path)
+        try:
+            ingestor = Ingestor(conn, cfg, adapters=adapters)
+            ingestor.scan_roots()
+            ingestor.scan_adapters()
+        finally:
+            conn.close()
 
 
 def run(args):
@@ -707,21 +815,43 @@ def run(args):
             return 0
         print(f"fleetglint: unknown command {args.command}", file=sys.stderr)
         return 2
+    except ServiceLockBusy as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
+    except ImportError as exc:
+        print(f"fleetglint: record validator unavailable ({exc}); "
+              "fleetglint.schema is missing or incomplete", file=sys.stderr)
+        return 3
     except (config.ConfigError, OSError, sqlite3.Error) as exc:
         print(f"fleetglint: {exc}", file=sys.stderr)
         return 3
 
 
 def _run_ingest(cfg, once):
+    if once:
+        with hold_service_lock(cfg, blocking=False):
+            return _ingest_once(cfg)
+    with hold_service_lock(cfg):
+        return _ingest_loop(cfg)
+
+
+def _ingest_once(cfg):
     conn = store.open_db(cfg.db_path)
     try:
         ingestor = Ingestor(conn, cfg, adapters=default_adapters(cfg))
-        if once:
-            ingestor.scan_roots()
-            ingestor.scan_adapters()
-            ingestor.apply_retention()
-            _print_summary(conn)
-            return 0
+        ingestor.scan_roots()
+        ingestor.scan_adapters()
+        ingestor.apply_retention()
+        _print_summary(conn)
+        return 0
+    finally:
+        conn.close()
+
+
+def _ingest_loop(cfg):
+    conn = store.open_db(cfg.db_path)
+    try:
+        ingestor = Ingestor(conn, cfg, adapters=default_adapters(cfg))
         return _loop(ingestor, cfg)
     finally:
         conn.close()
@@ -772,13 +902,14 @@ def _run_status(cfg):
 
 
 def _run_source(cfg, source_id):
-    conn = store.open_db(cfg.db_path)
-    try:
-        Ingestor(conn, cfg, adapters=default_adapters(cfg)).reset_source(source_id)
-        print(f"source {source_id}: reset and re-ingested")
-        return 0
-    finally:
-        conn.close()
+    with hold_service_lock(cfg, blocking=False):
+        conn = store.open_db(cfg.db_path)
+        try:
+            Ingestor(conn, cfg, adapters=default_adapters(cfg)).reset_source(source_id)
+            print(f"source {source_id}: reset and re-ingested")
+            return 0
+        finally:
+            conn.close()
 
 
 def _human_size(size):
