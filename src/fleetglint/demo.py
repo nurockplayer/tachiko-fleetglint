@@ -77,7 +77,7 @@ def _chain(now):
     job = {
         "project": PROJECTS[0],
         "kind": "wait",
-        "command_summary": "lead-wait run fix-retry -- ds-exec demo-worker-1",
+        "command_summary": "./scripts/wait-for-ci.sh fix-retry",
         "run": {"type": "run", "id": "demo-lead-1"},
         "title": "[demo] wait for the worker",
     }
@@ -90,7 +90,7 @@ def _chain(now):
                 started_at=_stamp(started)),
         _record("run", "demo-lead-1", handoff, lead, state="done",
                 started_at=_stamp(lead_started), ended_at=_stamp(handoff),
-                summary="Handed off fix-retry; session cleared at HANDOFF-OK."),
+                summary="Handed off fix-retry to demo-worker-1."),
         _record("run", "demo-worker-1", done, worker, state="done",
                 started_at=_stamp(started), ended_at=_stamp(done), exit_code=0,
                 links=[{"label": "PR", "url": "https://example.com/fleetglint-demo/pull/1"}]),
@@ -105,7 +105,7 @@ def _chain(now):
                 state="open"),
         _record("run", "demo-lead-2", resumed, lead, state="waiting",
                 started_at=_stamp(resumed), resume_of={"type": "run", "id": "demo-lead-1"},
-                title="[demo] demo-lead session (after /clear)",
+                title="[demo] demo-lead session (resumed)",
                 waits_on=[{"type": "external", "kind": "github_pr",
                            "key": "example/fleetglint-demo#1",
                            "url": "https://example.com/fleetglint-demo/pull/1"}]),

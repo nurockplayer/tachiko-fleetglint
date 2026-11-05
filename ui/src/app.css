@@ -785,7 +785,7 @@ details.terminal-runs .row {
 
 .attention-row {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto;
+  grid-template-columns: 136px minmax(0, 1fr) auto;
   gap: var(--space-12);
   align-items: center;
   min-height: var(--row-default);
