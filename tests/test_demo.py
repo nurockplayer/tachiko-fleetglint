@@ -8,7 +8,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fleetglint import demo, liveness, schema
+from fleetglint import config, demo, ingest, liveness, query, schema, store
 from fleetglint.adapters.base import short_hostname
 
 JST = timezone(timedelta(hours=9))
@@ -88,6 +88,32 @@ class DemoTest(unittest.TestCase):
         idle = latest[("session", "demo-session-2")]
         self.assertEqual(liveness.display(recent, NOW).state, "recent")
         self.assertEqual(liveness.display(idle, NOW).state, "idle")
+
+    def test_fresh_demo_has_a_running_run_and_job(self):
+        self.assertEqual(self.run_demo()[0], 0)
+        latest = self.latest(self.records())
+        active = latest[("run", "demo-active-1")]
+        active_job = latest[("job", "demo-active-job-1")]
+        self.assertEqual(active["state"], "running")
+        self.assertEqual(active["observed_at"], NOW.isoformat())
+        self.assertEqual(active["stale_after_s"], 86400)
+        self.assertNotIn("process", active)
+        self.assertEqual(active_job["state"], "running")
+        self.assertEqual(active_job["run"]["id"], "demo-active-1")
+        self.assertEqual(active_job["observed_at"], NOW.isoformat())
+        self.assertEqual(active_job["stale_after_s"], 86400)
+        self.assertNotIn("process", active_job)
+
+        cfg = config.Config()
+        cfg.roots = [self.root]
+        cfg.db_path = self.dir / "fleetglint.sqlite"
+        conn = store.open_db(cfg.db_path)
+        try:
+            ingest.Ingestor(conn, cfg, clock=lambda: NOW).scan_roots()
+        finally:
+            conn.close()
+        snapshot = query.QueryBackend(cfg).snapshot(NOW)
+        self.assertGreaterEqual(snapshot["counts"]["running"], 1)
 
     def test_clear_removes_only_the_demo_source(self):
         self.assertEqual(self.run_demo()[0], 0)
