@@ -33,7 +33,7 @@ class ClaudeCodeAdapterTest(unittest.TestCase):
         result = self.scan()
         self.assertEqual(result.status, "ok")
         records = self.by_id(result)
-        self.assertEqual(set(records), {SESSION_ID, "agent-deadbeef"})
+        self.assertEqual(set(records), {SESSION_ID, "agent-deadbeef", "agent-nested"})
 
         main = records[SESSION_ID]
         self.assertEqual(main["v"], 1)
@@ -59,6 +59,26 @@ class ClaudeCodeAdapterTest(unittest.TestCase):
         self.assertEqual(sub["entries"], 2)
         self.assertEqual(sub["usage"], {"basis": "measured", "input_tokens": 60,
                                         "cached_input_tokens": 20, "output_tokens": 40})
+
+    def test_nested_subagent_transcript_is_found(self):
+        nested = self.by_id(self.scan())["agent-nested"]
+        self.assertEqual(nested["parent_session"], {"type": "session", "id": SESSION_ID})
+        self.assertEqual(nested["model"], "claude-sonnet-5-5")
+        self.assertEqual(nested["entries"], 2)
+
+    def test_usage_keeps_the_last_entry_for_a_message_id(self):
+        later = json.dumps({
+            "type": "assistant", "sessionId": SESSION_ID,
+            "timestamp": "2026-11-05T10:00:11.000Z", "cwd": "/Users/me/work/demo",
+            "message": {"id": "msg_1", "model": "claude-opus-5-5",
+                        "usage": {"input_tokens": 10, "cache_read_input_tokens": 100,
+                                  "cache_creation_input_tokens": 1000, "output_tokens": 500}},
+        })
+        with self.main.open("a") as handle:
+            handle.write(later + "\n")
+        main = self.by_id(self.scan())[SESSION_ID]
+        self.assertEqual(main["usage"]["output_tokens"], 500)
+        self.assertEqual(main["usage"]["input_tokens"], 1110)
 
     def test_required_fields_present(self):
         for record in self.scan().records:
@@ -90,12 +110,13 @@ class ClaudeCodeAdapterTest(unittest.TestCase):
         self.assertEqual(main["last_activity_at"], "2026-11-05T10:00:05.000Z")
         self.assertEqual(main["usage"]["output_tokens"], 5)
 
-    def test_unparseable_line_is_counted(self):
+    def test_unparseable_line_is_counted_on_every_scan(self):
         with self.main.open("ab") as handle:
             handle.write(b"not json\n")
-        result = self.scan()
-        self.assertEqual(self.by_id(result)[SESSION_ID]["entries"], 6)
-        self.assertIn("1 unparseable line(s)", result.detail)
+        for _ in range(2):
+            result = self.scan()
+            self.assertEqual(self.by_id(result)[SESSION_ID]["entries"], 6)
+            self.assertIn("1 unparseable line(s)", result.detail)
 
     def test_unchanged_rescan_does_not_double_count(self):
         self.scan()

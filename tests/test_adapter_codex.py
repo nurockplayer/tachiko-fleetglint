@@ -104,12 +104,13 @@ class CodexAdapterTest(unittest.TestCase):
         self.assertEqual(record["last_activity_at"], "2026-11-05T10:00:01.000Z")
         self.assertNotIn("usage", record)
 
-    def test_unparseable_line_is_counted(self):
+    def test_unparseable_line_is_counted_on_every_scan(self):
         with self.active.open("ab") as handle:
             handle.write(b"not json\n")
-        result = self.scan()
-        self.assertEqual(self.by_id(result)[SESSION_ID]["entries"], 8)
-        self.assertIn("1 unparseable line(s)", result.detail)
+        for _ in range(2):
+            result = self.scan()
+            self.assertEqual(self.by_id(result)[SESSION_ID]["entries"], 8)
+            self.assertIn("1 unparseable line(s)", result.detail)
 
     def test_gzip_rollout_is_read(self):
         gz_id = "44444444-4444-4444-8444-444444444444"

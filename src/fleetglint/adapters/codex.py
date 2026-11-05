@@ -135,6 +135,7 @@ class _FileState:
     size: int = 0
     mtime_ns: int = 0
     offset: int = 0
+    errors: int = 0
     agg: _Agg = field(default_factory=_Agg)
 
 
@@ -153,7 +154,6 @@ class CodexAdapter:
         if not self.available():
             return ScanResult("unavailable", "sessions directory not found", [])
         unreadable = 0
-        unparseable = 0
         unsupported = 0
         without_meta = 0
         found = []
@@ -178,7 +178,7 @@ class CodexAdapter:
                          or st.st_size < prev.offset)
                 state = _FileState(inode=st.st_ino) if fresh else prev
                 try:
-                    unparseable += self._read_file(path, state, compressed)
+                    state.errors += self._read_file(path, state, compressed)
                 except (OSError, EOFError):
                     unreadable += 1
                     continue
@@ -191,6 +191,7 @@ class CodexAdapter:
                 continue
             found.append((agg.last_dt, st.st_mtime_ns, self._record(agg)))
         self._files = states
+        unparseable = sum(state.errors for state in states.values())
         records, duplicates = _newest_per_session(found)
         records.sort(key=lambda item: item[0], reverse=True)
         cut = max(0, len(records) - _MAX_SESSIONS)

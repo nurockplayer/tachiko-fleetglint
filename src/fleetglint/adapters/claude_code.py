@@ -67,11 +67,11 @@ class _Agg:
     title: str | None = None
     model: str | None = None
     models: list[str] = field(default_factory=list)
-    message_ids: set[str] = field(default_factory=set)
-    input_tokens: int = 0
-    cached_tokens: int = 0
-    cache_creation_tokens: int = 0
-    output_tokens: int = 0
+    usage_by_message: dict[str, tuple[int, int, int, int]] = field(default_factory=dict)
+    other_input_tokens: int = 0
+    other_cached_tokens: int = 0
+    other_cache_creation_tokens: int = 0
+    other_output_tokens: int = 0
     usage_seen: bool = False
     session_ids: set[str] = field(default_factory=set)
 
@@ -107,16 +107,31 @@ class _Agg:
         usage = message.get("usage")
         if not isinstance(usage, dict):
             return
+        counts = (
+            _count(usage.get("input_tokens")),
+            _count(usage.get("cache_read_input_tokens")),
+            _count(usage.get("cache_creation_input_tokens")),
+            _count(usage.get("output_tokens")),
+        )
+        self.usage_seen = True
         message_id = message.get("id")
         if isinstance(message_id, str):
-            if message_id in self.message_ids:
-                return
-            self.message_ids.add(message_id)
-        self.usage_seen = True
-        self.input_tokens += _count(usage.get("input_tokens"))
-        self.cached_tokens += _count(usage.get("cache_read_input_tokens"))
-        self.cache_creation_tokens += _count(usage.get("cache_creation_input_tokens"))
-        self.output_tokens += _count(usage.get("output_tokens"))
+            # Later content-block entries of one message carry its updated totals.
+            self.usage_by_message[message_id] = counts
+        else:
+            self.other_input_tokens += counts[0]
+            self.other_cached_tokens += counts[1]
+            self.other_cache_creation_tokens += counts[2]
+            self.other_output_tokens += counts[3]
+
+    def usage_totals(self):
+        """Sum the last-seen usage of every message id plus id-less entries."""
+        totals = [self.other_input_tokens, self.other_cached_tokens,
+                  self.other_cache_creation_tokens, self.other_output_tokens]
+        for counts in self.usage_by_message.values():
+            for index, value in enumerate(counts):
+                totals[index] += value
+        return totals
 
 
 @dataclass
@@ -125,6 +140,7 @@ class _FileState:
     size: int = 0
     mtime_ns: int = 0
     offset: int = 0
+    errors: int = 0
     agg: _Agg = field(default_factory=_Agg)
 
 
@@ -158,7 +174,6 @@ class ClaudeCodeAdapter:
         if not self.available():
             return ScanResult("unavailable", "projects directory not found", [])
         unreadable = 0
-        unparseable = 0
         without_time = 0
         mismatches = 0
         found = []
@@ -178,7 +193,7 @@ class ClaudeCodeAdapter:
                 fresh = prev is None or prev.inode != st.st_ino or st.st_size < prev.offset
                 state = _FileState(inode=st.st_ino) if fresh else prev
                 try:
-                    unparseable += self._read_file(path, state)
+                    state.errors += self._read_file(path, state)
                 except OSError:
                     unreadable += 1
                     continue
@@ -194,6 +209,7 @@ class ClaudeCodeAdapter:
                 mismatches += 1
             found.append((st.st_mtime_ns, self._record(agg, stem, parent)))
         self._files = states
+        unparseable = sum(state.errors for state in states.values())
         found.sort(key=lambda item: item[0], reverse=True)
         cut = max(0, len(found) - _MAX_SESSIONS)
         records = [record for _, record in found[:_MAX_SESSIONS]]
@@ -210,11 +226,19 @@ class ClaudeCodeAdapter:
                     subagents = Path(entry.path) / "subagents"
                     if not _is_dir(subagents):
                         continue
-                    for agent in _scandir(subagents):
-                        if (agent.is_file(follow_symlinks=False)
-                                and agent.name.startswith("agent-")
-                                and agent.name.endswith(".jsonl")):
-                            yield Path(agent.path), entry.name
+                    for dirpath, dirnames, filenames in os.walk(subagents, followlinks=False):
+                        dirnames[:] = [name for name in dirnames
+                                       if not os.path.islink(os.path.join(dirpath, name))]
+                        for name in filenames:
+                            if not (name.startswith("agent-") and name.endswith(".jsonl")):
+                                continue
+                            path = Path(dirpath) / name
+                            try:
+                                mode = os.stat(path, follow_symlinks=False).st_mode
+                            except OSError:
+                                continue
+                            if stat.S_ISREG(mode):
+                                yield path, entry.name
 
     def _read_file(self, path, state):
         """Read new complete lines into `state`; return the unparseable count."""
@@ -261,11 +285,12 @@ class ClaudeCodeAdapter:
         if agg.models:
             record["models"] = list(agg.models)
         if agg.usage_seen:
+            input_tokens, cached_tokens, cache_creation_tokens, output_tokens = agg.usage_totals()
             record["usage"] = {
                 "basis": "measured",
-                "input_tokens": agg.input_tokens + agg.cached_tokens + agg.cache_creation_tokens,
-                "cached_input_tokens": agg.cached_tokens,
-                "output_tokens": agg.output_tokens,
+                "input_tokens": input_tokens + cached_tokens + cache_creation_tokens,
+                "cached_input_tokens": cached_tokens,
+                "output_tokens": output_tokens,
             }
         if parent is not None:
             record["parent_session"] = {"type": "session", "id": parent}
