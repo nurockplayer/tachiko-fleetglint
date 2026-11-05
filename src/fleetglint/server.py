@@ -445,10 +445,10 @@ def run(args) -> int:
     # `brew services stop` and launchd send SIGTERM: shut down as for Ctrl-C.
     signal.signal(signal.SIGTERM, _raise_interrupt)
     url = f"http://127.0.0.1:{server.server_address[1]}/"
-    print(f"Fleetglint on {url} (read-only)", flush=True)
-    if getattr(args, "open", False):
-        webbrowser.open(url)
     try:
+        print(f"Fleetglint on {url} (read-only)", flush=True)
+        if getattr(args, "open", False):
+            webbrowser.open(url)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
