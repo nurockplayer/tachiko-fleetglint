@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { RunSummary, Snapshot } from "../api/types";
 import { isTerminal } from "../states";
+import { countNoun } from "../format";
 import { CountTile, JobRow, RunRow, SessionRow } from "../components/Rows";
 import { EmptyState, TruncationNote } from "../components/Panels";
 
@@ -49,9 +50,8 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
       <div className="screen-head">
         <h1>Overview</h1>
         <p className="summary-line">
-          {projects.size} projects · {snapshot.runs.length}
-          {snapshot.truncated.runs ? "+" : ""} runs · {snapshot.jobs.length}
-          {snapshot.truncated.jobs ? "+" : ""} jobs · read-only
+          {projects.size} projects · {countNoun(snapshot.runs.length, "run", snapshot.truncated.runs)} ·{" "}
+          {countNoun(snapshot.jobs.length, "job", snapshot.truncated.jobs)} · read-only
         </p>
       </div>
 
@@ -73,6 +73,11 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
           value={snapshot.counts.attention}
           states={["attention"]}
           href="/attention"
+          note={
+            snapshot.counts.attention > snapshot.attention.length
+              ? `Showing ${snapshot.attention.length} of ${snapshot.counts.attention}`
+              : undefined
+          }
         />
         <CountTile
           label="Stale / lost / unknown"
@@ -112,7 +117,7 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
           <div className="row-group" key={group.key}>
             <div className="row-group-head">
               <strong>{group.key}</strong>
-              <span className="count">{group.runs.length} runs</span>
+              <span className="count">{countNoun(group.runs.length, "run")}</span>
             </div>
             {group.runs.map((run) => (
               <RunRow key={`${run.ref.source_id}/${run.ref.id}`} run={run} />

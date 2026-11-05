@@ -257,7 +257,7 @@ def append(record, root):
 Validate before you write, or check the segment afterwards:
 
 ```sh
-fleetglint check "$XDG_STATE_HOME/fleetglint/sources/my-workflow@workstation/0000000001.ndjson"
+fleetglint check "${XDG_STATE_HOME:-$HOME/.local/state}/fleetglint/sources/my-workflow@workstation/0000000001.ndjson"
 ```
 
 Writing directly skips the schema check that `fleetglint emit` performs. A bad

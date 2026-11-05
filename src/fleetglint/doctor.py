@@ -199,8 +199,9 @@ def _check_server(cfg, out):
 
 
 def _print_privacy(cfg, out):
-    directories = ", ".join(str(path) for path in
-                            (cfg.harness.state_dir, cfg.claude_code.dir, cfg.codex.dir))
+    directories = ", ".join(
+        str(directory) for _, enabled, directory, _ in _adapter_specs(cfg)
+        if enabled != "false") or "none"
     print(f"privacy: adapters read {directories}; only metadata (ids, times, models, counts) "
           f"is stored, never prompts, tool output or transcript paths", file=out)
 

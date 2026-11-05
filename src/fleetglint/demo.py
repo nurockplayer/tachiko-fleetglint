@@ -9,7 +9,7 @@ from fleetglint import config, emit, schema
 from fleetglint.adapters.base import short_hostname
 
 SOURCE_ID = "demo@fleetglint"
-PROJECTS = ("eddington-1919", "gteki", "fleetglint")
+PROJECTS = ("payments-api", "web-app", "docs-site")
 LEAD_SESSION = "5b1e0c8e-2d7a-4c55-9a11-0f6e2b9d4c01"
 WORKER_SESSION = "3c90f0b2-3a04-4c2e-9060-3e3cf5507ce5"
 
@@ -72,12 +72,12 @@ def _chain(now):
         "role_id": "demo-lead",
         "parent_run": {"type": "run", "id": "demo-lead-1"},
         "session_id": WORKER_SESSION,
-        "title": "[demo] store-blink: fix the blinking store badge",
+        "title": "[demo] fix-retry: fix the blinking store badge",
     }
     job = {
         "project": PROJECTS[0],
         "kind": "wait",
-        "command_summary": "lead-wait run store-blink -- ds-exec demo-worker-1",
+        "command_summary": "lead-wait run fix-retry -- ds-exec demo-worker-1",
         "run": {"type": "run", "id": "demo-lead-1"},
         "title": "[demo] wait for the worker",
     }
@@ -90,7 +90,7 @@ def _chain(now):
                 started_at=_stamp(started)),
         _record("run", "demo-lead-1", handoff, lead, state="done",
                 started_at=_stamp(lead_started), ended_at=_stamp(handoff),
-                summary="Handed off store-blink; session cleared at HANDOFF-OK."),
+                summary="Handed off fix-retry; session cleared at HANDOFF-OK."),
         _record("run", "demo-worker-1", done, worker, state="done",
                 started_at=_stamp(started), ended_at=_stamp(done), exit_code=0,
                 links=[{"label": "PR", "url": "https://example.com/fleetglint-demo/pull/1"}]),
@@ -119,17 +119,31 @@ def _extras(now):
     failed_at = now - timedelta(minutes=110)
     recent_session = now - timedelta(minutes=5)
     idle_session = now - timedelta(hours=6)
+    active_started = now - timedelta(minutes=1)
     return [
+        _record("run", "demo-active-1", now,
+                {"project": PROJECTS[1], "state": "running", "agent": "claude-code",
+                 "model": "claude-opus-5-5", "provider": "anthropic", "effort": "high",
+                 "role_id": "web-lead", "started_at": _stamp(active_started),
+                 "observed_at": _stamp(now), "stale_after_s": 86400,
+                 "title": "[demo] web-app release check"}),
+        _record("job", "demo-active-job-1", now,
+                {"project": PROJECTS[1], "kind": "wait", "state": "running",
+                 "command_summary": "pnpm test -- --run",
+                 "run": {"type": "run", "id": "demo-active-1"},
+                 "role_id": "web-lead", "started_at": _stamp(active_started),
+                 "observed_at": _stamp(now), "stale_after_s": 86400,
+                 "title": "[demo] waiting for the web-app test suite"}),
         _record("run", "demo-stale-1", stale_at,
                 {"project": PROJECTS[1], "state": "running", "agent": "codex-cli",
                  "model": "gpt-6.1-terra", "provider": "openai", "effort": "medium",
-                 "role_id": "gteki-lead", "started_at": _stamp(stale_at),
+                 "role_id": "web-lead", "started_at": _stamp(stale_at),
                  "observed_at": _stamp(stale_at), "stale_after_s": 900,
-                 "title": "[demo] gteki store refactor"}),
+                 "title": "[demo] web-app store refactor"}),
         _record("run", "demo-lost-1", lost_at,
                 {"project": PROJECTS[2], "state": "running", "agent": "claude-code",
                  "model": "claude-opus-5-5", "provider": "anthropic",
-                 "role_id": "fleetglint-lead", "started_at": _stamp(lost_at),
+                 "role_id": "docs-lead", "started_at": _stamp(lost_at),
                  "observed_at": _stamp(lost_at), "stale_after_s": 900,
                  "process": {"host": short_hostname(), "pid": _dead_pid()},
                  "title": "[demo] a worker whose process is gone"}),
@@ -148,14 +162,14 @@ def _extras(now):
                  "model": "claude-opus-5-5", "models": ["claude-opus-5-5"],
                  "started_at": _stamp(now - timedelta(minutes=90)),
                  "last_activity_at": _stamp(recent_session), "entries": 120,
-                 "title": "[demo] fleetglint-lead history"}),
+                 "title": "[demo] docs-lead history"}),
         _record("session", "demo-session-2", idle_session,
                 {"project": PROJECTS[1], "state": "unknown", "agent": "codex-cli",
                  "model": "gpt-6.1-terra", "models": ["gpt-6.1-terra"],
                  "provider": "openai", "effort": "medium",
                  "started_at": _stamp(now - timedelta(hours=7)),
                  "last_activity_at": _stamp(idle_session), "entries": 300,
-                 "title": "[demo] gteki codex history"}),
+                 "title": "[demo] web-app codex history"}),
     ]
 
 

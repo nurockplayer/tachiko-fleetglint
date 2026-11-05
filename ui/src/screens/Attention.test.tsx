@@ -20,6 +20,13 @@ describe("Attention", () => {
     expect(screen.getByText("job-run-eps-77")).toBeInTheDocument();
   });
 
+  it("says how many attention items are shown when the count exceeds the list", () => {
+    const cut = structuredClone(snapshot);
+    cut.counts.attention = 9;
+    render(<Attention snapshot={cut} />);
+    expect(screen.getByText(`Showing ${cut.attention.length} of 9`)).toBeInTheDocument();
+  });
+
   it("shows source problems even when they have no subject", () => {
     render(<Attention snapshot={snapshot} />);
     expect(

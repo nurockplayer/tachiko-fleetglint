@@ -404,6 +404,10 @@ class QueryTest(unittest.TestCase):
         self.conn.execute("DELETE FROM records WHERE source_id LIKE 'demo@%'")
         self.conn.commit()
         self.assertFalse(self.snapshot()["demo"])
+        # Every demo@ source is demo data, not only the built-in one (architecture §8.1).
+        self.write("demo@host", [run("demo-2", source_id="demo@host")])
+        self.ing.scan_roots()
+        self.assertTrue(self.snapshot()["demo"])
 
     # --- record -----------------------------------------------------------
 
@@ -491,7 +495,7 @@ class QueryTest(unittest.TestCase):
                                       "text", "redactions"})
         self.assertEqual(data["api"], 1)
         self.assertTrue(data["readable"])
-        self.assertEqual(data["path"], str(self.log_path))
+        self.assertEqual(data["path"], str(self.log_path.resolve()))
         self.assertEqual(data["size"], self.log_path.stat().st_size)
         self.assertFalse(data["truncated"])
         self.assertIn("[redacted]", data["text"])
@@ -501,7 +505,7 @@ class QueryTest(unittest.TestCase):
     def test_file_link_index(self):
         data = self.backend.file(NOW, "work@mbp", "run", "w-1", "link", 0)
         self.assertTrue(data["readable"])
-        self.assertEqual(data["path"], str(self.log_path))
+        self.assertEqual(data["path"], str(self.log_path.resolve()))
         self.assertEqual(self.backend.file(NOW, "work@mbp", "run", "w-1", "link", 5),
                          {"api": 1, "readable": False, "reason": "no_path"})
         self.assertEqual(self.backend.file(NOW, "work@mbp", "run", "w-1", "link", None),
