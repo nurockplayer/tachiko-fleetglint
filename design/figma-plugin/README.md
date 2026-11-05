@@ -30,9 +30,14 @@ and the toast is gone, read that node first.
 
 ## Re-running
 
-Run the same menu item again. It clears only its own three pages, updates its
-own variable collections (`Primitives`, `Semantic`) by name, and rebuilds
-everything from `code.js`. Other pages and variables are left alone.
+Run the same menu item again; it rebuilds everything from `code.js`.
+It owns three things: its pages `Foundations`, `Components` and `Screens`
+(cleared and rebuilt), the `Fleetglint/` text styles it defines (updated in
+place, never deleted, so text bound to them elsewhere keeps its binding), and
+the variables it defines in the `Primitives` and `Semantic` collections
+(created or updated by name; a variable is removed only if this plugin
+created it and it is no longer in `code.js`). Other pages, styles and
+variables are left alone.
 
 ## Changing tokens
 

@@ -235,6 +235,7 @@ const BADGE_SIZE = ["sm", "md"];
 const BADGE_AGE = ["none", "suffix"];
 
 const PRIM = {};
+const OWNER_KEY = "fleetglint";
 const SEM = {};
 const STYLES = {};
 const COMPONENT_SETS = {};
@@ -301,11 +302,15 @@ function resolveHex(varName) {
   const group = TOKENS.semantic[parts[0]];
   if (group && group[parts[1]]) return resolveColorValue(group[parts[1]]);
   if (TOKENS.primitives.color[varName]) return TOKENS.primitives.color[varName];
+  if (varName.indexOf("color/") === 0) {
+    const prim = TOKENS.primitives.color[varName.slice("color/".length)];
+    if (prim) return prim;
+  }
   return "#FF00FF";
 }
 
 function paint(varName) {
-  const v = SEM[varName];
+  const v = SEM[varName] || PRIM[varName];
   const base = { type: "SOLID", color: hexToRgba(resolveHex(varName)) };
   if (v) {
     try {
@@ -603,10 +608,11 @@ async function loadFonts() {
 }
 
 async function buildTextStyles() {
+  // Update the plugin's styles in place (same ids) so text bound to them
+  // anywhere in the file keeps its binding; never delete a style.
   const existing = await figma.getLocalTextStylesAsync();
-  for (let i = 0; i < existing.length; i++) {
-    if (existing[i].name.indexOf("Fleetglint/") === 0) existing[i].remove();
-  }
+  const byName = {};
+  for (let i = 0; i < existing.length; i++) byName[existing[i].name] = existing[i];
   const defs = [
     ["Fleetglint/UI/Row 13", FONTS.uiRegular, 13, 20],
     ["Fleetglint/UI/Row Strong 13", FONTS.uiMedium, 13, 20],
@@ -621,7 +627,7 @@ async function buildTextStyles() {
   ];
   for (let i = 0; i < defs.length; i++) {
     const d = defs[i];
-    const s = figma.createTextStyle();
+    const s = byName[d[0]] || figma.createTextStyle();
     s.name = d[0];
     s.fontName = d[1];
     s.fontSize = d[2];
@@ -650,7 +656,8 @@ async function syncCollection(collection, desired, register) {
   for (let i = 0; i < existing.length; i++) {
     const v = existing[i];
     if (!desired[v.name]) {
-      v.remove();
+      // Remove only variables this plugin created; leave anyone else's.
+      if (v.getPluginData(OWNER_KEY) === "1") v.remove();
     } else {
       keep[v.name] = v;
     }
@@ -661,6 +668,7 @@ async function syncCollection(collection, desired, register) {
     if (!v) {
       v = figma.variables.createVariable(name, collection, d.type);
     }
+    v.setPluginData(OWNER_KEY, "1");
     if (d.type === "COLOR") {
       let value;
       if (typeof d.value === "string" && d.value.indexOf("color/") === 0) {

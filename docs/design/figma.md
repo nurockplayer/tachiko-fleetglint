@@ -11,8 +11,13 @@ the lead reviews the result. This document is the map of that file.
 
 ## What the plugin builds
 
-One run creates or replaces only its own three pages and updates its own two
-variable collections by name; everything else in the file is left alone.
+It owns three things: its pages `Foundations`, `Components` and `Screens`
+(cleared and rebuilt), the `Fleetglint/` text styles it defines (updated in
+place, never deleted, so text bound to them elsewhere keeps its binding), and
+the variables it defines in the `Primitives` and `Semantic` collections
+(created or updated by name; a variable is removed only if this plugin
+created it and it is no longer in `code.js`). Other pages, styles and
+variables are left alone.
 
 | Page | Contents |
 |---|---|
@@ -35,9 +40,7 @@ no network access in its manifest, and closes with a summary line.
    `fleetglint-build-log` text node at the top-left of `Foundations` with the
    timestamp, result, step, error and warnings.
 
-Re-running is safe: it clears its own three pages, updates
-`Primitives` / `Semantic` by name, and rebuilds the rest from the token object
-at the top of `code.js`.
+Re-running is safe: see "What the plugin builds" for what it owns.
 
 ## Node ids and screenshots
 
