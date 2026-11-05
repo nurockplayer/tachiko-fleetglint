@@ -117,6 +117,24 @@ class ServeTest(unittest.TestCase):
             with self.assertRaises(ingest.ServiceLockBusy):
                 server.start(self.cfg, 0)
 
+    def test_start_holds_the_lock_until_the_ingest_thread_ends(self):
+        _, ingest_thread, stop_event = self.start()
+        self.assertTrue(ingest_thread.is_alive())
+        with self.assertRaises(ingest.ServiceLockBusy):
+            server.start(self.cfg, 0)
+
+        stop_event.set()
+        ingest_thread.join(5)
+        self.assertFalse(ingest_thread.is_alive())
+
+        second, second_thread, second_stop = server.start(self.cfg, 0)
+        try:
+            self.assertTrue(second_thread.is_alive())
+        finally:
+            second_stop.set()
+            second_thread.join(5)
+            second.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()

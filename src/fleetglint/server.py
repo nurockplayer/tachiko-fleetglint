@@ -409,14 +409,19 @@ def start(cfg, port=None):
     """
     from fleetglint import ingest, query, store
 
-    with ingest.hold_service_lock(cfg, blocking=False):
-        pass  # raises ServiceLockBusy while another process runs
-    conn = store.open_db(cfg.db_path)
-    conn.close()
-    server = make_server(query.backend(cfg), cfg.port if port is None else port)
-    stop_event = threading.Event()
-    thread = threading.Thread(target=ingest.serve, args=(cfg, stop_event), daemon=True)
-    thread.start()
+    # Take the lock here and hand it to the ingest thread: no gap in which another
+    # `fleetglint serve` could pass its own check (architecture §5).
+    lock = ingest.acquire_service_lock(cfg, blocking=False)
+    try:
+        conn = store.open_db(cfg.db_path)
+        conn.close()
+        server = make_server(query.backend(cfg), cfg.port if port is None else port)
+        stop_event = threading.Event()
+        thread = threading.Thread(target=ingest.serve, args=(cfg, stop_event, lock), daemon=True)
+        thread.start()
+    except BaseException:
+        ingest.release_service_lock(lock)
+        raise
     return server, thread, stop_event
 
 
