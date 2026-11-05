@@ -45,6 +45,11 @@ class ShapeTest(unittest.TestCase):
         out = self.assertRedacted("Authorization: Bearer abc123", "Authorization: Bearer [redacted]")
         self.assertNotIn("abc123", out)
 
+    def test_basic_auth_keeps_the_prefix(self):
+        out = self.assertRedacted("Authorization: Basic dXNlcjpwYXNz",
+                                  "Authorization: Basic [redacted]")
+        self.assertNotIn("dXNlcjpwYXNz", out)
+
     def test_ordinary_text_is_untouched(self):
         text = ("/Users/me/Developer/x.log 550e8400-e29b-41d4-a716-446655440000 "
                 "0123456789abcdef0123456789abcdef01234567")

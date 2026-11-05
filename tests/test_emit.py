@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import multiprocessing
+import os
 import pathlib
 import tempfile
 import unittest
@@ -72,6 +73,17 @@ class AppendRecordTest(unittest.TestCase):
         self.assertTrue(data.startswith(existing))
         self.assertEqual(len(data.splitlines()), 2)
 
+    def test_short_writes_are_completed(self):
+        real_write = os.write
+
+        def short_write(fd, data):
+            return real_write(fd, bytes(data)[:7])
+
+        with mock.patch.object(emit.os, "write", side_effect=short_write):
+            emit.append_record(make_record(), self.root)
+        line = (self.dir / "0000000001.ndjson").read_text()
+        self.assertEqual(json.loads(line), make_record())
+
     def test_concurrent_appends_keep_every_line(self):
         method = "fork" if "fork" in multiprocessing.get_all_start_methods() else "spawn"
         context = multiprocessing.get_context(method)
@@ -125,6 +137,13 @@ class EmitCommandTest(unittest.TestCase):
     def test_bad_json_and_non_objects_are_refused(self):
         self.assertEqual(run_emit(b"{", self.root), 1)
         self.assertEqual(run_emit(b"[]", self.root), 1)
+
+    def test_non_finite_unknown_field_is_refused(self):
+        payload = (b'{"v":1,"type":"run","id":"r1","source_id":"demo",'
+                   b'"updated_at":"2026-11-05T09:00:00Z","state":"queued","agent":"aider",'
+                   b'"x_cost":NaN}')
+        self.assertEqual(run_emit(payload, self.root), 1)
+        self.assertFalse((self.root / "demo").exists())
 
 
 if __name__ == "__main__":

@@ -17,16 +17,21 @@ SEGMENT_GZ = re.compile(r"^(\d{10})\.ndjson\.gz$")
 
 def append_record(record, root):
     """Append one validated record to its source's current segment; return the segment path."""
+    line = json.dumps(record, separators=(",", ":"), ensure_ascii=False, allow_nan=False) + "\n"
     directory = Path(root) / record["source_id"]
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    line = json.dumps(record, separators=(",", ":"), ensure_ascii=False) + "\n"
+    remaining = memoryview(line.encode("utf-8"))
     with _locked(directory / ".lock"):
         segment = _current_segment(directory)
         if segment.exists() and segment.stat().st_size >= SEGMENT_LIMIT:
             segment = _next_segment(directory)
         fd = os.open(segment, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
-            os.write(fd, line.encode("utf-8"))
+            while remaining:
+                written = os.write(fd, remaining)
+                if written <= 0:
+                    raise OSError("short write")
+                remaining = remaining[written:]
         finally:
             os.close(fd)
     return segment
@@ -52,6 +57,9 @@ def run(args):
     try:
         root = config.expand(args.root) if args.root else config.load(args.config).roots[0]
         append_record(record, root)
+    except ValueError as exc:
+        print(f"fleetglint emit: not serialisable as JSON: {exc}", file=sys.stderr)
+        return 1
     except (OSError, config.ConfigError) as exc:
         print(f"fleetglint emit: {exc}", file=sys.stderr)
         return 3

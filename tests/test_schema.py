@@ -56,6 +56,13 @@ class ValidateTest(unittest.TestCase):
     def test_unknown_fields_pass(self):
         self.assertEqual(schema.validate(make_record(x_extra={"anything": [1, 2]})), [])
 
+    def test_non_finite_numbers_are_not_numbers(self):
+        cost = {"amount": float("nan"), "currency": "USD", "basis": "billed"}
+        usage = {"basis": "measured", "cost": cost}
+        self.assertTrue(schema.validate(make_record(usage=usage)))
+        cost["amount"] = float("inf")
+        self.assertTrue(schema.validate(make_record(usage=usage)))
+
 
 class ClassifyLineTest(unittest.TestCase):
     def classify(self, obj, expected=None):

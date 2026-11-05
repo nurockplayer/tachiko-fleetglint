@@ -22,6 +22,7 @@ SHAPES = (
     (re.compile(r"glpat-[A-Za-z0-9_-]{20,}"), REPLACEMENT),
     (re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), REPLACEMENT),
     (re.compile(r"(?i)(authorization:\s*bearer\s+)\S+"), r"\1" + REPLACEMENT),
+    (re.compile(r"(?i)(authorization:\s*basic\s+)\S+"), r"\1" + REPLACEMENT),
 )
 
 

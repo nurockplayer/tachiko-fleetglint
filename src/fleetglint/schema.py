@@ -1,6 +1,7 @@
 """A small JSON Schema 2020-12 interpreter for the v1 record schema (docs/spec.md §2, §7.3)."""
 import importlib.resources
 import json
+import math
 import re
 import sys
 from datetime import datetime
@@ -165,7 +166,11 @@ def _display(path):
 
 
 def _is_number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
 
 
 def _has_type(value, name):
