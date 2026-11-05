@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from fleetglint import __version__, files, liveness, redact, store
+from fleetglint.demo import SOURCE_ID as DEMO_SOURCE_ID
 from fleetglint.adapters.base import short_hostname
 
 LIST_LIMIT = 500
@@ -76,6 +77,16 @@ def _included(row, window_start):
     if row["type"] == "inbox_item":
         return row["state"] == "open" or row["updated_ts"] >= window_start
     return row["state"] not in TERMINAL_STATES or row["updated_ts"] >= window_start
+
+
+def _countable_work(row):
+    """A non-terminal run or job past the list limit still feeds counts and attention."""
+    return row["state"] not in TERMINAL_STATES
+
+
+def _countable_inbox(row):
+    """An open inbox item past the list limit still needs attention."""
+    return row["state"] == "open"
 
 
 class _CachedProcessChecker:
@@ -371,13 +382,19 @@ class QueryBackend:
             elif _included(row, window_start):
                 rows[row["type"]].append(row)
 
-        runs, runs_cut = self._summaries(view, rows["run"], "updated_ts")
-        jobs, jobs_cut = self._summaries(view, rows["job"], "updated_ts")
-        inbox, inbox_cut = self._summaries(view, rows["inbox_item"], "updated_ts")
-        sessions, sessions_cut = self._summaries(view, rows["session"], "observed_ts")
+        runs, runs_cut, open_runs = self._summaries(view, rows["run"], "updated_ts",
+                                                    _countable_work)
+        jobs, jobs_cut, open_jobs = self._summaries(view, rows["job"], "updated_ts",
+                                                    _countable_work)
+        inbox, inbox_cut, open_inbox = self._summaries(view, rows["inbox_item"], "updated_ts",
+                                                       _countable_inbox)
+        sessions, sessions_cut, _ = self._summaries(view, rows["session"], "observed_ts")
         sources = self._sources(conn)
-        attention = _attention(view, runs, jobs, inbox, sources)
-        work = runs + jobs
+        # Attention and counts see every included row; only the display lists are cut.
+        work = runs + jobs + open_runs + open_jobs
+        attention = _attention(view, work, inbox + open_inbox, sources)
+        sessions_recent = sum(1 for item in sessions if item["display_state"] == "recent")
+        sessions_recent += self._recent_sessions_beyond(view, rows["session"])
         return {
             "api": 1,
             "generated_at": now.isoformat(),
@@ -390,25 +407,32 @@ class QueryBackend:
                 "attention": len(attention),
                 "stale_lost_unknown": sum(1 for item in work
                                           if item["display_state"] in ("stale", "lost", "unknown")),
-                "sessions_recent": sum(1 for item in sessions
-                                       if item["display_state"] == "recent"),
+                "sessions_recent": sessions_recent,
             },
             "runs": runs,
             "jobs": jobs,
             "inbox": inbox,
             "sessions": sessions,
-            "attention": attention,
+            "attention": attention[:view.list_limit],
             "truncated": {"runs": runs_cut, "jobs": jobs_cut,
                           "inbox": inbox_cut, "sessions": sessions_cut},
-            "demo": any(item["ref"]["source_id"].startswith("demo@")
+            "demo": any(item["ref"]["source_id"] == DEMO_SOURCE_ID
                         for item in runs + jobs + inbox + sessions),
         }
 
-    def _summaries(self, view, rows, order_field):
+    def _summaries(self, view, rows, order_field, beyond=None):
+        """The newest `list_limit` summaries and, for counting, those of `beyond` rows."""
         rows.sort(key=lambda row: (row[order_field], row["seq"], row["byte_offset"],
                                    row["source_id"], row["type"], row["id"]), reverse=True)
         limit = view.list_limit
-        return [view.summary(row) for row in rows[:limit]], len(rows) > limit
+        shown = [view.summary(row) for row in rows[:limit]]
+        extra = [view.summary(row) for row in rows[limit:] if beyond is not None and beyond(row)]
+        return shown, len(rows) > limit, extra
+
+    def _recent_sessions_beyond(self, view, rows):
+        """Recent sessions past the list limit still count (architecture §4.1)."""
+        return sum(1 for row in rows[view.list_limit:]
+                   if view.display(view.record(row), row["source_id"]).state == "recent")
 
     def _sources(self, conn):
         return [{
@@ -535,7 +559,7 @@ def _relations(view, row, record):
     }
 
 
-def _attention(view, runs, jobs, inbox, sources):
+def _attention(view, work, inbox, sources):
     """Needs attention, in the brief's order (architecture §4.1)."""
     entries = []
 
@@ -553,7 +577,7 @@ def _attention(view, runs, jobs, inbox, sources):
             add("inbox", item["role_id"], item["subject"],
                 item["ref"]["source_id"], _inbox_text(item))
     for reason in ("lost", "stale", "unknown"):
-        for item in runs + jobs:
+        for item in work:
             if item["display_state"] == reason:
                 add(reason, _who(view, item), view.ref(item["ref"]), item["ref"]["source_id"],
                     _work_text(item))

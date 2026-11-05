@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fleetglint import config, store
+from fleetglint.demo import SOURCE_ID as DEMO_SOURCE_ID
 
 _SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._-]*)?$")
 _SEGMENT_RE = re.compile(r"^(\d{10})\.ndjson(\.gz)?$")
@@ -28,9 +29,8 @@ class ServiceLockBusy(Exception):
     """Another Fleetglint process holds the service lock."""
 
 
-@contextmanager
-def hold_service_lock(cfg, blocking=True):
-    """Hold <db_path>.lock exclusively; serve/ingest keep it for their lifetime (architecture §5)."""
+def acquire_service_lock(cfg, blocking=True):
+    """Take <db_path>.lock exclusively and return the open handle; the caller closes it."""
     path = Path(str(cfg.db_path) + ".lock")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     handle = open(path, "a")
@@ -40,11 +40,25 @@ def hold_service_lock(cfg, blocking=True):
     except BlockingIOError:
         handle.close()
         raise ServiceLockBusy(SERVICE_LOCK_BUSY) from None
+    return handle
+
+
+def release_service_lock(handle):
+    """Unlock and close a handle from `acquire_service_lock`."""
+    try:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+@contextmanager
+def hold_service_lock(cfg, blocking=True):
+    """Hold <db_path>.lock exclusively; serve/ingest keep it for their lifetime (architecture §5)."""
+    handle = acquire_service_lock(cfg, blocking)
     try:
         yield
     finally:
-        fcntl.flock(handle, fcntl.LOCK_UN)
-        handle.close()
+        release_service_lock(handle)
 
 
 class _Discontinuity(Exception):
@@ -90,9 +104,12 @@ class Ingestor:
             try:
                 entries = sorted(root.iterdir(), key=lambda entry: entry.name)
             except FileNotFoundError:
+                # The root itself vanished: its sources can no longer be read continuously.
+                self._mark_missing_sources(root, set())
                 continue
             except NotADirectoryError:
                 continue
+            present = {entry.name for entry in entries}
             for entry in entries:
                 if not _valid_source_id(entry.name):
                     continue  # a directory whose name is not a source id is ignored
@@ -103,6 +120,41 @@ class Ingestor:
                 if not entry.is_dir():
                     continue
                 self._scan_source(entry, root)
+            self._mark_missing_sources(root, present)
+
+    def _mark_missing_sources(self, root, present):
+        """A previously ingested source directory that vanished is a discontinuity (spec §7.4)."""
+        sources = self.conn.execute(
+            "SELECT * FROM sources WHERE kind = 'ndjson' AND root IS NOT NULL").fetchall()
+        for source in sources:
+            source_id = source["source_id"]
+            if source_id in present or Path(source["root"]) != root:
+                continue
+            if source_id == DEMO_SOURCE_ID:
+                self._forget_source(source_id)  # `fleetglint demo --clear` empties the board
+                continue
+            if source["status"] == "discontinuity":
+                continue
+            checkpoint = store.get_checkpoint(self.conn, source_id)
+            if not store.segments_for(self.conn, source_id) and (
+                    checkpoint is None
+                    or self._retention_explains(source_id, checkpoint["seq"])):
+                continue
+            self._set_discontinuity(source_id, "source directory is missing")
+
+    def _forget_source(self, source_id):
+        """Drop everything stored for a source, including its retention markers."""
+        conn = self.conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            store.delete_source_rows(conn, source_id)
+            conn.execute("DELETE FROM meta WHERE key = ?", (self._retention_marker_key(source_id),))
+            conn.execute("DELETE FROM meta WHERE key GLOB ?", (f"retired:{source_id}:*",))
+            store.bump_change_counter(conn)
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
 
     def _scan_source(self, directory, root):
         source_id = directory.name
@@ -487,16 +539,7 @@ class Ingestor:
 
     def reset_source(self, source_id):
         """Clear a discontinuity: drop the source's rows and ingest its remaining segments again."""
-        conn = self.conn
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            store.delete_source_rows(conn, source_id)
-            conn.execute("DELETE FROM meta WHERE key = ?", (self._retention_marker_key(source_id),))
-            store.bump_change_counter(conn)
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
+        self._forget_source(source_id)
         self.scan_roots()
         if any(getattr(adapter, "source_id", None) == source_id for adapter in self.adapters):
             self.scan_adapters()
@@ -738,46 +781,56 @@ def _segment_paths(directory, seq):
 
 
 def _iter_lines(path, compressed, offset):
-    """Yield (line bytes without newline, offset just past it) from offset onwards."""
-    if compressed:
-        if offset:
-            with gzip.open(path, "rb") as handle:
-                data = handle.read()
-            if offset > len(data):
-                raise _Discontinuity(f"truncated: segment {path.name} is shorter than checkpoint {offset}")
-            yield from _split_lines(data[offset:], offset)
-            return
-        opener = gzip.open
-    else:
-        opener = open
+    """Yield (line bytes without newline, offset just past it) from offset onwards.
+
+    An overlong line is kept only as its first MAX_LINE_BYTES + 1 bytes; the rest is
+    skipped up to its LF, so the buffer stays bounded and the checkpoint still moves
+    past the whole line (spec §7.3).
+    """
+    from fleetglint.schema import MAX_LINE_BYTES
+
+    limit = MAX_LINE_BYTES + 1
+    opener = gzip.open if compressed else open
     with opener(path, "rb") as handle:
-        if not compressed:
+        if compressed and offset:
+            # Decompress forward instead of reading the whole member; one byte back
+            # tells an offset at EOF from one past a truncated member.
+            handle.seek(offset - 1)
+            if not handle.read(1):
+                raise _Discontinuity(
+                    f"truncated: segment {path.name} is shorter than checkpoint {offset}")
+        else:
             handle.seek(offset)
         position = offset
-        buffer = b""
+        buffer = bytearray()
+        discarding = False
         while True:
             chunk = handle.read(256 * 1024)
             if not chunk:
                 break
-            buffer += chunk
             start = 0
             while True:
-                newline = buffer.find(b"\n", start)
+                newline = chunk.find(b"\n", start)
                 if newline < 0:
+                    if not discarding:
+                        _append_prefix(buffer, chunk[start:], limit)
+                        discarding = len(buffer) >= limit
+                    position += len(chunk) - start
                     break
                 position += newline - start + 1
-                yield buffer[start:newline], position
+                if not discarding:
+                    _append_prefix(buffer, chunk[start:newline], limit)
+                yield bytes(buffer), position
+                buffer.clear()
+                discarding = False
                 start = newline + 1
-            buffer = buffer[start:]
 
 
-def _split_lines(data, base):
-    position = base
-    start = 0
-    while (newline := data.find(b"\n", start)) >= 0:
-        position += newline - start + 1
-        yield data[start:newline], position
-        start = newline + 1
+def _append_prefix(buffer, chunk, limit):
+    """Append at most what fits in `limit`, so an overlong line never grows the buffer."""
+    room = limit - len(buffer)
+    if room > 0:
+        buffer += chunk[:room]
 
 
 def _prefix_fingerprint(path, length):
@@ -949,15 +1002,23 @@ def _run_ingest(cfg, once):
         return _ingest_loop(cfg)
 
 
-def serve(cfg, stop_event):
-    """The long-running ingest loop of `fleetglint serve` (architecture §8)."""
-    with hold_service_lock(cfg):
+def serve(cfg, stop_event, lock=None):
+    """The long-running ingest loop of `fleetglint serve` (architecture §8).
+
+    With `lock`, take ownership of a handle from `acquire_service_lock` and close it
+    when the loop ends; this leaves no gap between the server's check and the thread.
+    """
+    if lock is None:
+        lock = acquire_service_lock(cfg)
+    try:
         conn = store.open_db(cfg.db_path)
         try:
             ingestor = Ingestor(conn, cfg, adapters=default_adapters(cfg))
             return _loop(ingestor, cfg, stop_event)
         finally:
             conn.close()
+    finally:
+        release_service_lock(lock)
 
 
 def _ingest_once(cfg):
