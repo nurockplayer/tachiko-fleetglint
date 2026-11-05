@@ -31,23 +31,28 @@ class DoctorTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def config_file(self):
+    def config_file(self, enabled=None):
+        enabled = enabled or {}
+
+        def section(name, key, value):
+            lines = [f"[adapters.{name}]", f'{key} = "{value}"']
+            if name in enabled:
+                lines.append(f'enabled = "{enabled[name]}"')
+            return "\n".join(lines)
+
         path = self.dir / "config.toml"
         path.write_text(
             "[server]\nport = 1\n\n"
             "[ingest]\n"
             f'roots = ["{self.roots}"]\n'
             f'db_path = "{self.db}"\n\n'
-            "[adapters.tachiko_harness]\n"
-            f'state_dir = "{self.harness}"\n\n'
-            "[adapters.claude_code]\n"
-            f'dir = "{self.claude}"\n\n'
-            "[adapters.codex]\n"
-            f'dir = "{self.codex}"\n')
+            + section("tachiko_harness", "state_dir", self.harness) + "\n\n"
+            + section("claude_code", "dir", self.claude) + "\n\n"
+            + section("codex", "dir", self.codex) + "\n")
         return path
 
-    def run_doctor(self):
-        args = argparse.Namespace(config=str(self.config_file()))
+    def run_doctor(self, enabled=None):
+        args = argparse.Namespace(config=str(self.config_file(enabled)))
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             code = doctor.run(args, now=NOW)
@@ -62,6 +67,20 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("not present", text)
         self.assertIn("not running on http://127.0.0.1:1 (informational)", text)
         self.assertIn("privacy: adapters read", text)
+
+    def test_privacy_lists_only_enabled_adapters(self):
+        _, text = self.run_doctor(enabled={"claude_code": "false"})
+        privacy = next(line for line in text.splitlines() if line.startswith("privacy:"))
+        self.assertIn(str(self.harness), privacy)
+        self.assertNotIn(str(self.claude), privacy)
+        self.assertIn(str(self.codex), privacy)
+
+    def test_privacy_says_none_when_every_adapter_is_disabled(self):
+        _, text = self.run_doctor(enabled={"tachiko_harness": "false",
+                                           "claude_code": "false",
+                                           "codex": "false"})
+        privacy = next(line for line in text.splitlines() if line.startswith("privacy:"))
+        self.assertIn("privacy: adapters read none;", privacy)
 
     def test_discontinuity_source_is_a_problem(self):
         conn = store.open_db(self.db)
