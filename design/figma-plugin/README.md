@@ -13,12 +13,20 @@ file is touched.
    anywhere else.
 2. Menu **Plugins → Development → Import plugin from manifest…**, and choose
    `design/figma-plugin/manifest.json` from this repository.
+   **After the 2026-11-05 manifest change, re-import it once**: Figma caches
+   the manifest, and `documentAccess: dynamic-page` only takes effect after a
+   re-import.
 3. Menu **Plugins → Development → Fleetglint Design System**.
 4. Wait a few seconds. The plugin builds or rebuilds the pages
    `Foundations`, `Components` and `Screens`, then closes with a summary such
    as `Fleetglint v0.1 built: 3 pages, 2 variable collections, …`.
 5. Open the pages in order: `Foundations` for the tokens and the state
    legend, `Components` for the variant sets, `Screens` for the six frames.
+
+Every run, successful or not, writes a text node `fleetglint-build-log` at
+the top-left of `Foundations` (page 16,16) with the UTC timestamp, result,
+step, error message and stack, warnings and the summary. If the build fails
+and the toast is gone, read that node first.
 
 ## Re-running
 

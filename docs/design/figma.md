@@ -27,10 +27,13 @@ no network access in its manifest, and closes with a summary line.
 
 1. Open the file above in Figma desktop.
 2. **Plugins → Development → Import plugin from manifest…** →
-   `design/figma-plugin/manifest.json` (first time only).
+   `design/figma-plugin/manifest.json` (re-import after the 2026-11-05
+   manifest change; Figma caches the manifest).
 3. **Plugins → Development → Fleetglint Design System**.
 4. The summary appears in a toast: pages, collections, styles, variants,
-   screens, and any font fallback or warning.
+   screens, and any font fallback or warning. The same run always leaves a
+   `fleetglint-build-log` text node at the top-left of `Foundations` with the
+   timestamp, result, step, error and warnings.
 
 Re-running is safe: it clears its own three pages, updates
 `Primitives` / `Semantic` by name, and rebuilds the rest from the token object

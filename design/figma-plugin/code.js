@@ -244,6 +244,10 @@ const warnings = [];
 
 let FONTS = {};
 let pagesCount = 0;
+let currentStep = "start";
+let currentItem = "";
+let refusedFile = false;
+const pendingTextStyles = [];
 
 /* ---------------------------------------------------------------- colors */
 
@@ -350,16 +354,10 @@ function makeText(content, styleName, fill, name) {
   const t = figma.createText();
   t.name = name || "text";
   if (style) {
-    try {
-      t.textStyleId = style.id;
-    } catch (e) {
-      t.fontName = style.fontName;
-      t.fontSize = style.fontSize;
-    }
-    if (!t.fontName || t.fontName === figma.mixed || typeof t.fontName === "symbol") {
-      t.fontName = style.fontName;
-    }
+    t.fontName = style.fontName;
     t.fontSize = style.fontSize;
+    t.lineHeight = style.lineHeight;
+    pendingTextStyles.push({ node: t, styleId: style.id });
   } else {
     t.fontName = FONTS.uiRegular;
     t.fontSize = 13;
@@ -368,6 +366,19 @@ function makeText(content, styleName, fill, name) {
   t.textAutoResize = "WIDTH_AND_HEIGHT";
   t.fills = fill ? [paint(fill)] : [paint("text/primary")];
   return t;
+}
+
+// Dynamic-page plugins must bind text styles with the async setter. Doing it
+// once at the end keeps node creation synchronous and easy to read.
+async function applyTextStyles() {
+  for (let i = 0; i < pendingTextStyles.length; i++) {
+    const entry = pendingTextStyles[i];
+    try {
+      await entry.node.setTextStyleIdAsync(entry.styleId);
+    } catch (e) {
+      warnings.push("could not bind text style: " + e.message);
+    }
+  }
 }
 
 function truncate(t) {
@@ -591,8 +602,8 @@ async function loadFonts() {
   if (!mono) warnings.push("JetBrains Mono not available; mono uses " + monoFallback);
 }
 
-function buildTextStyles() {
-  const existing = figma.getLocalTextStyles();
+async function buildTextStyles() {
+  const existing = await figma.getLocalTextStylesAsync();
   for (let i = 0; i < existing.length; i++) {
     if (existing[i].name.indexOf("Fleetglint/") === 0) existing[i].remove();
   }
@@ -621,17 +632,18 @@ function buildTextStyles() {
 
 /* ------------------------------------------------------------- variables */
 
-function getOrCreateCollection(name) {
-  const all = figma.variables.getLocalVariableCollections();
+async function getOrCreateCollection(name) {
+  const all = await figma.variables.getLocalVariableCollectionsAsync();
   for (let i = 0; i < all.length; i++) {
     if (all[i].name === name) return all[i];
   }
   return figma.variables.createVariableCollection(name);
 }
 
-function syncCollection(collection, desired, register) {
+async function syncCollection(collection, desired, register) {
   const modeId = collection.modes[0].modeId;
-  const existing = figma.variables.getLocalVariables().filter(function (v) {
+  const allVariables = await figma.variables.getLocalVariablesAsync();
+  const existing = allVariables.filter(function (v) {
     return v.variableCollectionId === collection.id;
   });
   const keep = {};
@@ -669,8 +681,8 @@ function syncCollection(collection, desired, register) {
   });
 }
 
-function syncVariables() {
-  const primCollection = getOrCreateCollection(COLLECTION_PRIMITIVES);
+async function syncVariables() {
+  const primCollection = await getOrCreateCollection(COLLECTION_PRIMITIVES);
   const primDesired = {};
   Object.keys(TOKENS.primitives.color).forEach(function (k) {
     primDesired["color/" + k] = { type: "COLOR", value: TOKENS.primitives.color[k] };
@@ -691,9 +703,9 @@ function syncVariables() {
   primDesired["geometry/row-default"] = { type: "FLOAT", value: TOKENS.geometry.rowDefault };
   primDesired["geometry/radius-chip"] = { type: "FLOAT", value: TOKENS.geometry.radiusChip };
   primDesired["geometry/radius-panel"] = { type: "FLOAT", value: TOKENS.geometry.radiusPanel };
-  syncCollection(primCollection, primDesired, PRIM);
+  await syncCollection(primCollection, primDesired, PRIM);
 
-  const semCollection = getOrCreateCollection(COLLECTION_SEMANTIC);
+  const semCollection = await getOrCreateCollection(COLLECTION_SEMANTIC);
   try {
     semCollection.renameMode(semCollection.modes[0].modeId, "dark");
   } catch (e) {
@@ -712,7 +724,7 @@ function syncVariables() {
       semDesired[stateColorVar(state, part)] = { type: "COLOR", value: cfg[part] };
     });
   });
-  syncCollection(semCollection, semDesired, SEM);
+  await syncCollection(semCollection, semDesired, SEM);
 }
 
 /* ---------------------------------------------------------------- pages */
@@ -729,12 +741,13 @@ function getOrCreatePage(name) {
   return p;
 }
 
-function clearPage(page) {
+async function clearPage(page) {
+  await page.loadAsync();
   const kids = page.children.slice();
   for (let i = 0; i < kids.length; i++) kids[i].remove();
 }
 
-function preparePages() {
+async function preparePages() {
   PAGES.foundations = getOrCreatePage(PAGE_NAMES[0]);
   PAGES.components = getOrCreatePage(PAGE_NAMES[1]);
   PAGES.screens = getOrCreatePage(PAGE_NAMES[2]);
@@ -746,9 +759,9 @@ function preparePages() {
       /* order is cosmetic */
     }
   });
-  clearPage(PAGES.foundations);
-  clearPage(PAGES.components);
-  clearPage(PAGES.screens);
+  await clearPage(PAGES.foundations);
+  await clearPage(PAGES.components);
+  await clearPage(PAGES.screens);
   pagesCount = 3;
 }
 
@@ -1247,46 +1260,60 @@ function buildEmptyState(page) {
   return c;
 }
 
-function buildComponents(page) {
-  figma.currentPage = page;
+async function buildComponents(page) {
+  await figma.setCurrentPageAsync(page);
   let y = 80;
   const sets = [];
+  currentItem = "StateBadge";
   const badge = buildStateBadge(page);
   sets.push(badge);
+  currentItem = "SourceChip";
   sets.push(buildSourceChip(page));
+  currentItem = "EvidenceLabel";
   sets.push(buildEvidenceLabel(page));
+  currentItem = "RefLink";
   sets.push(buildRefLink(page));
+  currentItem = "RunRow";
   sets.push(buildRunRow(page));
+  currentItem = "JobRow";
   sets.push(buildJobRow(page));
+  currentItem = "InboxItem";
   sets.push(buildInboxItem(page));
+  currentItem = "CountTile";
   sets.push(buildCountTile(page));
+  currentItem = "TopBar";
   sets.push(buildTopBar(page));
+  currentItem = "Banner";
   sets.push(buildBanner(page));
+  currentItem = "LogTail";
   sets.push(buildLogTail(page));
   for (let i = 0; i < sets.length; i++) {
     sets[i].x = 80;
     sets[i].y = y;
     y += sets[i].height + 100;
   }
-  const plain = [
-    buildStateTransition(page),
-    buildRelationshipTree(page),
-    buildTooltip(page),
-    buildEmptyState(page)
-  ];
+  currentItem = "StateTransition";
+  const plain = [buildStateTransition(page)];
+  currentItem = "RelationshipTree";
+  plain.push(buildRelationshipTree(page));
+  currentItem = "Tooltip";
+  plain.push(buildTooltip(page));
+  currentItem = "EmptyState";
+  plain.push(buildEmptyState(page));
   for (let i = 0; i < plain.length; i++) {
     plain[i].x = 80;
     plain[i].y = y;
     y += plain[i].height + 100;
   }
+  currentItem = "";
 }
 
 /* ----------------------------------------------------------- foundations */
 
-function buildFoundations(page) {
-  figma.currentPage = page;
+async function buildFoundations(page) {
+  await figma.setCurrentPageAsync(page);
   const x = 80;
-  let y = 80;
+  let y = 240; // leaves the top-left corner for fleetglint-build-log
   page.appendChild(makeTextAt("Foundations", "Fleetglint/UI/Heading 20", "text/primary", x, y));
   y += 40;
   page.appendChild(
@@ -2071,30 +2098,40 @@ function buildEmpty(page, x, y) {
   return f;
 }
 
-function buildScreens(page) {
-  figma.currentPage = page;
+async function buildScreens(page) {
+  await figma.setCurrentPageAsync(page);
+  currentItem = "Overview desktop";
   screenLabel(page, "Overview — desktop 1440×900", 0, -28);
   buildOverview(page, 0, 0, false);
+  currentItem = "Run detail";
   screenLabel(page, "Run detail — 1440×900", 1560, -28);
   buildRunDetail(page, 1560, 0);
+  currentItem = "Needs attention";
   screenLabel(page, "Needs attention — 1440×900", 3120, -28);
   buildAttention(page, 3120, 0);
+  currentItem = "Overview 390";
   screenLabel(page, "Overview — 390 wide", 0, 992);
   buildOverview(page, 0, 1020, true);
+  currentItem = "Unavailable";
   screenLabel(page, "Unavailable — 1440×900", 480, 992);
   buildUnavailable(page, 480, 1020);
+  currentItem = "Empty";
   screenLabel(page, "Empty — 1440×900", 2000, 992);
   buildEmpty(page, 2000, 1020);
+  currentItem = "";
 }
 
 /* ------------------------------------------------------------------ main */
 
 async function build() {
+  currentStep = "check file";
   if (!figma.root.name.includes("Fleetglint")) {
+    refusedFile = true;
     throw new Error(
       'refusing to run on "' + figma.root.name + '": file name must contain "Fleetglint"'
     );
   }
+  currentStep = "load pages";
   if (typeof figma.loadAllPagesAsync === "function") {
     try {
       await figma.loadAllPagesAsync();
@@ -2102,16 +2139,26 @@ async function build() {
       /* older API: all pages are already loaded */
     }
   }
+  currentStep = "fonts";
   await loadFonts();
-  preparePages();
-  buildTextStyles();
-  syncVariables();
+  currentStep = "pages";
+  await preparePages();
+  currentStep = "text styles";
+  await buildTextStyles();
+  currentStep = "variables";
+  await syncVariables();
 
-  buildFoundations(PAGES.foundations);
-  buildComponents(PAGES.components);
-  buildScreens(PAGES.screens);
+  currentStep = "foundations";
+  await buildFoundations(PAGES.foundations);
+  currentStep = "components";
+  await buildComponents(PAGES.components);
+  currentStep = "screens";
+  await buildScreens(PAGES.screens);
+  currentStep = "text styles (bind)";
+  await applyTextStyles();
+  currentStep = "done";
 
-  figma.currentPage = PAGES.screens;
+  await figma.setCurrentPageAsync(PAGES.screens);
 
   const setCount = Object.keys(COMPONENT_SETS).length;
   const plainCount = Object.keys(COMPONENTS).length;
@@ -2138,12 +2185,120 @@ async function build() {
   );
 }
 
-(async function main() {
+async function pickLogFont() {
+  const candidates = [
+    { family: "Inter", style: "Regular" },
+    { family: "Roboto", style: "Regular" }
+  ];
+  for (let i = 0; i < candidates.length; i++) {
+    try {
+      await figma.loadFontAsync(candidates[i]);
+      return candidates[i];
+    } catch (e) {
+      /* try the next family */
+    }
+  }
   try {
-    const summary = await build();
+    const fonts = await figma.listAvailableFontsAsync();
+    if (fonts && fonts.length) return fonts[0].fontName;
+  } catch (e) {
+    /* none available */
+  }
+  return null;
+}
+
+function buildLogContent(result, error, summary) {
+  return [
+    "fleetglint build log",
+    "time: " + new Date().toISOString(),
+    "result: " + result,
+    "step: " + currentStep + (currentItem ? " (" + currentItem + ")" : ""),
+    "error: " + (error && error.message ? error.message : "none"),
+    "stack: " +
+      (error && error.stack ? String(error.stack).replace(/\n/g, " | ").slice(0, 1500) : "none"),
+    "warnings: " + (warnings.length ? warnings.join(" | ") : "none"),
+    "summary: " + (summary || "none")
+  ].join("\n");
+}
+
+async function writeBuildLog(result, error, summary) {
+  const content = buildLogContent(result, error, summary);
+  const font = await pickLogFont();
+
+  const place = async function (page) {
+    await page.loadAsync();
+    let log = null;
+    const kids = page.children;
+    for (let i = 0; i < kids.length; i++) {
+      if (kids[i].type === "TEXT" && kids[i].name === "fleetglint-build-log") {
+        log = kids[i];
+        break;
+      }
+    }
+    if (!log) {
+      log = figma.createText();
+      page.appendChild(log);
+      log.name = "fleetglint-build-log";
+    }
+    if (font) {
+      try {
+        log.fontName = font;
+      } catch (e) {
+        /* keep the default font */
+      }
+    }
+    log.characters = content;
+    log.textAutoResize = "WIDTH_AND_HEIGHT";
+    log.fills = [{ type: "SOLID", color: hexToRgba("#E8EEF6") }];
+    log.x = 16;
+    log.y = 16;
+  };
+
+  try {
+    let page = null;
+    const pages = figma.root.children.filter(function (n) {
+      return n.type === "PAGE";
+    });
+    for (let i = 0; i < pages.length; i++) {
+      if (pages[i].name === "Foundations") page = pages[i];
+    }
+    if (!page) {
+      page = figma.createPage();
+      page.name = "Foundations";
+    }
+    await figma.setCurrentPageAsync(page);
+    await place(page);
+  } catch (e) {
+    console.error("fleetglint build log: primary placement failed: " + e.message);
+    try {
+      const page = figma.root.children[0];
+      if (page) {
+        await figma.setCurrentPageAsync(page);
+        await place(page);
+      }
+    } catch (e2) {
+      console.error("fleetglint build log: fallback placement failed: " + e2.message);
+    }
+  }
+}
+
+(async function main() {
+  let summary = "";
+  try {
+    summary = await build();
+    await writeBuildLog("ok", null, summary);
     figma.closePlugin(summary);
   } catch (e) {
     const message = e && e.message ? e.message : String(e);
+    console.error("Fleetglint build failed at step " + currentStep + ": " + message);
+    if (e && e.stack) console.error(e.stack);
+    if (!refusedFile) {
+      try {
+        await writeBuildLog("failed", e, message);
+      } catch (e2) {
+        console.error("fleetglint build log failed: " + e2.message);
+      }
+    }
     figma.closePlugin("Fleetglint build failed: " + message);
   }
 })();
