@@ -4,6 +4,7 @@ import difflib
 import fcntl
 import json
 import os
+import shlex
 import shutil
 import signal
 import sys
@@ -65,6 +66,10 @@ def run(args):
             return 1
         mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
         backup = _backup(path, before, mode)
+        # Claude Code has no lock to share, so check once more as late as possible.
+        if _read_text(path) != before:
+            print(f"fleetglint hooks: {path} changed while waiting; run again", file=sys.stderr)
+            return 1
         _write_atomic(path, after, mode)
     except OSError as exc:
         print(f"fleetglint hooks: {exc}", file=sys.stderr)
@@ -82,17 +87,17 @@ def settings_path():
 
 
 def executable_path():
-    """Absolute path of the fleetglint executable, or the module fallback from a source checkout."""
+    """Shell words for the fleetglint executable, or the module fallback from a source checkout."""
     found = shutil.which("fleetglint")
     if found:
-        return str(Path(found).resolve())
-    return f"{sys.executable} -m fleetglint"
+        return shlex.quote(str(Path(found).resolve()))
+    return f"{shlex.quote(sys.executable)} -m fleetglint"
 
 
 def _command(executable, config_file=None):
     parts = [executable]
     if config_file:
-        parts += ["--config", str(config_file)]
+        parts += ["--config", shlex.quote(str(config_file))]
     parts.append(COMMAND_SUFFIX)
     return " ".join(parts)
 

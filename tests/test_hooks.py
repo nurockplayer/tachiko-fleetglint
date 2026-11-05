@@ -2,6 +2,7 @@ import argparse
 import contextlib
 import io
 import json
+import shlex
 import os
 import tempfile
 import unittest
@@ -150,6 +151,39 @@ class HooksTest(unittest.TestCase):
         self.assertIn("changed while waiting; run again", text)
         self.assertEqual(self.settings.read_text(encoding="utf-8"), changed)
         self.assertEqual(list(self.settings.parent.glob("*.fleetglint-backup-*")), [])
+
+    def test_settings_changed_during_backup_aborts(self):
+        self.write_settings({"hooks": {}})
+        changed = json.dumps({"model": "changed"}, indent=2) + "\n"
+        real_backup = hooks._backup
+
+        def backup(path, text, mode):
+            self.settings.write_text(changed, encoding="utf-8")
+            return real_backup(path, text, mode)
+
+        with mock.patch.object(hooks, "_backup", side_effect=backup):
+            code, text = self.run_hooks("install")
+        self.assertEqual(code, 1)
+        self.assertIn("changed while waiting; run again", text)
+        self.assertEqual(self.settings.read_text(encoding="utf-8"), changed)
+
+    def test_command_words_are_shell_quoted(self):
+        config_file = "/a b/project$(touch pwned)/config.toml"
+        self.write_settings({"hooks": {}})
+        self.assertEqual(self.run_hooks("install", config=config_file)[0], 0)
+        data = json.loads(self.settings.read_text(encoding="utf-8"))
+        command = data["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        self.assertEqual(shlex.split(command),
+                         [EXECUTABLE, "--config", config_file, "hooks", "record", "claude"])
+        self.assertEqual(self.run_hooks("uninstall", config=config_file)[0], 0)
+        self.assertNotIn("hooks record claude", self.settings.read_text(encoding="utf-8"))
+
+        with mock.patch.object(hooks.shutil, "which", return_value="/a b/fleetglint"):
+            self.assertEqual(shlex.split(hooks.executable_path()), ["/a b/fleetglint"])
+        with mock.patch.object(hooks.shutil, "which", return_value=None), \
+                mock.patch.object(hooks.sys, "executable", "/a b/python3"):
+            self.assertEqual(shlex.split(hooks.executable_path()),
+                             ["/a b/python3", "-m", "fleetglint"])
 
     def test_install_and_uninstall_carry_the_config_path(self):
         config_file = self.dir / "config.toml"
