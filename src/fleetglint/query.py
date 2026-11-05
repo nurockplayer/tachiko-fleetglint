@@ -55,7 +55,8 @@ def _redact_response(value):
     if isinstance(value, list):
         return [_redact_response(item) for item in value]
     if isinstance(value, dict):
-        return {key: item if key in _LOOKUP_KEYS else _redact_response(item)
+        return {key: item if key in _LOOKUP_KEYS and isinstance(item, str)
+                else _redact_response(item)
                 for key, item in value.items()}
     return value
 
@@ -275,7 +276,7 @@ class _View:
             "turn_open": record.get("turn_open"),
             "entries": record.get("entries"),
             "parent_session": self.extended(record.get("parent_session"), source_id),
-            "usage": usage if isinstance(usage, dict) else None,
+            "usage": _redact_json(usage) if isinstance(usage, dict) else None,
         }
 
 
@@ -439,7 +440,7 @@ class QueryBackend:
                 "full": _redact_json(record),
                 "relations": _relations(view, row, record),
                 "history": self._history(conn, row),
-                "usage": usage if isinstance(usage, dict) else None,
+                "usage": _redact_json(usage) if isinstance(usage, dict) else None,
             })
         finally:
             conn.close()

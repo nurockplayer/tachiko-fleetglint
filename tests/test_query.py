@@ -636,18 +636,24 @@ class RedactionTest(unittest.TestCase):
                    {"label": "log", "path": f"/tmp/{SECRET}.log"}],
             waits_on=[{"type": "external", "kind": f"k {SECRET}", "key": f"key {SECRET}",
                        "url": f"https://example.com/{SECRET}"}])
+        free_form = run("usage-1", usage={"basis": "measured", "id": SECRET,
+                                          "source_id": {"api_token": SECRET}})
         path = root / "work@mbp" / "0000000001.ndjson"
         path.parent.mkdir(parents=True)
-        path.write_text(json.dumps(secret_run) + "\n", encoding="utf-8")
+        path.write_text(json.dumps(secret_run) + "\n" + json.dumps(free_form) + "\n",
+                        encoding="utf-8")
         ingestor.scan_roots()
         backend = query.QueryBackend(cfg)
         snap = backend.snapshot(NOW)
-        self.assertEqual([item["ref"]["id"] for item in snap["runs"]], ["url-1"])
+        self.assertEqual({item["ref"]["id"] for item in snap["runs"]}, {"url-1", "usage-1"})
         self.assertNotIn(SECRET, json.dumps(snap))
         detail = backend.record(NOW, "work@mbp", "run", "url-1")
         self.assertEqual(detail["record"]["ref"], {"type": "run", "id": "url-1",
                                                    "source_id": "work@mbp"})
         self.assertNotIn(SECRET, json.dumps(detail))
+        usage = backend.record(NOW, "work@mbp", "run", "usage-1")
+        self.assertEqual(usage["usage"]["id"], "[redacted]")
+        self.assertNotIn(SECRET, json.dumps(usage))
 
     def test_long_summary_is_cut_after_redaction(self):
         tmp = tempfile.TemporaryDirectory()
