@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fleetglint"
+dynamic = ["version"]
+description = "A local, read-only board for people who run many AI agents and models at once"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Environment :: Web Environment",
+]
+
+[project.optional-dependencies]
+dev = ["jsonschema[format-nongpl]>=4.23,<5"]
+
+[project.urls]
+Homepage = "https://github.com/nurockplayer/tachiko-fleetglint"
+
+[project.scripts]
+fleetglint = "fleetglint.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "fleetglint.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fleetglint = ["data/*.json", "web/**/*"]

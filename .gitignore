@@ -8,3 +8,6 @@ dist/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+src/fleetglint/web/
+*.egg-info/
+build/
