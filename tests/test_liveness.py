@@ -106,8 +106,17 @@ class DisplayTableTest(unittest.TestCase):
         rec = record(state="running", observed_at="2026-11-06T02:59:50Z")
         self.assertEqual(show(rec), liveness.Display("running", "observed", 10))
 
-    def test_missing_observed_at_is_stale(self):
+    def test_missing_observed_at_defaults_to_updated_at(self):
         rec = record(state="running")
+        self.assertEqual(show(rec), liveness.Display("running", "observed", 0))
+
+    def test_missing_observed_at_uses_updated_at_for_staleness(self):
+        rec = record(state="running", updated_at=ts(1000))
+        self.assertEqual(show(rec), liveness.Display("stale", "expired", 1000))
+
+    def test_missing_observed_at_and_updated_at_is_stale(self):
+        rec = record(state="running")
+        del rec["updated_at"]
         self.assertEqual(show(rec), liveness.Display("stale", "expired", None))
 
 

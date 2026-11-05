@@ -35,9 +35,17 @@ def _parse_ts(value):
     return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
+def _timestamp_value(record, field):
+    """The field's value; `observed_at` defaults to `updated_at` (spec §2)."""
+    value = record.get(field)
+    if value is None and field == "observed_at":
+        return record.get("updated_at")
+    return value
+
+
 def _age(record, now, field):
     """Seconds since `field`, or None when it is absent or unparseable; never negative."""
-    ts = _parse_ts(record.get(field))
+    ts = _parse_ts(_timestamp_value(record, field))
     if ts is None:
         return None
     return max(0, int((now - ts).total_seconds()))
@@ -52,7 +60,7 @@ def _stale_after(record, default):
 
 def _recent(record, now, field, stale_after):
     """Is `now` before `field + stale_after`? A missing timestamp is never recent."""
-    ts = _parse_ts(record.get(field))
+    ts = _parse_ts(_timestamp_value(record, field))
     return ts is not None and now < ts + timedelta(seconds=stale_after)
 
 
