@@ -460,7 +460,7 @@ class RunTest(unittest.TestCase):
                 with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
                     code = server.run(args)
         self.assertEqual(code, 3)
-        self.assertIn("already running", err.getvalue())
+        self.assertIn("is running", err.getvalue())
         self.assertNotIn("Traceback", err.getvalue())
 
 
