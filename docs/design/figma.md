@@ -41,20 +41,22 @@ at the top of `code.js`.
 
 ## Node ids and screenshots
 
-**pending: filled after the plugin runs.** The plugin cannot report stable
-node ids from this environment (no Figma access), so the table is a checklist
-for the lead to fill in from Figma.
+From the build of 2026-11-06 01:22 JST (`fleetglint-build-log`: `result: ok`,
+no warnings, no font fallbacks; "3 pages, 2 variable collections, 10 text
+styles, 11 component sets + 4 components (86 components in total), 6
+screens"). Re-running the plugin rebuilds its pages, so these ids change on
+every run; read them again from Figma (or the bridge) after a re-run.
 
 | Item | Node id | Notes |
 |---|---|---|
-| `Overview — 1440×900` | pending | first frame on `Screens` |
-| `Overview — 390×844` | pending | second row, first frame |
-| `Run detail — 1440×900` | pending | |
-| `Needs attention — 1440×900` | pending | |
-| `Unavailable — 1440×900` | pending | |
-| `Empty — 1440×900` | pending | |
-| `StateBadge` component set | pending | first set on `Components` |
-| Screenshots | pending | not attached in this phase |
+| `Overview — 1440×900` | `18:5029` | on `Screens` |
+| `Overview — 390×844` | `18:5506` | |
+| `Run detail — 1440×900` | `18:5239` | |
+| `Needs attention — 1440×900` | `18:5360` | |
+| `Unavailable — 1440×900` | `18:5635` | |
+| `Empty — 1440×900` | `18:5659` | |
+| `StateBadge` component set | `18:4696` | first set on `Components`, 48 variants |
+| Screenshots | not attached | open the file: https://www.figma.com/design/ImzDcmpKT8i3XnwIx0ftpB |
 
 ## State legend
 
@@ -152,9 +154,11 @@ discontinuity. The screens are read-only: no buttons that change a workflow.
 
 ## Deviations from the brief
 
-1. **No node ids or screenshots in this phase.** The plugin was written and
-   checked as code; it has not run in Figma here. The table above and the
-   screenshots are filled in after the Owner runs it.
+1. **First Figma runs failed, fixed.** The first run stopped at text styles
+   (sync APIs under dynamic-page; fixed by switching to async APIs and adding
+   `fleetglint-build-log`), the second at the Foundations glyphs
+   (`strokeDashes` is not a node property; it is `dashPattern`). The third run
+   built everything.
 2. **Running pulse is static.** Figma's plugin API cannot animate canvas
    nodes, so the pulse is specified as the `motion/ambient` 1600 ms token and
    the badge uses a filled dot plus ring. Reduced motion is documented, not
