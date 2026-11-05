@@ -8,6 +8,7 @@ import re
 import sqlite3
 import sys
 import time
+import zlib
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -536,6 +537,8 @@ class Ingestor:
     def _retain_segments(self, source, segment_cutoff, abandon_cutoff, allowed_roots):
         conn = self.conn
         source_id = source["source_id"]
+        if source["status"] != "ok":
+            return False, []  # never delete data for a source that needs attention
         checkpoint = store.get_checkpoint(conn, source_id)
         if checkpoint is None:
             return False, []
@@ -547,11 +550,13 @@ class Ingestor:
             seq = row["seq"]
             if not row["closed"] or seq >= checkpoint["seq"]:
                 break
-            paths = _segment_paths(directory, seq)
-            if not paths:
-                store.delete_segment(conn, source_id, seq)
-                changed = True
-                continue
+            paths = self._verified_segment_paths(directory, row)
+            if paths is None:
+                # The file on disk is no longer the one that was ingested: keep everything.
+                store.update_source(conn, source_id, status="discontinuity",
+                                    detail=f"segment {seq:010d} changed before retention",
+                                    discontinuity_at=self._now_text())
+                return True, []
             try:
                 mtime = min(os.stat(path).st_mtime for path in paths)
             except OSError:
@@ -573,6 +578,24 @@ class Ingestor:
             store.set_meta(conn, self._retention_marker_key(source_id), seq)
             changed = True
         return changed, []
+
+    def _verified_segment_paths(self, directory, row):
+        """Same-seq files whose content equals what was ingested, or None if any differs."""
+        if row["length"] is None or row["fingerprint"] is None:
+            return None
+        paths = _segment_paths(directory, row["seq"])
+        if not paths:
+            return None
+        verified = []
+        for path in paths:
+            try:
+                fingerprint, length = _fingerprint(path, path.name.endswith(".gz"))
+            except (OSError, EOFError, zlib.error):
+                return None
+            if length != row["length"] or fingerprint != row["fingerprint"]:
+                return None
+            verified.append(path)
+        return verified
 
     def _retention_dir(self, source, allowed_roots):
         """The resolved source directory, only when it is a real dir directly under a root."""
@@ -858,7 +881,7 @@ def _ingest_loop(cfg):
 
 
 def _loop(ingestor, cfg):
-    ingestor.apply_retention()
+    # Scan first, then retain: retention verifies files against what the scan ingested.
     next_roots = next_adapters = next_retention = 0.0
     try:
         while True:

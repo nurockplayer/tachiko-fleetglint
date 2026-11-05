@@ -580,6 +580,30 @@ class IngestTest(unittest.TestCase):
         self.assertTrue((moved / "0000000001.ndjson").exists())
         self.assertIsNotNone(store.get_segment(self.conn, "s@host", 1))
 
+    def test_retention_refuses_a_segment_replaced_after_ingestion(self):
+        real_a = self.dir / "root-a"
+        real_a.mkdir()
+        self.root.rmdir()
+        os.symlink(real_a, self.root)
+        self.write_segment([run(state="done")], seq=1)
+        self.write_segment([run(id="r2", state="done", updated_at=stamp(minutes=1))], seq=2)
+        self.ing.scan_roots()
+        self.make_old(self.segment_path(1))
+
+        real_b = self.dir / "root-b"
+        (real_b / "s@host").mkdir(parents=True)
+        replacement = real_b / "s@host" / "0000000001.ndjson"
+        replacement.write_text(json.dumps(run(id="r1", state="running")) + "\n")
+        os.unlink(self.root)
+        os.symlink(real_b, self.root)
+
+        self.retain()
+        self.assertTrue(replacement.exists())
+        self.assertIsNotNone(store.get_segment(self.conn, "s@host", 1))
+        self.assertEqual(self.status(), "discontinuity")
+        self.assertIn("segment 0000000001 changed before retention",
+                      store.get_source(self.conn, "s@host")["detail"])
+
     def test_retention_does_not_delete_a_symlinked_segment_target(self):
         self.write_segment([run(state="done")], seq=1)
         self.write_segment([run(id="r2", state="done", updated_at=stamp(minutes=1))], seq=2)
