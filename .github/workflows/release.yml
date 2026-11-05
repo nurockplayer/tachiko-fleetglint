@@ -45,6 +45,7 @@ jobs:
           python -m venv /tmp/v
           /tmp/v/bin/pip install dist/*.whl
           /tmp/v/bin/fleetglint version
+          /tmp/v/bin/python scripts/smoke_wheel.py /tmp/v/bin/fleetglint
       - name: Write checksums
         run: |
           (cd dist && sha256sum -- *) > "$RUNNER_TEMP/SHA256SUMS"
