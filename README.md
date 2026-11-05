@@ -8,7 +8,7 @@ Fleetglint only observes. It never schedules, dispatches, merges or reviews.
 Any workflow can feed it by writing records in an open, vendor-neutral NDJSON
 format; read-only adapters cover existing tools.
 
-> Status: pre-release. Nothing to install yet; v0.1 is in design.
+> Status: pre-release. Nothing to install yet; v0.1 is being built (see [docs/architecture.md](docs/architecture.md)).
 
 The record format is specified in [docs/spec.md](docs/spec.md), with a JSON
 Schema in [schema/v1/](schema/v1/) and examples in [examples/v1/](examples/v1/).

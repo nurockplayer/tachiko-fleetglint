@@ -36,7 +36,7 @@ Every record is one JSON object. These fields are common to all types.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `v` | integer | yes | Format version. This document defines `1`. |
-| `type` | string | yes | `run`, `job` or `inbox_item` (§4). |
+| `type` | string | yes | `run`, `job`, `inbox_item` or `session` (§4). |
 | `id` | string | yes | Writer-chosen id, unique within `(source_id, type)`. |
 | `source_id` | string | yes | The source that wrote the record (§6.1). |
 | `updated_at` | timestamp | yes | When the writer produced this version of the record. |
@@ -140,7 +140,7 @@ A session that is paused and later resumed produces a **new** run with
 | `model` | string | no | Model id as the tool reports it: `gpt-6.1-terra`, `claude-opus-5-5`. |
 | `provider` | string | no | Who serves the model: `openai`, `anthropic`, `deepseek`, `ollama`, … |
 | `effort` | string | no | Reasoning effort or similar setting, as the tool names it. |
-| `role_id` | string | no | The role responsible for this run, usually the one that dispatched it (§4.4). |
+| `role_id` | string | no | The role responsible for this run, usually the one that dispatched it (§4.5). |
 | `session_id` | string | no | The tool's own session or conversation id, if it has one. Runs that share a `session_id` are segments of one conversation. |
 | `parent_run` | RecordRef to a run | no | The run that **spawned** this run. |
 | `resume_of` | RecordRef to a run | no | The run this run **continues** (same conversation, later segment). |
@@ -217,7 +217,41 @@ immutable event log entry.
 Inbox items are never stale (§8): they describe a notification, not a
 live process.
 
-### 4.4 Roles
+### 4.4 `session`: a conversation history found on disk
+
+A session is an agent tool's own conversation history (a Claude Code
+transcript, a Codex rollout file) as an importer finds it. It records that
+the conversation exists and when it last had activity. It is **not** a run:
+a history file shows that something was written, not that a process is
+executing, and one history may span several runs (resumes). Importers that
+can only see history files write sessions, not runs.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `state` | SessionState | yes | `open`, `ended` or `unknown`; see below. |
+| `agent` | string | yes | As in `run`: `claude-code`, `codex-cli`, … |
+| `last_activity_at` | timestamp | yes | Time of the newest entry the writer found in the history. |
+| `started_at` | timestamp | no | Time of the oldest entry. |
+| `ended_at` | timestamp | no | Required when `state` is `ended`. |
+| `model` | string | no | The model of the newest entry that names one. |
+| `models` | array of string | no | At most 16 distinct models seen in the history. |
+| `provider`, `effort` | string | no | As in `run`, from the newest entry that states them. |
+| `role_id` | string | no | §4.5. |
+| `parent_session` | RecordRef to a session | no | The session that spawned this one (a subagent's history), only when the tool's files state it. |
+| `turn_open` | boolean or null | no | `true` if the history shows a turn that started and has not ended, `false` if every turn it shows has ended, `null` or absent if the tool does not record turns. |
+| `entries` | integer | no | Number of entries the writer counted. |
+| `usage` | Usage | no | §5.2, summed over the history. |
+| `summary` | string | no | At most 2000 characters. Writers SHOULD NOT copy prompts or tool output here. |
+
+**SessionState**: `ended` means the tool itself recorded the end (a
+session-end event); it is terminal. `open` means the writer has evidence the
+session has not ended (for example a session-start event without an end).
+`unknown` is the usual value for an importer that reads history files.
+
+Writers MUST NOT copy prompts, model output, tool input or tool output into
+a session record; it carries metadata only.
+
+### 4.5 Roles
 
 `role_id` names who is responsible: a lead session (`fleetglint-lead`), a
 human (`owner`), a team. It is a free-form string in v1; a `role` record type
@@ -369,7 +403,7 @@ explicit user action.
   than the retention period (default 30 days, configurable), **and** it
   holds no latest record (§7.2) that is non-terminal or an open inbox
   item, unless that record is abandoned. Otherwise a rebuild could not
-  recover that record. A `run` or `job` record is abandoned when its
+  recover that record. A `run`, `job` or `session` record is abandoned when its
   `updated_at` is older than the abandonment period (default 90 days,
   configurable, never shorter than the retention period); this keeps a
   writer that died with a non-terminal run from blocking retention forever.
@@ -410,8 +444,8 @@ state** next to it, computed when the read model is queried.
 ### 8.1 Display states
 
 For a terminal `state` (`done`, `failed`, `cancelled`) the display state is
-the same value. For an inbox item it is its `state`. For non-terminal
-states:
+the same value. For an inbox item it is its `state`. For a session see
+§8.3. For other non-terminal states:
 
 | Display state | When |
 |---|---|
@@ -431,6 +465,14 @@ Fleetglint MAY check the process: the pid exists and, if `start_time` is
 given, the running process started within 2 seconds of it. A matching
 process is current evidence; a missing or different process gives `lost`.
 Records from other hosts fall back to `observed_at`/`stale_after_s`.
+
+### 8.3 Sessions
+
+A session's display state describes activity in its history, never
+execution: `ended` when `state` is `ended`; otherwise `recent` while
+`now < last_activity_at + stale_after_s` (default as above) and `idle`
+after that; `unknown` while its source has a discontinuity or is
+unavailable. Sessions are never counted as running, waiting, done or failed.
 
 ## 9. Safety rules for readers
 
@@ -452,11 +494,11 @@ Records from other hosts fall back to `observed_at`/`stale_after_s`.
 - Within `v: 1`, changes are additive only: new optional fields, new record
   types, new values of free-form strings. Readers MUST accept unknown
   fields.
-- New values of the closed enums (RunState, JobState, InboxState, usage and
+- New values of the closed enums (RunState, JobState, InboxState, SessionState, usage and
   cost `basis`) are a breaking change and need `v: 2`; in a `v: 1` line
   they fail the schema.
 - Reserved for later versions: record types `review` (one review of a given
-  `head_sha`), `gate` (the merge gate's changing state), `quota`, `role`,
-  `session`. Writers MUST NOT use these type names until they are defined.
+  `head_sha`), `gate` (the merge gate's changing state), `quota`, `role`.
+  Writers MUST NOT use these type names until they are defined.
 - A reader that meets a `v` it does not support quarantines the line with
   `unsupported_version`.

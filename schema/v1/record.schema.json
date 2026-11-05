@@ -7,7 +7,7 @@
   "required": ["v", "type", "id", "source_id", "updated_at"],
   "properties": {
     "v": {"const": 1},
-    "type": {"enum": ["run", "job", "inbox_item"]},
+    "type": {"enum": ["run", "job", "inbox_item", "session"]},
     "id": {"$ref": "#/$defs/id"},
     "source_id": {"$ref": "#/$defs/source_id"},
     "updated_at": {"$ref": "#/$defs/timestamp"},
@@ -20,7 +20,8 @@
   "allOf": [
     {"if": {"properties": {"type": {"const": "run"}}}, "then": {"$ref": "#/$defs/run"}},
     {"if": {"properties": {"type": {"const": "job"}}}, "then": {"$ref": "#/$defs/job"}},
-    {"if": {"properties": {"type": {"const": "inbox_item"}}}, "then": {"$ref": "#/$defs/inbox_item"}}
+    {"if": {"properties": {"type": {"const": "inbox_item"}}}, "then": {"$ref": "#/$defs/inbox_item"}},
+    {"if": {"properties": {"type": {"const": "session"}}}, "then": {"$ref": "#/$defs/session"}}
   ],
   "$defs": {
     "id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\s\\x00-\\x1f\\x7f]+$"},
@@ -165,6 +166,32 @@
       },
       "if": {"properties": {"state": {"const": "acked"}}},
       "then": {"required": ["acked_at"]}
+    },
+    "session_ref": {
+      "allOf": [{"$ref": "#/$defs/record_ref"}],
+      "properties": {"type": {"const": "session"}}
+    },
+    "session": {
+      "required": ["agent", "state", "last_activity_at"],
+      "properties": {
+        "state": {"enum": ["open", "ended", "unknown"]},
+        "agent": {"type": "string", "minLength": 1, "maxLength": 64},
+        "model": {"type": "string", "minLength": 1, "maxLength": 128},
+        "models": {"type": "array", "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "provider": {"type": "string", "minLength": 1, "maxLength": 64},
+        "effort": {"type": "string", "minLength": 1, "maxLength": 32},
+        "role_id": {"$ref": "#/$defs/role_id"},
+        "parent_session": {"$ref": "#/$defs/session_ref"},
+        "started_at": {"$ref": "#/$defs/timestamp"},
+        "last_activity_at": {"$ref": "#/$defs/timestamp"},
+        "ended_at": {"$ref": "#/$defs/timestamp"},
+        "turn_open": {"type": ["boolean", "null"]},
+        "entries": {"type": "integer", "minimum": 0},
+        "usage": {"$ref": "#/$defs/usage"},
+        "summary": {"$ref": "#/$defs/summary"}
+      },
+      "if": {"properties": {"state": {"const": "ended"}}},
+      "then": {"required": ["ended_at"]}
     }
   }
 }
