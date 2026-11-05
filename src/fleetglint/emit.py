@@ -23,21 +23,38 @@ def append_record(record, root):
     data = line.encode("utf-8")
     if len(data) > MAX_RECORD_BYTES:
         raise ValueError(f"record line is larger than {MAX_RECORD_BYTES} bytes")
-    remaining = memoryview(data)
     with _locked(directory / ".lock"):
         segment = _current_segment(directory)
         if segment.exists() and segment.stat().st_size >= SEGMENT_LIMIT:
             segment = _next_segment(directory)
         fd = os.open(segment, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
-            while remaining:
-                written = os.write(fd, remaining)
-                if written <= 0:
-                    raise OSError("short write")
-                remaining = remaining[written:]
+            # A write that failed part-way leaves a prefix; close that line so the next
+            # record is not glued onto it (the prefix is quarantined on its own).
+            if _ends_without_newline(segment):
+                _write_all(fd, b"\n")
+            _write_all(fd, data)
         finally:
             os.close(fd)
     return segment
+
+
+def _ends_without_newline(segment):
+    size = segment.stat().st_size
+    if not size:
+        return False
+    with open(segment, "rb") as handle:
+        handle.seek(-1, os.SEEK_END)
+        return handle.read(1) != b"\n"
+
+
+def _write_all(fd, data):
+    remaining = memoryview(data)
+    while remaining:
+        written = os.write(fd, remaining)
+        if written <= 0:
+            raise OSError("short write")
+        remaining = remaining[written:]
 
 
 def run(args):

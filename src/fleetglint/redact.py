@@ -46,7 +46,7 @@ def _env_secrets(env):
 
 def _redact_pem(text):
     """Collapse each private-key block to one replacement, including an unterminated block."""
-    lines = text.splitlines()
+    lines = text.splitlines(keepends=True)
     first_begin = next((i for i, line in enumerate(lines) if BEGIN_KEY.search(line)), len(lines))
     in_key = any(END_KEY.search(line) for line in lines[:first_begin])
     out = [REPLACEMENT] if in_key else []
@@ -54,13 +54,20 @@ def _redact_pem(text):
     for line in lines:
         if in_key:
             if END_KEY.search(line):
+                out.append(_line_ending(line))
                 in_key = False
             continue
         if BEGIN_KEY.search(line):
             out.append(REPLACEMENT)
             count += 1
-            if not END_KEY.search(line):
+            if END_KEY.search(line):
+                out.append(_line_ending(line))
+            else:
                 in_key = True
             continue
         out.append(line)
-    return "\n".join(out), count
+    return "".join(out), count
+
+
+def _line_ending(line):
+    return line[len(line.rstrip("\r\n")):]

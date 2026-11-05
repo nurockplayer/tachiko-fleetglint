@@ -85,6 +85,15 @@ class AppendRecordTest(unittest.TestCase):
         self.assertTrue(data.startswith(existing))
         self.assertEqual(len(data.splitlines()), 2)
 
+    def test_completes_a_partial_previous_line(self):
+        self.dir.mkdir()
+        prefix = b'{"v":1,"t'
+        (self.dir / "0000000001.ndjson").write_bytes(prefix)
+        emit.append_record(make_record(), self.root)
+        lines = (self.dir / "0000000001.ndjson").read_bytes().splitlines()
+        self.assertEqual(lines[0], prefix)
+        self.assertEqual(json.loads(lines[1]), make_record())
+
     def test_short_writes_are_completed(self):
         real_write = os.write
 

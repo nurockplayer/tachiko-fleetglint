@@ -55,6 +55,11 @@ class ShapeTest(unittest.TestCase):
                 "0123456789abcdef0123456789abcdef01234567")
         self.assertEqual(redact(text, {}), (text, 0))
 
+    def test_text_without_secrets_keeps_its_line_endings(self):
+        for text in ("hello\nworld\n", "a\r\nb"):
+            with self.subTest(text=text):
+                self.assertEqual(redact(text, {}), (text, 0))
+
     def test_count_sums_replacements(self):
         out, count = redact("AKIA" + "A" * 16 + " and ghp_" + "B" * 36, {})
         self.assertEqual(out, "[redacted] and [redacted]")

@@ -90,6 +90,19 @@ class ClassifyLineTest(unittest.TestCase):
     def test_unsupported_type(self):
         self.assertEqual(self.classify(make_record(type="review"))[1], "unsupported_type")
 
+    def test_unhashable_type_and_version(self):
+        self.assertEqual(self.classify(make_record(type=[]))[1], "unsupported_type")
+        self.assertEqual(self.classify(make_record(type={}))[1], "unsupported_type")
+        self.assertEqual(self.classify(make_record(v=[]))[1], "unsupported_version")
+        self.assertEqual(self.classify(make_record(v={}))[1], "unsupported_version")
+
+    def test_non_finite_constants_are_invalid_json(self):
+        line = json.dumps(make_record())[:-1]
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                raw = (line + f',"x":{constant}' + "}\n").encode()
+                self.assertEqual(schema.classify_line(raw, None)[1], "invalid_json")
+
     def test_schema(self):
         bad = make_record()
         del bad["state"]
@@ -125,6 +138,14 @@ class CheckCommandTest(unittest.TestCase):
         code, out = self.check(path)
         self.assertEqual(code, 1)
         self.assertIn(f"{path}:1: unsupported_type: ", out)
+        self.assertIn("2 line(s), 1 invalid", out)
+
+    def test_final_line_without_newline_is_incomplete(self):
+        path = self.dir / "partial.ndjson"
+        path.write_bytes((json.dumps(make_record()) + "\n" + json.dumps(make_record(id="r2"))).encode())
+        code, out = self.check(path)
+        self.assertEqual(code, 1)
+        self.assertIn(f"{path}:2: incomplete_line: the reader would wait for the newline", out)
         self.assertIn("2 line(s), 1 invalid", out)
 
     def test_stdin_when_no_files(self):

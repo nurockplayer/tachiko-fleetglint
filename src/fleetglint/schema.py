@@ -61,21 +61,27 @@ def classify_line(raw, expected_source_id=None, max_bytes=MAX_LINE_BYTES):
     if len(raw) > max_bytes:
         return None, "too_large", f"{len(raw)} bytes"
     try:
-        record = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        record = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant)
+    except ValueError as exc:
         return None, "invalid_json", str(exc)
     if not isinstance(record, dict):
         return None, "invalid_json", f"not a JSON object: {_json_type(record)}"
-    if record.get("v") != 1:
-        return None, "unsupported_version", f"v={record.get('v')!r}"
-    if record.get("type") not in RECORD_TYPES:
-        return None, "unsupported_type", f"type={record.get('type')!r}"
+    version = record.get("v")
+    if isinstance(version, bool) or not isinstance(version, int) or version != 1:
+        return None, "unsupported_version", f"v={version!r}"
+    record_type = record.get("type")
+    if not isinstance(record_type, str) or record_type not in RECORD_TYPES:
+        return None, "unsupported_type", f"type={record_type!r}"
     errors = validate(record)
     if errors:
         return None, "schema", "; ".join(errors)
     if expected_source_id is not None and record.get("source_id") != expected_source_id:
         return None, "source_mismatch", f"{record.get('source_id')!r} != {expected_source_id!r}"
     return record, None, None
+
+
+def _reject_constant(value):
+    raise ValueError(f"non-standard JSON constant {value}")
 
 
 def run(args):
@@ -95,6 +101,11 @@ def run(args):
         try:
             for number, raw in enumerate(source, 1):
                 total += 1
+                if not raw.endswith(b"\n"):
+                    bad += 1
+                    print(f"{name}:{number}: incomplete_line: "
+                          f"the reader would wait for the newline")
+                    continue
                 _, reason, detail = classify_line(raw)
                 if reason:
                     bad += 1
