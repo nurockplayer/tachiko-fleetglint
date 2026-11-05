@@ -105,9 +105,12 @@ def _mtime(path):
         return None
 
 
-def _ledger_stamp(moment):
-    """The `%F %H:%M %Z` form worker-ledger writes for a start epoch."""
-    return moment.strftime("%Y-%m-%d %H:%M JST")
+def _run_identity(tool, log):
+    """The running entry and its finished row both state the run's log path, which is unique
+    per run (`<worker>-<timestamp>.log`), so hashing it keeps one identity across a restart."""
+    if log and log.startswith("/") and len(log) <= 4096:
+        return f"{tool}.{hashlib.sha1(log.encode('utf-8', 'replace')).hexdigest()[:12]}"
+    return None
 
 
 def _agent_for(tool):
@@ -189,10 +192,6 @@ class HarnessAdapter:
         self.source_id = f"tachiko-harness@{self.hostname}"
         self.allowed_roots = [self.state_dir / name for name in ROOTS
                               if (self.state_dir / name).is_dir()]
-        # id -> (last running record, (tool, ledger start stamp)), to tell a vanished run apart
-        self._live: dict[str, tuple[dict, tuple[str, str]]] = {}
-        # (tool, start stamp) -> running id once a finished row and a running entry were joined
-        self._joins: dict[tuple[str, str], str] = {}
 
     def available(self):
         return (self.state_dir / "worker-ledger" / "runs.tsv").exists()
@@ -220,20 +219,16 @@ class HarnessAdapter:
     # -- worker-ledger ----------------------------------------------------
 
     def _scan_runs(self, ledger_text, now, stats):
-        rows = {}
-        order = []
+        records = []
+        seen = set()
         for row in ledger_text.splitlines():
             if not row.strip() or row.startswith("started\t"):
                 continue
-            built = self._ledger_record(row, stats)
-            if built is None:
+            record = self._ledger_record(row, stats)
+            if record is None or record["id"] in seen:
                 continue
-            record, join_key = built
-            if join_key not in rows:
-                rows[join_key] = record
-                order.append(join_key)
-
-        current = {}
+            seen.add(record["id"])
+            records.append(record)
         running_dir = self.state_dir / "worker-ledger" / "running"
         if running_dir.is_dir():
             try:
@@ -244,43 +239,11 @@ class HarnessAdapter:
             for path in entries:
                 if path.name.startswith(".") or not path.is_file():
                     continue
-                built = self._running_record(path, now, stats)
-                if built is None:
+                record = self._running_record(path, now, stats)
+                if record is None or record["id"] in seen:
                     continue
-                record, join_key = built
-                current[record["id"]] = (record, join_key)
-
-        # worker-ledger formats a finished row's `started` from the running entry's start
-        # epoch, so the row and the entry with the same tool and stamp are one run. The row
-        # keeps the running identity, so finishing never leaves a stale running record behind.
-        claimed = {join_key: record_id for record_id, (_record, join_key) in current.items()
-                   if join_key in rows}
-        unknown = []
-        for record_id, (previous, join_key) in self._live.items():
-            if record_id in current:
-                continue
-            if join_key in rows:
-                claimed.setdefault(join_key, record_id)
-                continue
-            record = {field: value for field, value in previous.items()
-                      if field not in ("observed_at", "process", "stale_after_s")}
-            record["state"] = "unknown"
-            record["updated_at"] = _iso(now)
-            record["summary"] = "the running entry disappeared and worker-ledger has no finished row for it"
-            unknown.append(record)
-
-        joins = {**self._joins, **claimed}
-        records = []
-        for join_key in order:
-            record = rows[join_key]
-            if join_key in joins:
-                record = {**record, "id": joins[join_key]}
-            records.append(record)
-        records.extend(record for record, _key in current.values())
-        records.extend(unknown)
-        self._joins = {join_key: record_id for join_key, record_id in joins.items()
-                       if join_key in rows}
-        self._live = current
+                seen.add(record["id"])
+                records.append(record)
         return records
 
     def _ledger_record(self, row, stats):
@@ -304,7 +267,8 @@ class HarnessAdapter:
             # worker-ledger writes "lost" when it pruned a dead pid: it cannot tell the outcome.
             state = "unknown"
         digest = hashlib.sha1(row.encode("utf-8", "replace")).hexdigest()[:12]
-        record = self._base("run", f"{tool}.ledger.{digest}", _iso(ended))
+        record_id = _run_identity(tool, log) or f"{tool}.ledger.{digest}"
+        record = self._base("run", record_id, _iso(ended))
         record.update({"state": state, "agent": _clip(agent, 64), "started_at": _iso(started)})
         if state in TERMINAL_STATES:
             record["ended_at"] = _iso(ended)
@@ -313,7 +277,7 @@ class HarnessAdapter:
         self._add_run_details(record, project, worker, model, provider, log)
         if note.strip():
             record["summary"] = _clip(note.strip(), 2000)
-        return record, (tool, started_text)
+        return record
 
     def _running_record(self, path, now, stats):
         match = _RUNNING_NAME.match(path.name)
@@ -336,7 +300,8 @@ class HarnessAdapter:
         if started is None or not agent:
             stats.malformed += 1
             return None
-        record_id = f"{tool}.{pid}" + (f".{key}" if key else "") + f".{int(fields[3])}"
+        record_id = (_run_identity(tool, fields[9])
+                     or f"{tool}.{pid}" + (f".{key}" if key else "") + f".{int(fields[3])}")
         record = self._base("run", record_id, _iso(started))
         record.update({
             "state": "running",
@@ -347,7 +312,7 @@ class HarnessAdapter:
             "observed_at": _iso(now),
         })
         self._add_run_details(record, fields[4], fields[5], fields[6], provider, fields[9])
-        return record, (tool, _ledger_stamp(started))
+        return record
 
     def _add_run_details(self, record, project, worker, model, provider, log):
         if _clean(project):

@@ -96,6 +96,15 @@ def by_id(records):
     return {record["id"]: record for record in records}
 
 
+def run_id(tool, log):
+    """The id both the running entry and the finished row derive from the run's log path."""
+    return f"{tool}.{hashlib.sha1(log.encode()).hexdigest()[:12]}"
+
+
+TERRA_LIVE = "/Users/example/.local/state/cx-exec/terra-live.log"
+TERRA_LIVE_ID = run_id("cx", TERRA_LIVE)
+
+
 class HarnessAdapterTest(unittest.TestCase):
     def setUp(self):
         self.adapter = harness.HarnessAdapter(FIXTURES, hostname="fixture-host")
@@ -126,10 +135,7 @@ class HarnessAdapterTest(unittest.TestCase):
 
     def test_finished_ledger_rows(self):
         records = by_id(self.result.records)
-        row = next(line for line in (FIXTURES / "worker-ledger/runs.tsv").read_text().splitlines()
-                   if line.startswith("2026-11-05 04:00 JST"))
-        digest = hashlib.sha1(row.encode()).hexdigest()[:12]
-        record = records[f"cx.ledger.{digest}"]
+        record = records[run_id("cx", "/Users/example/.local/state/cx-exec/terra-a.log")]
         self.assertEqual(record["state"], "done")
         self.assertEqual(record["agent"], "codex-cli")
         self.assertEqual(record["exit_code"], 0)
@@ -169,7 +175,7 @@ class HarnessAdapterTest(unittest.TestCase):
 
     def test_running_entries(self):
         records = by_id(self.result.records)
-        record = records["cx.4001.1793847600"]
+        record = records[TERRA_LIVE_ID]
         self.assertEqual(record["state"], "running")
         self.assertEqual(record["agent"], "codex-cli")
         self.assertEqual(record["started_at"], "2026-11-05T12:00:00+09:00")
@@ -181,53 +187,66 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertEqual(record["links"][0]["path"],
                          "/Users/example/.local/state/cx-exec/terra-live.log")
 
-        keyed = records["ds.4002.toolu_synthetickey.1793844000"]
+        keyed = records[run_id("ds", "/Users/example/.local/state/ds-exec/flash-sub.log")]
         self.assertEqual(keyed["state"], "running")
         self.assertEqual(keyed["provider"], "deepseek")
         self.assertEqual(keyed["process"]["pid"], 4002)
 
-    def test_vanished_running_entry_becomes_unknown(self):
+    def test_vanished_running_entry_is_left_to_the_liveness_layer(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "state"
             shutil.copytree(FIXTURES, state)
             adapter = harness.HarnessAdapter(state, hostname="fixture-host")
-            adapter.scan(NOW)
+            first = by_id(adapter.scan(NOW).records)
             (state / "worker-ledger/running/cx.4001").unlink()
-            second = adapter.scan(LATER)
-            record = by_id(second.records)["cx.4001.1793847600"]
-            self.assertEqual(record["state"], "unknown")
-            self.assertNotEqual(record["state"], "done")
-            self.assertNotIn("process", record)
-            self.assertNotIn("observed_at", record)
-            self.assertEqual(record["updated_at"], "2026-11-05T12:01:00+09:00")
-            third = adapter.scan(LATER)
-            self.assertNotIn("cx.4001.1793847600", by_id(third.records))
+            second = by_id(adapter.scan(LATER).records)
+            # No finished row states the outcome and the liveness layer turns a gone pid into
+            # lost by itself, so the adapter emits nothing new and the last record stays.
+            self.assertNotIn(TERRA_LIVE_ID, second)
+            self.assertEqual(first[TERRA_LIVE_ID]["state"], "running")
+            self.assertEqual(adapter.scan(LATER).detail, "7 malformed row(s) skipped")
 
-    def test_finished_row_takes_over_the_running_identity(self):
+    def test_log_path_identity_survives_a_restart(self):
         row = ("2026-11-05 12:00 JST\t2026-11-05 12:02 JST\tcx\talpha\tterra-live\t"
-               "gpt-6.1-terra\tpane:9\t0\t-\t"
-               "/Users/example/.local/state/cx-exec/terra-live.log\tfinished\n")
-        digest = hashlib.sha1(row.rstrip("\n").encode()).hexdigest()[:12]
+               f"gpt-6.1-terra\tpane:9\t0\t-\t{TERRA_LIVE}\tfinished\n")
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "state"
             shutil.copytree(FIXTURES, state)
-            adapter = harness.HarnessAdapter(state, hostname="fixture-host")
-            adapter.scan(NOW)
+            first = by_id(harness.HarnessAdapter(state, hostname="fixture-host").scan(NOW).records)
+            self.assertEqual(first[TERRA_LIVE_ID]["state"], "running")
+
             (state / "worker-ledger/running/cx.4001").unlink()
             with open(state / "worker-ledger/runs.tsv", "a") as file:
                 file.write(row)
-            records = by_id(adapter.scan(LATER).records)
-            finished = records["cx.4001.1793847600"]
+            # A fresh adapter: nothing in memory carries the identity, the log path does.
+            restarted = harness.HarnessAdapter(state, hostname="fixture-host")
+            records = by_id(restarted.scan(LATER).records)
+            finished = records[TERRA_LIVE_ID]
             self.assertEqual(finished["state"], "done")
             self.assertEqual(finished["ended_at"], "2026-11-05T12:02:00+09:00")
             self.assertEqual(finished["exit_code"], 0)
             self.assertEqual(finished["summary"], "finished")
-            self.assertNotIn(f"cx.ledger.{digest}", records)
-            third = by_id(adapter.scan(LATER).records)
-            self.assertEqual(third["cx.4001.1793847600"]["state"], "done")
-            self.assertNotIn(f"cx.ledger.{digest}", third)
+            self.assertNotIn("process", finished)
+            self.assertEqual(finished["links"],
+                             [{"label": "worker log", "path": TERRA_LIVE}])
+            self.assertEqual([record for record in records.values()
+                              if record.get("title") == "terra-live"], [finished])
+
+    def test_entry_without_a_log_path_falls_back_to_pid_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state"
+            shutil.copytree(FIXTURES, state)
+            (state / "worker-ledger/running/cx.4001").write_text(
+                "cx\t4001\tThu Nov  5 03:00:00 2026\t1793847600\talpha\tterra-nolog\t"
+                "gpt-6.1-terra\tpane:9\t/Users/example/Developer/alpha\t-\troutine/cx\n")
+            adapter = harness.HarnessAdapter(state, hostname="fixture-host")
+            records = by_id(adapter.scan(NOW).records)
+        record = records["cx.4001.1793847600"]
+        self.assertEqual(record["state"], "running")
+        self.assertNotIn("links", record)
 
     def test_pid_reuse_gives_new_identity(self):
+        reused = "/Users/example/.local/state/cx-exec/terra-reused.log"
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "state"
             shutil.copytree(FIXTURES, state)
@@ -236,10 +255,13 @@ class HarnessAdapterTest(unittest.TestCase):
             (state / "worker-ledger/running/cx.4001").write_text(
                 "cx\t4001\tThu Nov  5 03:01:00 2026\t1793847660\talpha\tterra-reused\t"
                 "gpt-6.1-terra\tpane:9\t/Users/example/Developer/alpha\t"
-                "/Users/example/.local/state/cx-exec/terra-reused.log\troutine/cx\n")
+                f"{reused}\troutine/cx\n")
             records = by_id(adapter.scan(LATER).records)
-            self.assertEqual(records["cx.4001.1793847660"]["state"], "running")
-            self.assertEqual(records["cx.4001.1793847600"]["state"], "unknown")
+            new_id = run_id("cx", reused)
+            self.assertNotEqual(new_id, TERRA_LIVE_ID)
+            self.assertEqual(records[new_id]["state"], "running")
+            self.assertEqual(records[new_id]["process"]["pid"], 4001)
+            self.assertNotIn(TERRA_LIVE_ID, records)
 
     def test_jobs(self):
         records = by_id(self.result.records)
