@@ -1,0 +1,4 @@
+bash
+run-tests
+--token=synthetic-value
+--verbose

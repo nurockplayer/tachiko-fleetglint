@@ -1,0 +1,12 @@
+{
+  "id": "curl-20261105-050000-222",
+  "status": "ok",
+  "exit_code": 0,
+  "signal": null,
+  "artifacts": [],
+  "log": "/Users/example/.local/state/job-run/curl-20261105-050000-222/log",
+  "cwd": "/Users/example/Developer/alpha",
+  "cmd": ["curl", "-u", "alice:hunter2", "https://example.test/status"],
+  "started": "2026-11-05T05:00:00+09:00",
+  "ended": "2026-11-05T05:01:00+09:00"
+}

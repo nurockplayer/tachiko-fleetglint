@@ -1,0 +1,7 @@
+id	time	kind	ref	state	detail	acked
+ev-20261105-101600-aaaa	2026-11-05 10:16 JST	run	alpha	failed	exit 2; tests failed (output: /Users/example/.local/state/job-run/lw-alpha-20261105-101500/log)
+ev-20261105-101700-bbbb	2026-11-05 10:17 JST	pr	#42	merged-armed	oracle review passed; merge armed; bundle /Users/example/.local/state/review/nurockplayer/example/pr42-abcdef123456	2026-11-05 10:20 JST
+ev-20261105-101800-cccc	2026-11-05 10:18 JST	pr	#7	changes	verdict=changes blocker=1; rerun the gate
+ev-20261105-101850-dddd	2026-11-05 10:18	run	alpha	done	unzoned time row
+ev-20261105-101900-eeee	2026-11-05 10:19 JST	run	missing-label	done	(no output)
+ev-20261105-102000-ffff	too few
