@@ -1,0 +1,847 @@
+"""Tests for fleetglint.query: the board JSON of docs/architecture.md §4."""
+import json
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from fleetglint import config, ingest, query, store
+
+JST = timezone(timedelta(hours=9))
+NOW = datetime(2026, 11, 6, 4, 0, tzinfo=JST)
+SECRET = "sk-" + "a1B2c3D4e5F6g7H8i9J0k1L2"
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "v1" / "valid"
+
+SNAPSHOT_KEYS = {"api", "generated_at", "server", "window_hours", "sources", "counts",
+                 "runs", "jobs", "inbox", "sessions", "attention", "truncated", "demo"}
+SUMMARY_BASE_KEYS = {"ref", "state", "display_state", "evidence", "updated_at",
+                     "observed_at", "project", "title", "links"}
+RUN_KEYS = SUMMARY_BASE_KEYS | {"agent", "model", "provider", "effort", "role_id",
+                                "session_id", "started_at", "ended_at", "exit_code",
+                                "summary", "parent_run", "resume_of", "waits_on"}
+JOB_KEYS = SUMMARY_BASE_KEYS | {"kind", "command_summary", "run", "role_id", "started_at",
+                                "ended_at", "exit_code", "signal", "summary", "log", "result"}
+INBOX_KEYS = SUMMARY_BASE_KEYS | {"role_id", "kind", "subject", "outcome", "action_required",
+                                  "created_at", "acked_at", "detail", "blocks_retention"}
+SESSION_KEYS = SUMMARY_BASE_KEYS | {"agent", "model", "models", "provider", "effort",
+                                    "role_id", "started_at", "last_activity_at", "ended_at",
+                                    "turn_open", "entries", "parent_session", "usage"}
+EVIDENCE_KEYS = {"kind", "age_s", "detail"}
+REF_KEYS = {"type", "id", "source_id"}
+ATTENTION_KEYS = {"reason", "who", "subject", "source_id", "text"}
+RECORD_KEYS = {"api", "generated_at", "record", "full", "relations", "history", "usage"}
+RELATION_KEYS = {"parent", "resume_of", "children", "resumed_by", "jobs", "inbox",
+                 "waited_on_by"}
+
+
+def stamp(**delta):
+    return (NOW + timedelta(**delta)).isoformat()
+
+
+def run(id="r1", state="running", source_id="work@mbp", **extra):
+    # `started_at` is required by schema/v1 for every non-queued/unknown state.
+    record = {"v": 1, "type": "run", "id": id, "source_id": source_id,
+              "updated_at": stamp(seconds=-30), "state": state, "agent": "codex-cli",
+              "started_at": stamp(minutes=-10)}
+    record.update(extra)
+    return record
+
+
+def job(id="j1", state="running", source_id="work@mbp", **extra):
+    record = {"v": 1, "type": "job", "id": id, "source_id": source_id,
+              "updated_at": stamp(seconds=-30), "state": state,
+              "command_summary": "orb-test", "started_at": stamp(minutes=-10)}
+    record.update(extra)
+    return record
+
+
+def inbox(id="i1", state="open", source_id="work@mbp", **extra):
+    record = {"v": 1, "type": "inbox_item", "id": id, "source_id": source_id,
+              "updated_at": stamp(seconds=-30), "state": state, "role_id": "lead",
+              "kind": "job_finished", "created_at": stamp(seconds=-60),
+              "subject": {"type": "job", "id": "j1"}}
+    record.update(extra)
+    return record
+
+
+def session(id="s1", state="unknown", source_id="work@mbp", **extra):
+    record = {"v": 1, "type": "session", "id": id, "source_id": source_id,
+              "updated_at": stamp(seconds=-30), "state": state, "agent": "claude-code",
+              "last_activity_at": stamp(seconds=-30)}
+    record.update(extra)
+    return record
+
+
+def keys(item):
+    return set(item)
+
+
+class QueryTest(unittest.TestCase):
+    """A temp database built by the real Ingestor, read through QueryBackend."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.root = self.dir / "sources"
+        self.root.mkdir()
+        cfg = config.Config()
+        cfg.roots = [self.root]
+        cfg.db_path = self.dir / "db.sqlite"
+        self.disable_adapters(cfg)
+        self.cfg = cfg
+        self.conn = store.open_db(cfg.db_path)
+        self.addCleanup(self.conn.close)
+        self.ing = ingest.Ingestor(self.conn, cfg, clock=lambda: NOW)
+
+        self.log_path = self.root / "work@mbp" / "logs" / "j1.log"
+        self.log_path.parent.mkdir(parents=True)
+        self.log_path.write_text("start\n" + SECRET + "\ndone\n", encoding="utf-8")
+        self.outside_path = self.dir / "outside.log"
+        self.outside_path.write_text("outside\n", encoding="utf-8")
+
+        # Two versions of w-1: the second is an observation refresh.
+        self.write("work@mbp", [
+            run("lead-1", role_id="lead", title="lead session", project="fleetglint",
+                updated_at=stamp(seconds=-90), observed_at=stamp(seconds=-60),
+                started_at=stamp(minutes=-10), model="claude-opus-5-5",
+                provider="anthropic", effort="high", session_id="sess-1",
+                summary="lead summary", usage={"basis": "measured", "input_tokens": 10}),
+            run("w-1", role_id="worker", title="worker task",
+                updated_at=stamp(seconds=-40), observed_at=stamp(seconds=-40),
+                parent_run={"type": "run", "id": "lead-1"}),
+            run("w-1", role_id="worker", title="worker task",
+                updated_at=stamp(seconds=-30), observed_at=stamp(seconds=-10),
+                parent_run={"type": "run", "id": "lead-1"},
+                links=[{"label": "log", "path": str(self.log_path)}]),
+            run("waiting-1", state="waiting",
+                updated_at=stamp(seconds=-20), observed_at=stamp(seconds=-20)),
+            run("resumed-1", state="waiting", resume_of={"type": "run", "id": "lead-1"},
+                updated_at=stamp(seconds=-15), observed_at=stamp(seconds=-15),
+                waits_on=[{"type": "external", "kind": "github_pr", "key": "owner/repo#1",
+                           "url": "https://github.com/owner/repo/pull/1"},
+                          {"type": "run", "id": "w-1"}]),
+            run("stale-1", updated_at=stamp(minutes=-42), observed_at=stamp(minutes=-42),
+                role_id="lead", title="stale worker"),
+            run("unknown-1", state="unknown", updated_at=stamp(minutes=-5)),
+            run("done-1", state="done", updated_at=stamp(minutes=-10),
+                ended_at=stamp(minutes=-10), exit_code=0),
+            run("old-done", state="done", updated_at=stamp(hours=-30),
+                ended_at=stamp(hours=-30)),
+        ])
+        self.write("work@mbp", [
+            job("j-1", run={"type": "run", "id": "lead-1"},
+                updated_at=stamp(seconds=-25), observed_at=stamp(seconds=-25),
+                log_path=str(self.log_path)),
+            job("j-done", state="done", run={"type": "run", "id": "lead-1"},
+                updated_at=stamp(minutes=-20), ended_at=stamp(minutes=-20), exit_code=0),
+            job("j-old", state="failed", updated_at=stamp(hours=-30),
+                ended_at=stamp(hours=-30)),
+        ], seq=2)
+        self.write("work@mbp", [
+            inbox("i-action", role_id="lead", action_required=True,
+                  subject={"type": "job", "id": "j-1"}, outcome="done",
+                  detail="review the PR", updated_at=stamp(minutes=-20)),
+            inbox("i-open", role_id="worker", kind="message",
+                  subject={"type": "run", "id": "w-1"}, detail="heads up",
+                  updated_at=stamp(minutes=-12)),
+            inbox("i-acked", state="acked", role_id="lead", kind="url",
+                  subject={"type": "external", "kind": "url",
+                           "url": "https://example.com/1"},
+                  updated_at=stamp(minutes=-5), acked_at=stamp(minutes=-5)),
+            inbox("i-old-acked", state="acked", updated_at=stamp(hours=-30),
+                  acked_at=stamp(hours=-30)),
+        ], seq=3)
+        self.write("work@mbp", [
+            session("sess-recent", role_id="lead", project="fleetglint",
+                    title="fleetglint-lead", model="claude-opus-5-5",
+                    models=["claude-opus-5-5"], entries=10,
+                    last_activity_at=stamp(seconds=-30),
+                    usage={"basis": "measured", "output_tokens": 5}),
+            session("sess-child", last_activity_at=stamp(minutes=-1),
+                    parent_session={"type": "session", "id": "sess-recent"}),
+            session("sess-idle", agent="codex-cli", last_activity_at=stamp(minutes=-120),
+                    updated_at=stamp(minutes=-120)),
+            session("sess-ended", state="ended", last_activity_at=stamp(minutes=-180),
+                    updated_at=stamp(minutes=-180), ended_at=stamp(minutes=-180)),
+            session("sess-old", last_activity_at=stamp(hours=-30),
+                    updated_at=stamp(hours=-30)),
+        ], seq=4)
+        self.write("demo@fleetglint", [
+            run("demo-1", source_id="demo@fleetglint", title="demo run",
+                updated_at=stamp(seconds=-60), observed_at=stamp(seconds=-60)),
+        ])
+        self.ing.scan_roots()
+        self.backend = query.QueryBackend(self.cfg)
+
+    @staticmethod
+    def disable_adapters(cfg):
+        for adapter in (cfg.harness, cfg.claude_code, cfg.codex):
+            adapter.enabled = "false"
+
+    def write(self, source_id, records, seq=None):
+        directory = self.root / source_id
+        directory.mkdir(parents=True, exist_ok=True)
+        if seq is None:
+            # Segments must be contiguous (spec §7.4), so continue after the last one.
+            existing = [int(path.name[:10]) for path in directory.iterdir()
+                        if path.name[:10].isdigit()
+                        and path.name.endswith((".ndjson", ".ndjson.gz"))]
+            seq = max(existing, default=0) + 1
+        path = directory / f"{seq:010d}.ndjson"
+        path.write_text("".join(json.dumps(record) + "\n" for record in records),
+                        encoding="utf-8")
+        return path
+
+    def snapshot(self, backend=None):
+        return (backend or self.backend).snapshot(NOW)
+
+    def by_id(self, items):
+        return {item["ref"]["id"]: item for item in items}
+
+    # --- snapshot shape ---------------------------------------------------
+
+    def test_snapshot_shape_and_lists(self):
+        snap = self.snapshot()
+        self.assertEqual(keys(snap), SNAPSHOT_KEYS)
+        self.assertEqual(snap["api"], 1)
+        self.assertEqual(snap["generated_at"], NOW.isoformat())
+        self.assertEqual(snap["window_hours"], 24)
+        self.assertEqual(keys(snap["server"]), {"version", "host", "read_only"})
+        self.assertTrue(snap["server"]["read_only"])
+        self.assertEqual(keys(snap["counts"]),
+                         {"running", "waiting", "attention", "stale_lost_unknown",
+                          "sessions_recent"})
+        self.assertEqual(keys(snap["truncated"]), {"runs", "jobs", "inbox", "sessions"})
+        self.assertTrue(snap["demo"])
+
+        for item in snap["runs"]:
+            self.assertEqual(keys(item), RUN_KEYS)
+            self.assertEqual(keys(item["ref"]), REF_KEYS)
+            self.assertEqual(keys(item["evidence"]), EVIDENCE_KEYS)
+        for item in snap["jobs"]:
+            self.assertEqual(keys(item), JOB_KEYS)
+        for item in snap["inbox"]:
+            self.assertEqual(keys(item), INBOX_KEYS)
+        for item in snap["sessions"]:
+            self.assertEqual(keys(item), SESSION_KEYS)
+        for entry in snap["attention"]:
+            self.assertEqual(keys(entry), ATTENTION_KEYS)
+        for source in snap["sources"]:
+            self.assertEqual(keys(source), {"source_id", "kind", "status", "detail",
+                                            "last_scan_at", "last_record_at",
+                                            "quarantine_count", "records"})
+
+        runs = self.by_id(snap["runs"])
+        self.assertEqual(set(runs), {"lead-1", "w-1", "waiting-1", "resumed-1", "stale-1",
+                                     "unknown-1", "done-1", "demo-1"})
+        self.assertNotIn("old-done", runs)  # terminal outside the 24 h window
+        self.assertEqual(set(self.by_id(snap["jobs"])), {"j-1", "j-done"})
+        self.assertNotIn("j-old", self.by_id(snap["jobs"]))
+        self.assertEqual(set(self.by_id(snap["inbox"])), {"i-action", "i-open", "i-acked"})
+        self.assertEqual(set(self.by_id(snap["sessions"])),
+                         {"sess-recent", "sess-child", "sess-idle", "sess-ended"})
+
+    def test_display_states_and_counts(self):
+        snap = self.snapshot()
+        runs = self.by_id(snap["runs"])
+        jobs = self.by_id(snap["jobs"])
+        sessions = self.by_id(snap["sessions"])
+
+        self.assertEqual(runs["w-1"]["state"], "running")
+        self.assertEqual(runs["w-1"]["display_state"], "running")
+        self.assertEqual(runs["w-1"]["evidence"],
+                         {"kind": "observed", "age_s": 10, "detail": None})
+        self.assertEqual(runs["stale-1"]["display_state"], "stale")
+        self.assertEqual(runs["stale-1"]["evidence"]["kind"], "expired")
+        self.assertEqual(runs["stale-1"]["evidence"]["age_s"], 42 * 60)
+        self.assertEqual(runs["unknown-1"]["display_state"], "unknown")
+        self.assertEqual(runs["unknown-1"]["evidence"]["kind"], "writer_unknown")
+        self.assertEqual(runs["done-1"]["display_state"], "done")
+        self.assertEqual(runs["done-1"]["evidence"], {"kind": "terminal", "age_s": None,
+                                                      "detail": None})
+        self.assertEqual(runs["waiting-1"]["display_state"], "waiting")
+        self.assertEqual(jobs["j-1"]["display_state"], "running")
+        self.assertEqual(sessions["sess-recent"]["display_state"], "recent")
+        self.assertEqual(sessions["sess-recent"]["evidence"]["kind"], "activity")
+        self.assertEqual(sessions["sess-idle"]["display_state"], "idle")
+        self.assertEqual(sessions["sess-ended"]["display_state"], "ended")
+        self.assertEqual(sessions["sess-ended"]["evidence"]["kind"], "terminal")
+
+        self.assertEqual(snap["counts"], {
+            "running": 4,     # lead-1, w-1, demo-1, j-1
+            "waiting": 2,     # waiting-1, resumed-1
+            "attention": 4,   # i-action, i-open, stale-1, unknown-1
+            "stale_lost_unknown": 2,  # stale-1, unknown-1
+            "sessions_recent": 2,     # sess-recent, sess-child
+        })
+        self.assertEqual(snap["counts"]["attention"], len(snap["attention"]))
+
+    def test_ordering_is_newest_first(self):
+        snap = self.snapshot()
+        for name, field in (("runs", "updated_at"), ("jobs", "updated_at"),
+                            ("inbox", "updated_at"), ("sessions", "observed_at")):
+            values = [item[field] for item in snap[name]]
+            self.assertEqual(values, sorted(values, reverse=True), name)
+        self.assertEqual([item["ref"]["id"] for item in snap["runs"]][:3],
+                         ["resumed-1", "waiting-1", "w-1"])
+        self.assertEqual([item["ref"]["id"] for item in snap["inbox"]],
+                         ["i-acked", "i-open", "i-action"])
+        self.assertEqual([item["ref"]["id"] for item in snap["sessions"]],
+                         ["sess-recent", "sess-child", "sess-idle", "sess-ended"])
+
+    def test_titles_links_and_extended_refs(self):
+        snap = self.snapshot()
+        runs = self.by_id(snap["runs"])
+        jobs = self.by_id(snap["jobs"])
+        inbox = self.by_id(snap["inbox"])
+
+        self.assertEqual(runs["w-1"]["title"], "worker task")
+        self.assertEqual(runs["w-1"]["links"],
+                         [{"label": "log", "path": str(self.log_path), "readable": True}])
+        parent = runs["w-1"]["parent_run"]
+        self.assertEqual(parent, {"type": "run", "id": "lead-1", "source_id": "work@mbp",
+                                  "resolved": True, "display_state": "running",
+                                  "title": "lead session"})
+        self.assertEqual(runs["w-1"]["resume_of"], None)
+        self.assertEqual(runs["resumed-1"]["resume_of"],
+                         {"type": "run", "id": "lead-1", "source_id": "work@mbp",
+                          "resolved": True, "display_state": "running",
+                          "title": "lead session"})
+        self.assertEqual(runs["resumed-1"]["waits_on"], [
+            {"type": "external", "kind": "github_pr", "key": "owner/repo#1",
+             "url": "https://github.com/owner/repo/pull/1"},
+            {"type": "run", "id": "w-1", "source_id": "work@mbp", "resolved": True,
+             "display_state": "running", "title": "worker task"},
+        ])
+        self.assertEqual(jobs["j-1"]["run"],
+                         {"type": "run", "id": "lead-1", "source_id": "work@mbp",
+                          "resolved": True, "display_state": "running",
+                          "title": "lead session"})
+        self.assertEqual(jobs["j-1"]["log"],
+                         {"path": str(self.log_path), "readable": True})
+        self.assertIsNone(jobs["j-1"]["result"])
+        self.assertEqual(inbox["i-acked"]["subject"],
+                         {"type": "external", "kind": "url",
+                          "url": "https://example.com/1"})
+
+    def test_unresolved_refs(self):
+        self.write("work@mbp", [
+            run("r-ghost", parent_run={"type": "run", "id": "missing"}),
+        ])
+        self.ing.scan_roots()
+        item = self.by_id(self.snapshot()["runs"])["r-ghost"]
+        self.assertEqual(item["parent_run"],
+                         {"type": "run", "id": "missing", "source_id": "work@mbp",
+                          "resolved": False})
+
+    def test_attention_order_and_who(self):
+        snap = self.snapshot()
+        self.assertEqual([(entry["reason"], entry["source_id"])
+                          for entry in snap["attention"]],
+                         [("action_required", "work@mbp"), ("inbox", "work@mbp"),
+                          ("stale", "work@mbp"), ("unknown", "work@mbp")])
+        action, notice, stale, unknown = snap["attention"]
+        self.assertEqual(action["who"], "lead")
+        self.assertEqual(action["subject"],
+                         {"type": "job", "id": "j-1", "source_id": "work@mbp",
+                          "resolved": True, "display_state": "running",
+                          "title": None})
+        self.assertIn("job_finished", action["text"])
+        self.assertIn("done", action["text"])
+        self.assertEqual(notice["who"], "worker")
+        self.assertEqual(notice["subject"]["id"], "w-1")
+        self.assertEqual(stale["who"], "lead")
+        self.assertEqual(stale["subject"],
+                         {"type": "run", "id": "stale-1", "source_id": "work@mbp",
+                          "resolved": True, "display_state": "stale",
+                          "title": "stale worker"})
+        self.assertIn("42m", stale["text"])
+        self.assertEqual(unknown["subject"]["id"], "unknown-1")
+
+    def test_source_entries(self):
+        snap = self.snapshot()
+        sources = {source["source_id"]: source for source in snap["sources"]}
+        self.assertEqual(set(sources), {"work@mbp", "demo@fleetglint"})
+        work = sources["work@mbp"]
+        self.assertEqual((work["kind"], work["status"], work["detail"]),
+                         ("ndjson", "ok", None))
+        self.assertEqual(work["last_scan_at"], NOW.isoformat())
+        self.assertIsNotNone(work["last_record_at"])
+        self.assertEqual(work["quarantine_count"], 0)
+        self.assertGreater(work["records"], 0)
+
+    def test_list_limit_sets_truncated(self):
+        self.backend.list_limit = 2
+        snap = self.snapshot()
+        self.assertEqual(len(snap["runs"]), 2)
+        self.assertEqual(len(snap["inbox"]), 2)
+        self.assertEqual(len(snap["sessions"]), 2)
+        self.assertEqual(snap["truncated"],
+                         {"runs": True, "jobs": False, "inbox": True, "sessions": True})
+        self.assertEqual([item["ref"]["id"] for item in snap["runs"]],
+                         ["resumed-1", "waiting-1"])
+
+    def test_demo_flag_only_for_demo_sources(self):
+        snap = self.snapshot()
+        self.assertTrue(snap["demo"])
+        # A board without any demo@ record is not a demo board.
+        self.conn.execute("DELETE FROM records WHERE source_id LIKE 'demo@%'")
+        self.conn.commit()
+        self.assertFalse(self.snapshot()["demo"])
+
+    # --- record -----------------------------------------------------------
+
+    def test_record_shape_full_history_and_usage(self):
+        data = self.backend.record(NOW, "work@mbp", "run", "lead-1")
+        self.assertEqual(keys(data), RECORD_KEYS)
+        self.assertEqual(keys(data["record"]), RUN_KEYS)
+        self.assertEqual(data["record"]["ref"],
+                         {"type": "run", "id": "lead-1", "source_id": "work@mbp"})
+        self.assertEqual(data["full"]["id"], "lead-1")
+        self.assertEqual(data["full"]["title"], "lead session")
+        self.assertEqual(data["full"]["summary"], "lead summary")
+        self.assertEqual(data["full"]["usage"], {"basis": "measured", "input_tokens": 10})
+        self.assertEqual(data["usage"], {"basis": "measured", "input_tokens": 10})
+        self.assertEqual(keys(data["relations"]), RELATION_KEYS)
+        self.assertEqual(data["relations"]["parent"], None)
+        self.assertEqual(data["relations"]["resume_of"], None)
+        self.assertEqual([ref["id"] for ref in data["relations"]["children"]], ["w-1"])
+        self.assertEqual(data["relations"]["children"][0]["resolved"], True)
+        self.assertEqual([ref["id"] for ref in data["relations"]["resumed_by"]],
+                         ["resumed-1"])
+        self.assertEqual(sorted(ref["id"] for ref in data["relations"]["jobs"]),
+                         ["j-1", "j-done"])
+        self.assertEqual([ref["id"] for ref in data["relations"]["inbox"]], [])
+        self.assertEqual(data["relations"]["waited_on_by"], [])
+        self.assertEqual(len(data["history"]), 1)
+        self.assertEqual(keys(data["history"][0]),
+                         {"seq", "byte_offset", "updated_at", "state"})
+        self.assertEqual((data["history"][0]["seq"], data["history"][0]["updated_at"],
+                          data["history"][0]["state"]), (1, stamp(seconds=-90), "running"))
+
+    def test_record_relations_both_ways(self):
+        child = self.backend.record(NOW, "work@mbp", "run", "w-1")
+        self.assertEqual(child["relations"]["parent"]["id"], "lead-1")
+        self.assertEqual([ref["id"] for ref in child["relations"]["waited_on_by"]],
+                         ["resumed-1"])
+        self.assertEqual([ref["id"] for ref in child["relations"]["inbox"]], ["i-open"])
+        self.assertEqual(child["history"][0]["updated_at"], stamp(seconds=-30))
+        self.assertEqual(child["history"][1]["updated_at"], stamp(seconds=-40))
+        self.assertEqual([entry["state"] for entry in child["history"]],
+                         ["running", "running"])
+
+    def test_job_record(self):
+        data = self.backend.record(NOW, "work@mbp", "job", "j-1")
+        self.assertEqual(keys(data["record"]), JOB_KEYS)
+        self.assertEqual(data["record"]["run"]["id"], "lead-1")
+        self.assertEqual(data["relations"]["parent"], None)
+        self.assertEqual(data["relations"]["children"], [])
+        self.assertEqual(data["relations"]["resumed_by"], [])
+        self.assertEqual(data["relations"]["jobs"], [])
+        self.assertEqual([ref["id"] for ref in data["relations"]["inbox"]], ["i-action"])
+        self.assertIsNone(data["usage"])
+
+    def test_inbox_record(self):
+        data = self.backend.record(NOW, "work@mbp", "inbox_item", "i-action")
+        self.assertEqual(keys(data["record"]), INBOX_KEYS)
+        self.assertEqual(data["record"]["subject"]["id"], "j-1")
+        self.assertTrue(data["record"]["action_required"])
+        self.assertIsInstance(data["record"]["blocks_retention"], bool)
+        self.assertEqual(data["relations"]["inbox"], [])
+
+    def test_history_is_capped_at_fifty_newest_first(self):
+        # Written oldest first, as a real writer appends them.
+        records = [run("busy", updated_at=stamp(minutes=-(59 - index)))
+                   for index in range(60)]
+        self.write("work@mbp", records)
+        self.ing.scan_roots()
+        data = self.backend.record(NOW, "work@mbp", "run", "busy")
+        self.assertEqual(len(data["history"]), 50)
+        self.assertEqual(data["history"][0]["updated_at"], stamp(minutes=0))
+        self.assertEqual(data["history"][-1]["updated_at"], stamp(minutes=-49))
+        self.assertEqual([entry["updated_at"] for entry in data["history"]],
+                         sorted((entry["updated_at"] for entry in data["history"]),
+                                reverse=True))
+
+    def test_record_with_meanwhile_deleted_source_rows(self):
+        self.assertEqual(self.backend.record(NOW, "work@mbp", "run", "missing"), None)
+        self.assertEqual(self.backend.record(NOW, "nope@x", "run", "lead-1"), None)
+
+    # --- file -------------------------------------------------------------
+
+    def test_file_reads_and_redacts_the_tail(self):
+        data = self.backend.file(NOW, "work@mbp", "job", "j-1", "log_path", None)
+        self.assertEqual(keys(data), {"api", "readable", "path", "size", "truncated",
+                                      "text", "redactions"})
+        self.assertEqual(data["api"], 1)
+        self.assertTrue(data["readable"])
+        self.assertEqual(data["path"], str(self.log_path))
+        self.assertEqual(data["size"], self.log_path.stat().st_size)
+        self.assertFalse(data["truncated"])
+        self.assertIn("[redacted]", data["text"])
+        self.assertNotIn(SECRET, data["text"])
+        self.assertEqual(data["redactions"], 1)
+
+    def test_file_link_index(self):
+        data = self.backend.file(NOW, "work@mbp", "run", "w-1", "link", 0)
+        self.assertTrue(data["readable"])
+        self.assertEqual(data["path"], str(self.log_path))
+        self.assertEqual(self.backend.file(NOW, "work@mbp", "run", "w-1", "link", 5),
+                         {"api": 1, "readable": False, "reason": "no_path"})
+        self.assertEqual(self.backend.file(NOW, "work@mbp", "run", "w-1", "link", None),
+                         {"api": 1, "readable": False, "reason": "no_path"})
+
+    def test_file_outside_allowed_roots_and_missing(self):
+        self.write("work@mbp", [
+            job("j-out", log_path=str(self.outside_path)),
+            job("j-missing", log_path=str(self.root / "work@mbp" / "nope.log")),
+            job("j-nopath"),
+        ])
+        self.ing.scan_roots()
+        outside = self.backend.file(NOW, "work@mbp", "job", "j-out", "log_path", None)
+        self.assertEqual(outside, {"api": 1, "readable": False,
+                                   "reason": "outside_allowed_roots"})
+        missing = self.backend.file(NOW, "work@mbp", "job", "j-missing", "log_path", None)
+        self.assertEqual(missing["readable"], False)
+        self.assertEqual(missing["reason"], "missing")
+        nopath = self.backend.file(NOW, "work@mbp", "job", "j-nopath", "log_path", None)
+        self.assertEqual(nopath, {"api": 1, "readable": False, "reason": "no_path"})
+        self.assertIsNone(self.backend.file(NOW, "work@mbp", "job", "nope",
+                                            "log_path", None))
+
+    # --- quarantine -------------------------------------------------------
+
+    def test_quarantine_redacts_excerpts(self):
+        good = json.dumps(run("bad-ok", source_id="bad@mbp"))
+        bad = '{"v":1,"note":"' + SECRET + '" broken'
+        segment = self.write("bad@mbp", [], seq=1)
+        segment.write_text(good + "\n" + bad + "\n", encoding="utf-8")
+        self.write("bad@mbp", [run("bad-ok", state="running", source_id="bad@mbp")], seq=2)
+        self.ing.scan_roots()
+
+        lines = self.backend.quarantine("bad@mbp")
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(keys(lines[0]), {"position", "reason", "excerpt"})
+        self.assertRegex(lines[0]["position"], r"^\d{10}:\d+$")
+        self.assertTrue(lines[0]["position"].startswith("0000000001:"))
+        self.assertEqual(lines[0]["reason"], "invalid_json")
+        self.assertIn("[redacted]", lines[0]["excerpt"])
+        self.assertNotIn(SECRET, lines[0]["excerpt"])
+        self.assertIsNone(self.backend.quarantine("nope@x"))
+
+    # --- empty board ------------------------------------------------------
+
+    def test_empty_board_when_the_database_is_missing(self):
+        cfg = config.Config()
+        cfg.db_path = self.dir / "no-such-dir" / "empty.sqlite"
+        backend = query.QueryBackend(cfg)
+        self.assertEqual(backend.change_counter(), 0)
+        snap = backend.snapshot(NOW)
+        self.assertEqual(keys(snap), SNAPSHOT_KEYS)
+        self.assertEqual(snap, {
+            "api": 1,
+            "generated_at": NOW.isoformat(),
+            "server": snap["server"],
+            "window_hours": 24,
+            "sources": [],
+            "counts": {"running": 0, "waiting": 0, "attention": 0,
+                       "stale_lost_unknown": 0, "sessions_recent": 0},
+            "runs": [], "jobs": [], "inbox": [], "sessions": [], "attention": [],
+            "truncated": {"runs": False, "jobs": False, "inbox": False, "sessions": False},
+            "demo": False,
+        })
+        self.assertIsNone(backend.record(NOW, "work@mbp", "run", "lead-1"))
+        self.assertIsNone(backend.file(NOW, "work@mbp", "run", "lead-1", "log_path", None))
+        self.assertIsNone(backend.quarantine("work@mbp"))
+
+    def test_change_counter_moves_with_ingestion(self):
+        before = self.backend.change_counter()
+        self.write("work@mbp", [run("counter-1", updated_at=stamp(seconds=-1))])
+        self.ing.scan_roots()
+        self.assertGreater(self.backend.change_counter(), before)
+
+
+class RedactionTest(unittest.TestCase):
+    """Every free-text field that leaves the server is redacted (spec §9)."""
+
+    def test_secrets_in_title_summary_detail_and_raw_view(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        directory = Path(tmp.name)
+        root = directory / "sources"
+        root.mkdir()
+        cfg = config.Config()
+        cfg.roots = [root]
+        cfg.db_path = directory / "db.sqlite"
+        cfg.harness.enabled = cfg.claude_code.enabled = cfg.codex.enabled = "false"
+        conn = store.open_db(cfg.db_path)
+        self.addCleanup(conn.close)
+        ingestor = ingest.Ingestor(conn, cfg, clock=lambda: NOW)
+        secret_run = run(
+            "sec-1", title=f"worker {SECRET}",
+            summary=f"summary {SECRET}",
+            links=[{"label": f"log {SECRET}", "url": "https://example.com/"}],
+            x_note=f"nested {SECRET}",
+            x_nested={"deep": [f"list {SECRET}"]})
+        secret_job = job("sec-j", command_summary=f"run {SECRET}",
+                         summary=f"job {SECRET}")
+        secret_inbox = inbox("sec-i", detail=f"detail {SECRET}", action_required=True)
+        path = root / "work@mbp" / "0000000001.ndjson"
+        path.parent.mkdir(parents=True)
+        path.write_text("".join(json.dumps(record) + "\n"
+                                for record in (secret_run, secret_job, secret_inbox)),
+                        encoding="utf-8")
+        ingestor.scan_roots()
+        backend = query.QueryBackend(cfg)
+        snap = backend.snapshot(NOW)
+        self.assertNotIn(SECRET, json.dumps(snap))
+        self.assertIn("[redacted]", json.dumps(snap))
+
+        detail = backend.record(NOW, "work@mbp", "run", "sec-1")
+        dumped = json.dumps(detail)
+        self.assertNotIn(SECRET, dumped)
+        self.assertEqual(detail["record"]["title"], "worker [redacted]")
+        self.assertEqual(detail["record"]["summary"], "summary [redacted]")
+        self.assertEqual(detail["record"]["links"],
+                         [{"label": "log [redacted]", "url": "https://example.com/"}])
+        self.assertEqual(detail["full"]["x_note"], "nested [redacted]")
+        self.assertEqual(detail["full"]["x_nested"]["deep"], ["list [redacted]"])
+
+        detail = backend.record(NOW, "work@mbp", "job", "sec-j")
+        self.assertEqual(detail["record"]["command_summary"], "run [redacted]")
+        self.assertEqual(detail["record"]["summary"], "job [redacted]")
+        self.assertNotIn(SECRET, json.dumps(detail))
+
+        detail = backend.record(NOW, "work@mbp", "inbox_item", "sec-i")
+        self.assertEqual(detail["record"]["detail"], "detail [redacted]")
+        self.assertNotIn(SECRET, json.dumps(detail))
+
+    def test_every_field_of_a_response_is_redacted_but_lookup_ids_are_not(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        directory = Path(tmp.name)
+        root = directory / "sources"
+        root.mkdir()
+        cfg = config.Config()
+        cfg.roots = [root]
+        cfg.db_path = directory / "db.sqlite"
+        cfg.harness.enabled = cfg.claude_code.enabled = cfg.codex.enabled = "false"
+        conn = store.open_db(cfg.db_path)
+        self.addCleanup(conn.close)
+        ingestor = ingest.Ingestor(conn, cfg, clock=lambda: NOW)
+        secret_run = run(
+            "url-1", project=f"p {SECRET}", model=f"m {SECRET}",
+            links=[{"label": "artifact", "url": f"https://example.com/?token={SECRET}"},
+                   {"label": "log", "path": f"/tmp/{SECRET}.log"}],
+            waits_on=[{"type": "external", "kind": f"k {SECRET}", "key": f"key {SECRET}",
+                       "url": f"https://example.com/{SECRET}"}])
+        free_form = run("usage-1", usage={"basis": "measured", "id": SECRET,
+                                          "source_id": {"api_token": SECRET}})
+        path = root / "work@mbp" / "0000000001.ndjson"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(secret_run) + "\n" + json.dumps(free_form) + "\n",
+                        encoding="utf-8")
+        ingestor.scan_roots()
+        backend = query.QueryBackend(cfg)
+        snap = backend.snapshot(NOW)
+        self.assertEqual({item["ref"]["id"] for item in snap["runs"]}, {"url-1", "usage-1"})
+        self.assertNotIn(SECRET, json.dumps(snap))
+        detail = backend.record(NOW, "work@mbp", "run", "url-1")
+        self.assertEqual(detail["record"]["ref"], {"type": "run", "id": "url-1",
+                                                   "source_id": "work@mbp"})
+        self.assertNotIn(SECRET, json.dumps(detail))
+        usage = backend.record(NOW, "work@mbp", "run", "usage-1")
+        self.assertEqual(usage["usage"]["id"], "[redacted]")
+        self.assertNotIn(SECRET, json.dumps(usage))
+
+    def test_long_summary_is_cut_after_redaction(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        directory = Path(tmp.name)
+        root = directory / "sources"
+        root.mkdir()
+        cfg = config.Config()
+        cfg.roots = [root]
+        cfg.db_path = directory / "db.sqlite"
+        cfg.harness.enabled = cfg.claude_code.enabled = cfg.codex.enabled = "false"
+        conn = store.open_db(cfg.db_path)
+        self.addCleanup(conn.close)
+        ingestor = ingest.Ingestor(conn, cfg, clock=lambda: NOW)
+        text = SECRET + " " + "x" * 400
+        path = root / "work@mbp" / "0000000001.ndjson"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(run("long-1", summary=text)) + "\n"
+                        + json.dumps(inbox("long-i", detail=text)) + "\n",
+                        encoding="utf-8")
+        ingestor.scan_roots()
+        backend = query.QueryBackend(cfg)
+        snap = backend.snapshot(NOW)
+        runs = {item["ref"]["id"]: item for item in snap["runs"]}
+        inboxes = {item["ref"]["id"]: item for item in snap["inbox"]}
+        self.assertEqual(len(runs["long-1"]["summary"]), 300)
+        self.assertTrue(runs["long-1"]["summary"].startswith("[redacted] "))
+        self.assertEqual(len(inboxes["long-i"]["detail"]), 300)
+
+
+class LostTest(unittest.TestCase):
+    """A process check that fails turns a run into `lost` (spec §8.2)."""
+
+    def test_lost_uses_the_process_checker_and_keeps_who(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        directory = Path(tmp.name)
+        root = directory / "sources"
+        root.mkdir()
+        cfg = config.Config()
+        cfg.roots = [root]
+        cfg.db_path = directory / "db.sqlite"
+        cfg.harness.enabled = cfg.claude_code.enabled = cfg.codex.enabled = "false"
+        conn = store.open_db(cfg.db_path)
+        self.addCleanup(conn.close)
+        ingestor = ingest.Ingestor(conn, cfg, clock=lambda: NOW)
+        path = root / "work@mbp" / "0000000001.ndjson"
+        path.parent.mkdir(parents=True)
+        records = [
+            run("owner-run", role_id="lead"),
+            job("orphan-job", process={"host": "mbp", "pid": 424242},
+                updated_at=stamp(seconds=-10)),
+        ]
+        path.write_text("".join(json.dumps(record) + "\n" for record in records),
+                        encoding="utf-8")
+        ingestor.scan_roots()
+
+        class Dead:
+            calls = 0
+
+            def check(self, process):
+                Dead.calls += 1
+                return False
+
+        backend = query.QueryBackend(cfg, process_checker=Dead())
+        snap = backend.snapshot(NOW)
+        job_item = {item["ref"]["id"]: item for item in snap["jobs"]}["orphan-job"]
+        self.assertEqual(job_item["display_state"], "lost")
+        self.assertEqual(job_item["evidence"]["kind"], "process_gone")
+        self.assertEqual(snap["counts"]["stale_lost_unknown"], 1)
+        entry = snap["attention"][0]
+        self.assertEqual((entry["reason"], entry["who"]), ("lost", None))
+        self.assertEqual(entry["subject"]["id"], "orphan-job")
+        self.assertEqual(entry["subject"]["display_state"], "lost")
+        self.assertIn("process gone", entry["text"])
+
+        # The second call inside the cache window does not ask again.
+        backend.snapshot(NOW)
+        self.assertEqual(Dead.calls, 1)
+
+
+class DiscontinuityTest(unittest.TestCase):
+    """A source problem makes its records `unknown` and adds a source attention row."""
+
+    def test_source_problem_marks_records_unknown_and_lists_the_source(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        directory = Path(tmp.name)
+        root = directory / "sources"
+        root.mkdir()
+        cfg = config.Config()
+        cfg.roots = [root]
+        cfg.db_path = directory / "db.sqlite"
+        cfg.harness.enabled = cfg.claude_code.enabled = cfg.codex.enabled = "false"
+        conn = store.open_db(cfg.db_path)
+        self.addCleanup(conn.close)
+        ingestor = ingest.Ingestor(conn, cfg, clock=lambda: NOW)
+        path = root / "work@mbp" / "0000000001.ndjson"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(run("r1", updated_at=stamp(seconds=-10))) + "\n",
+                        encoding="utf-8")
+        ingestor.scan_roots()
+        path.unlink()
+        ingestor.scan_roots()
+
+        backend = query.QueryBackend(cfg)
+        snap = backend.snapshot(NOW)
+        run_item = {item["ref"]["id"]: item for item in snap["runs"]}["r1"]
+        self.assertEqual(run_item["display_state"], "unknown")
+        self.assertEqual(run_item["evidence"]["kind"], "source_problem")
+        source = snap["sources"][0]
+        self.assertEqual(source["status"], "discontinuity")
+        self.assertIn("all segments are missing", source["detail"])
+        entry = snap["attention"][-1]
+        self.assertEqual(entry["reason"], "source")
+        self.assertEqual(entry["source_id"], "work@mbp")
+        self.assertIsNone(entry["who"])
+        self.assertIsNone(entry["subject"])
+        self.assertIn("discontinuity", entry["text"])
+
+
+class ExampleFixtureTest(unittest.TestCase):
+    """The shipped example files ingest and render as an architecture §4 board."""
+
+    def test_examples_ingest_into_the_board(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        directory = Path(tmp.name)
+        root = directory / "sources"
+        root.mkdir()
+        cfg = config.Config()
+        cfg.roots = [root]
+        cfg.db_path = directory / "db.sqlite"
+        cfg.harness.enabled = cfg.claude_code.enabled = cfg.codex.enabled = "false"
+        conn = store.open_db(cfg.db_path)
+        self.addCleanup(conn.close)
+        ingestor = ingest.Ingestor(conn, cfg, clock=lambda: NOW)
+
+        grouped = {}
+        for path in sorted(EXAMPLES.glob("*.ndjson")):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                grouped.setdefault(record["source_id"], []).append(record)
+        for source_id, records in grouped.items():
+            source_dir = root / source_id
+            source_dir.mkdir(parents=True)
+            (source_dir / "0000000001.ndjson").write_text(
+                "".join(json.dumps(record) + "\n" for record in records),
+                encoding="utf-8")
+        ingestor.scan_roots()
+
+        backend = query.QueryBackend(cfg)
+        snap = backend.snapshot(NOW)
+        self.assertEqual(set(snap), SNAPSHOT_KEYS)
+        runs = {item["ref"]["id"]: item for item in snap["runs"]}
+        jobs = {item["ref"]["id"]: item for item in snap["jobs"]}
+        inboxes = {item["ref"]["id"]: item for item in snap["inbox"]}
+        sessions = {item["ref"]["id"]: item for item in snap["sessions"]}
+        for item in snap["runs"]:
+            self.assertEqual(set(item), RUN_KEYS)
+        for item in snap["sessions"]:
+            self.assertEqual(set(item), SESSION_KEYS)
+
+        self.assertEqual(runs["ds-edd-1-20261105-053128"]["state"], "done")
+        self.assertEqual(runs["ds-edd-1-20261105-053128"]["parent_run"]["id"], "lead-7f3a")
+        self.assertEqual(runs["lead-9c21"]["display_state"], "stale")
+        self.assertEqual(runs["lead-9c21"]["waits_on"][0]["type"], "external")
+        self.assertEqual(jobs["lw-store-blink-20261105-053128"]["run"]["id"], "lead-7f3a")
+        self.assertEqual(inboxes["ev-20261105-054742-54fd"]["state"], "acked")
+        self.assertEqual(inboxes["ev-20261105-054742-54fd"]["outcome"], "done")
+        self.assertEqual(sessions["s-ended"]["display_state"], "ended")
+        self.assertEqual(sessions["019a5c2e-7d1b-7c40-9f1e-2b8d1e4c9a10"]["turn_open"], True)
+        self.assertFalse(snap["demo"])
+
+        links = runs["ds-edd-1-20261105-053128"]["links"]
+        self.assertEqual(links[0]["label"], "worker log")
+        self.assertFalse(links[0]["readable"])  # /Users/me is outside the allowed roots
+        self.assertEqual(links[1]["url"],
+                         "https://github.com/nurockplayer/eddington-1919/pull/176")
+
+        record = backend.record(NOW, "my-workflow@mbp", "run",
+                                "ds-edd-1-20261105-053128")
+        self.assertEqual(set(record), RECORD_KEYS)
+        self.assertEqual(record["relations"]["parent"]["id"], "lead-7f3a")
+        self.assertEqual(record["relations"]["inbox"], [])
+
+
+if __name__ == "__main__":
+    unittest.main()

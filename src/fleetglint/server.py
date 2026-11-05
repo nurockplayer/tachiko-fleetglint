@@ -3,6 +3,7 @@ import http.server
 import importlib.resources
 import json
 import math
+import sqlite3
 import sys
 import threading
 import traceback
@@ -387,9 +388,28 @@ def make_server(backend: Backend, port: int, web_dir: Path | None = None, clock=
     return server
 
 
+def start(cfg, port=None):
+    """Check the service lock, migrate the database and start the ingest thread.
+
+    Returns `(server, thread, stop_event)`; with `port=0` the bound port is read back
+    from `server.server_address[1]`.
+    """
+    from fleetglint import ingest, query, store
+
+    with ingest.hold_service_lock(cfg, blocking=False):
+        pass  # raises ServiceLockBusy while another process runs
+    conn = store.open_db(cfg.db_path)
+    conn.close()
+    server = make_server(query.backend(cfg), cfg.port if port is None else port)
+    stop_event = threading.Event()
+    thread = threading.Thread(target=ingest.serve, args=(cfg, stop_event), daemon=True)
+    thread.start()
+    return server, thread, stop_event
+
+
 def run(args) -> int:
     """`fleetglint serve`: the ingest thread plus the HTTP server (docs/architecture.md §8)."""
-    from fleetglint import config
+    from fleetglint import config, ingest
 
     try:
         cfg = config.load(getattr(args, "config", None))
@@ -397,22 +417,17 @@ def run(args) -> int:
         print(f"fleetglint serve: {exc}", file=sys.stderr)
         return 3
     port = cfg.port if getattr(args, "port", None) is None else args.port
-
-    # query.py and the ingest loop land in parallel PRs; the lead replaces these
-    # two calls once they merge.
     try:
-        from fleetglint import ingest, query
-        backend = query.backend(cfg)
-        ingest_thread = threading.Thread(target=ingest.serve, args=(cfg,), daemon=True)
-    except (ImportError, AttributeError):
-        print("fleetglint serve: this build has no query layer yet", file=sys.stderr)
+        server, thread, stop_event = start(cfg, port)
+    except ingest.ServiceLockBusy as exc:
+        print(f"fleetglint serve: {exc}", file=sys.stderr)
         return 3
-    try:
-        server = make_server(backend, port)
     except OSError as exc:
         print(f"fleetglint serve: cannot listen on 127.0.0.1:{port}: {exc}", file=sys.stderr)
         return 3
-    ingest_thread.start()
+    except sqlite3.Error as exc:
+        print(f"fleetglint serve: {exc}", file=sys.stderr)
+        return 3
 
     url = f"http://127.0.0.1:{server.server_address[1]}/"
     print(f"Fleetglint on {url} (read-only)", flush=True)
@@ -423,5 +438,7 @@ def run(args) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        stop_event.set()
+        thread.join(5)
         server.server_close()
     return 0

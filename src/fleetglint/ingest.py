@@ -8,6 +8,7 @@ import re
 import sqlite3
 import sys
 import time
+import traceback
 import zlib
 from contextlib import contextmanager
 from datetime import datetime
@@ -872,8 +873,31 @@ def _validate_record(record, expected_source_id):
 # --- command entry point --------------------------------------------------
 
 def default_adapters(cfg):
-    """Adapters available in this version (their modules are added by later work)."""
-    return ()
+    """The enabled adapters for this configuration (architecture §6, §7)."""
+    from fleetglint.adapters.claude_code import ClaudeCodeAdapter
+    from fleetglint.adapters.codex import CodexAdapter
+    from fleetglint.adapters.harness import HarnessAdapter
+
+    candidates = (
+        (cfg.harness.enabled, lambda: HarnessAdapter(cfg.harness.state_dir)),
+        (cfg.claude_code.enabled, lambda: ClaudeCodeAdapter(cfg.claude_code.dir)),
+        (cfg.codex.enabled, lambda: CodexAdapter(cfg.codex.dir)),
+    )
+    adapters = []
+    for enabled, build in candidates:
+        if enabled == "false":
+            continue
+        adapter = build()
+        if enabled == "true":
+            adapters.append(adapter)
+            continue
+        try:
+            available = adapter.available()
+        except OSError:
+            available = False
+        if available:
+            adapters.append(adapter)
+    return tuple(adapters)
 
 
 def rebuild(cfg, adapters=()):
@@ -925,6 +949,17 @@ def _run_ingest(cfg, once):
         return _ingest_loop(cfg)
 
 
+def serve(cfg, stop_event):
+    """The long-running ingest loop of `fleetglint serve` (architecture §8)."""
+    with hold_service_lock(cfg):
+        conn = store.open_db(cfg.db_path)
+        try:
+            ingestor = Ingestor(conn, cfg, adapters=default_adapters(cfg))
+            return _loop(ingestor, cfg, stop_event)
+        finally:
+            conn.close()
+
+
 def _ingest_once(cfg):
     conn = store.open_db(cfg.db_path)
     try:
@@ -947,25 +982,39 @@ def _ingest_loop(cfg):
         conn.close()
 
 
-def _loop(ingestor, cfg):
+def _loop(ingestor, cfg, stop_event=None):
+    """Scan roots and adapters on their intervals, retain hourly, stop on Ctrl-C or `stop_event`."""
     # Scan first, then retain: retention verifies files against what the scan ingested.
     next_roots = next_adapters = next_retention = 0.0
     try:
-        while True:
+        while stop_event is None or not stop_event.is_set():
             now = time.monotonic()
             if now >= next_roots:
-                ingestor.scan_roots()
+                _pass(ingestor.scan_roots)
                 next_roots = now + cfg.poll_s
             if now >= next_adapters:
-                ingestor.scan_adapters()
+                _pass(ingestor.scan_adapters)
                 next_adapters = now + cfg.adapter_poll_s
             if now >= next_retention:
-                ingestor.apply_retention()
+                _pass(ingestor.apply_retention)
                 next_retention = now + 3600
             wake = min(next_roots, next_adapters, next_retention) - time.monotonic()
-            time.sleep(max(0.0, min(1.0, wake)))
+            wake = max(0.0, min(1.0, wake))
+            if stop_event is None:
+                time.sleep(wake)
+            else:
+                stop_event.wait(wake)
     except KeyboardInterrupt:
         return 0
+    return 0
+
+
+def _pass(step):
+    """One scan or retention pass; a failure is reported and the loop carries on (architecture §5.1)."""
+    try:
+        step()
+    except Exception:  # noqa: BLE001 - the loop must survive one bad pass
+        traceback.print_exc()
 
 
 def _print_summary(conn):

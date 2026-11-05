@@ -448,16 +448,19 @@ class ServerTest(unittest.TestCase):
 
 
 class RunTest(unittest.TestCase):
-    def test_missing_query_layer_exits_3_without_traceback(self):
+    def test_service_lock_held_exits_3_without_traceback(self):
+        from fleetglint import config, ingest
         with tempfile.TemporaryDirectory() as tmp:
-            args = argparse.Namespace(config=str(pathlib.Path(tmp) / "config.toml"),
-                                      port=None, open=False)
+            config_path = pathlib.Path(tmp) / "config.toml"
+            db_path = pathlib.Path(tmp) / "db.sqlite"
+            config_path.write_text(f'[ingest]\ndb_path = "{db_path}"\n')
+            args = argparse.Namespace(config=str(config_path), port=0, open=False)
             err, out = io.StringIO(), io.StringIO()
-            with mock.patch.dict(sys.modules, {"fleetglint.query": None}), \
-                    contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
-                code = server.run(args)
+            with ingest.hold_service_lock(config.load(config_path)):
+                with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+                    code = server.run(args)
         self.assertEqual(code, 3)
-        self.assertIn("this build has no query layer yet", err.getvalue())
+        self.assertIn("is running", err.getvalue())
         self.assertNotIn("Traceback", err.getvalue())
 
 
