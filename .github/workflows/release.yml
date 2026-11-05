@@ -2,12 +2,8 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # A manual run is a dry run: it builds and verifies, and only a tag push publishes.
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Build and verify everything, but do not create a GitHub Release"
-        type: boolean
-        default: true
 permissions:
   contents: read
 jobs:
@@ -50,11 +46,13 @@ jobs:
           /tmp/v/bin/pip install dist/*.whl
           /tmp/v/bin/fleetglint version
       - name: Write checksums
-        run: sha256sum dist/* > dist/SHA256SUMS
+        run: |
+          (cd dist && sha256sum -- *) > "$RUNNER_TEMP/SHA256SUMS"
+          mv "$RUNNER_TEMP/SHA256SUMS" dist/SHA256SUMS
       - name: Render Homebrew formula
         run: python scripts/render_formula.py "$version" "dist/fleetglint-$version.tar.gz" > fleetglint.rb
       - name: Create GitHub Release
-        if: github.event_name == 'push' || inputs.dry_run == false
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -69,5 +67,6 @@ jobs:
             echo "Fleetglint $version: sdist, wheel and Homebrew formula." > "$notes"
           fi
           gh release create "$tag" dist/* fleetglint.rb \
+            --verify-tag \
             --title "Fleetglint $tag" \
             --notes-file "$notes"
