@@ -404,6 +404,9 @@ class QueryTest(unittest.TestCase):
         self.conn.execute("DELETE FROM records WHERE source_id LIKE 'demo@%'")
         self.conn.commit()
         self.assertFalse(self.snapshot()["demo"])
+        # Every demo@ source is demo data, not only the built-in one (architecture §8.1).
+        self.write("demo@host", [run("demo-2", source_id="demo@host")])
+        self.assertTrue(self.snapshot()["demo"])
 
     # --- record -----------------------------------------------------------
 
