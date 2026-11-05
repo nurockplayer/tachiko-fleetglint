@@ -35,6 +35,10 @@ _TOKEN = re.compile(r"^[A-Za-z0-9+/_=-]{24,}$")
 _CREDENTIAL_OPTIONS = frozenset({"-u", "--user", "-p", "--password", "--pass", "--token",
                                  "--api-key", "--apikey", "--auth", "--authorization"})
 _BARE_PAIR = re.compile(r"^[^\s/:]+:[^\s/]+$")
+# `scheme://user[:pass]@host…` keeps the scheme and host; anything else shaped `user:pass@`
+# is dropped whole (it names a credential and nothing worth showing).
+_URL_USERINFO = re.compile(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<authority>[^/?#]*)@")
+_USERINFO_REF = re.compile(r"[^/\s]+:[^/\s]+@")
 
 
 def _text(path):
@@ -149,6 +153,18 @@ def _looks_secret(argument):
             or _BARE_PAIR.match(argument) is not None)
 
 
+def _scrub_url(argument):
+    """A URL with userinfo keeps `scheme://host/path`; the query and fragment go, since a
+    query often carries a token."""
+    match = _URL_USERINFO.match(argument)
+    if match is None:
+        return None
+    rest = argument[match.end():]
+    for separator in ("?", "#"):
+        rest = rest.split(separator, 1)[0]
+    return match.group("scheme") + rest
+
+
 def _command_summary(argv):
     """First word (basename) plus at most two arguments, credential-looking ones dropped."""
     if not argv:
@@ -160,6 +176,11 @@ def _command_summary(argv):
         if drop_next:
             drop_next = False
             continue
+        scrubbed = _scrub_url(argument)
+        if scrubbed is None and _USERINFO_REF.search(argument):
+            continue
+        if scrubbed is not None:
+            argument = scrubbed
         if _looks_secret(argument):
             drop_next = argument in _CREDENTIAL_OPTIONS
             continue
@@ -431,8 +452,15 @@ class HarnessAdapter:
             stats.malformed += 1
             return None
         record = self._base("job", directory.name, _iso(updated))
-        record.update({"state": "running", "command_summary": summary, "started_at": _iso(updated)})
-        if pid is not None:
+        if pid is None:
+            # A cmd alone is not evidence that anything is running.
+            record.update({"state": "unknown", "command_summary": summary,
+                           "summary": "no pid recorded"})
+            if started is not None:
+                record["started_at"] = _iso(started)
+        else:
+            record.update({"state": "running", "command_summary": summary,
+                           "started_at": _iso(updated)})
             process = {"host": self.hostname, "pid": pid}
             if started is not None:
                 process["start_time"] = _iso(started)

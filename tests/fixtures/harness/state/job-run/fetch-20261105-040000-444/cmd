@@ -1,0 +1,3 @@
+curl
+https://alice:hunter2@example.test/status?token=synthetictokenvalue
+alice:hunter2@example.test/status

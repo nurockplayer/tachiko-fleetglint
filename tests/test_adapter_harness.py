@@ -292,6 +292,20 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertEqual(curl["command_summary"], "curl")
         self.assertNotIn("hunter2", str(self.result.records))
 
+        fetch = records["fetch-20261105-040000-444"]
+        self.assertEqual(fetch["command_summary"], "curl https://example.test/status")
+        for secret in ("alice", "hunter2", "synthetictokenvalue"):
+            self.assertNotIn(secret, str(self.result.records))
+
+    def test_job_without_a_pid_is_unknown(self):
+        record = by_id(self.result.records)["nopid-20261105-030000-000"]
+        self.assertEqual(record["state"], "unknown")
+        self.assertEqual(record["summary"], "no pid recorded")
+        self.assertEqual(record["command_summary"], "sleep 30")
+        self.assertNotIn("process", record)
+        self.assertNotIn("observed_at", record)
+        self.assertNotIn("started_at", record)
+
     def test_running_job_and_wait_marker(self):
         job = by_id(self.result.records)["lw-alpha-20261105-101500"]
         self.assertEqual(job["state"], "running")
