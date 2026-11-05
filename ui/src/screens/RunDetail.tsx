@@ -349,23 +349,36 @@ export function RunDetail({
   const targetKey = target
     ? `${target.source_id}/${target.type}/${target.id}/${target.field}/${target.index ?? ""}`
     : "";
-  // A live record's log can grow without its updated_at moving, so refetch the
-  // tail on every poll; a terminal record only refetches when the record does.
-  const live = record?.display_state === "running" || record?.display_state === "waiting";
+  // A non-terminal record's log can grow without its updated_at moving, even
+  // once it shows stale, so refetch the tail on every poll; a terminal record
+  // only refetches when the record does.
+  const live = record != null && !["done", "failed", "cancelled"].includes(record.state);
   const fileKey = target
     ? `${targetKey}/${live ? (detail.receivedAt ?? "") : (record?.updated_at ?? "")}`
     : "";
   const fileTargetRef = useRef("");
+  const fileRequestRef = useRef<object | null>(null);
+
+  useEffect(
+    () => () => {
+      fileRequestRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!target) {
       fileTargetRef.current = "";
+      fileRequestRef.current = null;
       setFile({ loading: false, data: null, error: null });
       return;
     }
     const sameTarget = fileTargetRef.current === targetKey;
     fileTargetRef.current = targetKey;
-    let cancelled = false;
+    // A slow tail is left to finish: the next poll fetches again after it.
+    if (sameTarget && fileRequestRef.current) return;
+    const request = {};
+    fileRequestRef.current = request;
     // A refetch of the same tail keeps the text on screen: no loading flash
     // and no empty panel while the request is in flight.
     if (!sameTarget) setFile({ loading: true, data: null, error: null });
@@ -375,9 +388,13 @@ export function RunDetail({
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const body = (await response.json()) as FileResponse;
         if (body.api !== 1) throw new Error("unsupported API version");
-        if (!cancelled) setFile({ loading: false, data: body, error: null });
+        if (fileRequestRef.current === request) {
+          fileRequestRef.current = null;
+          setFile({ loading: false, data: body, error: null });
+        }
       } catch (error) {
-        if (!cancelled) {
+        if (fileRequestRef.current === request) {
+          fileRequestRef.current = null;
           setFile((previous) => ({
             loading: false,
             data: previous.data,
@@ -386,9 +403,6 @@ export function RunDetail({
         }
       }
     })();
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher, fileKey]);
 

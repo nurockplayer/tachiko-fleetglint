@@ -166,6 +166,52 @@ describe("RunDetail", () => {
     expect(fileCalls).toBeGreaterThan(1);
   });
 
+  it("keeps refreshing the log of a running record that shows stale", async () => {
+    const stale = structuredClone(recordRun);
+    stale.record.state = "running";
+    stale.record.display_state = "stale";
+    const grown = structuredClone(fileReadable);
+    grown.text += "12:50:00 still running\n";
+    let fileCalls = 0;
+    const fetcher = routeFetcher({
+      "/api/record": () => jsonResponse(stale),
+      "/api/file": () => {
+        fileCalls += 1;
+        return jsonResponse(fileCalls === 1 ? fileReadable : grown);
+      },
+    });
+    render(<RunDetail params={runParams} fetcher={fetcher} pollMs={50} />);
+    await until(() => screen.queryByText(/still running/) !== null);
+  });
+
+  it("lets a slow log response finish instead of restarting it on every poll", async () => {
+    const running = structuredClone(recordRun);
+    running.record.state = "running";
+    running.record.display_state = "running";
+    let release: (response: Response) => void = () => {};
+    let fileCalls = 0;
+    let recordCalls = 0;
+    const fetcher = routeFetcher({
+      "/api/record": () => {
+        recordCalls += 1;
+        return jsonResponse(running);
+      },
+      "/api/file": () => {
+        fileCalls += 1;
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      },
+    });
+    render(<RunDetail params={runParams} fetcher={fetcher} pollMs={20} />);
+    await until(() => recordCalls >= 4);
+    expect(fileCalls).toBe(1);
+    await act(async () => {
+      release(jsonResponse(fileReadable));
+    });
+    expect(await screen.findByText(/worker started/)).toBeInTheDocument();
+  });
+
   it("does not refetch the log once the record is terminal", async () => {
     const done = structuredClone(recordRun);
     done.record.state = "done";
