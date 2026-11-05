@@ -31,6 +31,10 @@ _BUNDLE = re.compile(r"review/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pr(\d+)-")
 _SECRET = re.compile(r"(?i)token|secret|password|passwd|api[_-]?key|bearer|"
                      r"sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|eyJ[A-Za-z0-9_.-]{16,}")
 _TOKEN = re.compile(r"^[A-Za-z0-9+/_=-]{24,}$")
+# Options whose next argument is a credential (`curl -u alice:hunter2`).
+_CREDENTIAL_OPTIONS = frozenset({"-u", "--user", "-p", "--password", "--pass", "--token",
+                                 "--api-key", "--apikey", "--auth", "--authorization"})
+_BARE_PAIR = re.compile(r"^[^\s/:]+:[^\s/]+$")
 
 
 def _text(path):
@@ -137,18 +141,26 @@ def _link(label, path):
 
 
 def _looks_secret(argument):
-    return "=" in argument or _SECRET.search(argument) is not None or _TOKEN.match(argument) is not None
+    return (argument in _CREDENTIAL_OPTIONS or "=" in argument
+            or _SECRET.search(argument) is not None or _TOKEN.match(argument) is not None
+            or _BARE_PAIR.match(argument) is not None)
 
 
 def _command_summary(argv):
-    """First word (basename) plus at most two arguments, secret-looking ones dropped."""
+    """First word (basename) plus at most two arguments, credential-looking ones dropped."""
     if not argv:
         return None
     head = os.path.basename(argv[0]) or argv[0]
     parts = [head]
+    drop_next = False
     for argument in argv[1:3]:
-        if not _looks_secret(argument):
-            parts.append(argument[:40])
+        if drop_next:
+            drop_next = False
+            continue
+        if _looks_secret(argument):
+            drop_next = argument in _CREDENTIAL_OPTIONS
+            continue
+        parts.append(argument[:40])
     return _clip(" ".join(parts), 200) or None
 
 
@@ -177,8 +189,10 @@ class HarnessAdapter:
         self.source_id = f"tachiko-harness@{self.hostname}"
         self.allowed_roots = [self.state_dir / name for name in ROOTS
                               if (self.state_dir / name).is_dir()]
-        # id -> (last running record, tool, ledger start stamp), to tell a vanished run apart
-        self._live: dict[str, tuple[dict, str, str]] = {}
+        # id -> (last running record, (tool, ledger start stamp)), to tell a vanished run apart
+        self._live: dict[str, tuple[dict, tuple[str, str]]] = {}
+        # (tool, start stamp) -> running id once a finished row and a running entry were joined
+        self._joins: dict[tuple[str, str], str] = {}
 
     def available(self):
         return (self.state_dir / "worker-ledger" / "runs.tsv").exists()
@@ -206,8 +220,8 @@ class HarnessAdapter:
     # -- worker-ledger ----------------------------------------------------
 
     def _scan_runs(self, ledger_text, now, stats):
-        records = []
-        finished = set()
+        rows = {}
+        order = []
         for row in ledger_text.splitlines():
             if not row.strip() or row.startswith("started\t"):
                 continue
@@ -215,8 +229,9 @@ class HarnessAdapter:
             if built is None:
                 continue
             record, join_key = built
-            finished.add(join_key)
-            records.append(record)
+            if join_key not in rows:
+                rows[join_key] = record
+                order.append(join_key)
 
         current = {}
         running_dir = self.state_dir / "worker-ledger" / "running"
@@ -233,18 +248,38 @@ class HarnessAdapter:
                 if built is None:
                     continue
                 record, join_key = built
-                current[record["id"]] = (record, *join_key)
-                records.append(record)
+                current[record["id"]] = (record, join_key)
 
-        for record_id, (previous, tool, started) in self._live.items():
-            if record_id in current or (tool, started) in finished:
+        # worker-ledger formats a finished row's `started` from the running entry's start
+        # epoch, so the row and the entry with the same tool and stamp are one run. The row
+        # keeps the running identity, so finishing never leaves a stale running record behind.
+        claimed = {join_key: record_id for record_id, (_record, join_key) in current.items()
+                   if join_key in rows}
+        unknown = []
+        for record_id, (previous, join_key) in self._live.items():
+            if record_id in current:
                 continue
-            record = {key: value for key, value in previous.items()
-                      if key not in ("observed_at", "process", "stale_after_s")}
+            if join_key in rows:
+                claimed.setdefault(join_key, record_id)
+                continue
+            record = {field: value for field, value in previous.items()
+                      if field not in ("observed_at", "process", "stale_after_s")}
             record["state"] = "unknown"
             record["updated_at"] = _iso(now)
             record["summary"] = "the running entry disappeared and worker-ledger has no finished row for it"
+            unknown.append(record)
+
+        joins = {**self._joins, **claimed}
+        records = []
+        for join_key in order:
+            record = rows[join_key]
+            if join_key in joins:
+                record = {**record, "id": joins[join_key]}
             records.append(record)
+        records.extend(record for record, _key in current.values())
+        records.extend(unknown)
+        self._joins = {join_key: record_id for join_key, record_id in joins.items()
+                       if join_key in rows}
         self._live = current
         return records
 

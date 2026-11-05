@@ -203,7 +203,11 @@ class HarnessAdapterTest(unittest.TestCase):
             third = adapter.scan(LATER)
             self.assertNotIn("cx.4001.1793847600", by_id(third.records))
 
-    def test_vanished_entry_with_finished_row_is_not_unknown(self):
+    def test_finished_row_takes_over_the_running_identity(self):
+        row = ("2026-11-05 12:00 JST\t2026-11-05 12:02 JST\tcx\talpha\tterra-live\t"
+               "gpt-6.1-terra\tpane:9\t0\t-\t"
+               "/Users/example/.local/state/cx-exec/terra-live.log\tfinished\n")
+        digest = hashlib.sha1(row.rstrip("\n").encode()).hexdigest()[:12]
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "state"
             shutil.copytree(FIXTURES, state)
@@ -211,15 +215,17 @@ class HarnessAdapterTest(unittest.TestCase):
             adapter.scan(NOW)
             (state / "worker-ledger/running/cx.4001").unlink()
             with open(state / "worker-ledger/runs.tsv", "a") as file:
-                file.write("2026-11-05 12:00 JST\t2026-11-05 12:02 JST\tcx\talpha\tterra-live\t"
-                           "gpt-6.1-terra\tpane:9\t0\t-\t"
-                           "/Users/example/.local/state/cx-exec/terra-live.log\t\n")
-            second = adapter.scan(LATER)
-            records = by_id(second.records)
-            self.assertNotIn("cx.4001.1793847600", records)
-            finished = [r for r in second.records
-                        if r.get("title") == "terra-live" and r["state"] == "done"]
-            self.assertEqual(len(finished), 1)
+                file.write(row)
+            records = by_id(adapter.scan(LATER).records)
+            finished = records["cx.4001.1793847600"]
+            self.assertEqual(finished["state"], "done")
+            self.assertEqual(finished["ended_at"], "2026-11-05T12:02:00+09:00")
+            self.assertEqual(finished["exit_code"], 0)
+            self.assertEqual(finished["summary"], "finished")
+            self.assertNotIn(f"cx.ledger.{digest}", records)
+            third = by_id(adapter.scan(LATER).records)
+            self.assertEqual(third["cx.4001.1793847600"]["state"], "done")
+            self.assertNotIn(f"cx.ledger.{digest}", third)
 
     def test_pid_reuse_gives_new_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -259,6 +265,10 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertEqual(corrupt["command_summary"], "true")
         self.assertIn("started_at", corrupt)
         self.assertNotIn("no-cmd-20261105-060000-111", records)
+
+        curl = records["curl-20261105-050000-222"]
+        self.assertEqual(curl["command_summary"], "curl")
+        self.assertNotIn("hunter2", str(self.result.records))
 
     def test_running_job_and_wait_marker(self):
         job = by_id(self.result.records)["lw-alpha-20261105-101500"]

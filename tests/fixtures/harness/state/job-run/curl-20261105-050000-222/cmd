@@ -1,0 +1,4 @@
+curl
+-u
+alice:hunter2
+https://example.test/status
