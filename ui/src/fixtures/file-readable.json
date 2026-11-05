@@ -1,0 +1,9 @@
+{
+  "api": 1,
+  "readable": true,
+  "path": "/Users/me/.local/state/ds-exec/old-worker-88.log",
+  "size": 81234,
+  "truncated": true,
+  "text": "12:31:28 worker started\n12:31:29 env DEEPSEEK_API_KEY=[redacted]\n12:35:02 build ok\n12:41:19 auth token [redacted]\n12:47:40 exit 0\n",
+  "redactions": 2
+}

@@ -1,0 +1,104 @@
+{
+  "api": 1,
+  "generated_at": "2026-11-06T04:00:00+09:00",
+  "server": { "version": "0.1.0", "host": "mbp", "read_only": true },
+  "window_hours": 24,
+  "sources": [
+    {
+      "source_id": "demo@fleetglint",
+      "kind": "ndjson",
+      "status": "ok",
+      "detail": null,
+      "last_scan_at": "2026-11-06T04:00:00+09:00",
+      "last_record_at": "2026-11-06T03:59:30+09:00",
+      "quarantine_count": 0,
+      "records": 9
+    }
+  ],
+  "counts": {
+    "running": 1,
+    "waiting": 1,
+    "attention": 1,
+    "stale_lost_unknown": 1,
+    "sessions_recent": 0
+  },
+  "runs": [
+    {
+      "ref": {
+        "type": "run",
+        "id": "demo-lead-worker-1",
+        "source_id": "demo@fleetglint"
+      },
+      "state": "running",
+      "display_state": "running",
+      "evidence": { "kind": "observed", "age_s": 30, "detail": null },
+      "updated_at": "2026-11-06T03:59:30+09:00",
+      "observed_at": "2026-11-06T03:59:30+09:00",
+      "project": "demo-project",
+      "title": "demo: lead → worker → job chain",
+      "links": [],
+      "agent": "claude-code",
+      "model": "claude-opus-5-5",
+      "provider": "anthropic",
+      "effort": "high",
+      "role_id": "demo-lead",
+      "session_id": null,
+      "started_at": "2026-11-06T03:58:00+09:00",
+      "ended_at": null,
+      "exit_code": null,
+      "summary": "Sample data written by fleetglint demo.",
+      "parent_run": null,
+      "resume_of": null,
+      "waits_on": []
+    },
+    {
+      "ref": {
+        "type": "run",
+        "id": "demo-stale-2",
+        "source_id": "demo@fleetglint"
+      },
+      "state": "running",
+      "display_state": "stale",
+      "evidence": { "kind": "expired", "age_s": 2520, "detail": null },
+      "updated_at": "2026-11-06T03:18:00+09:00",
+      "observed_at": "2026-11-06T03:18:00+09:00",
+      "project": "demo-project",
+      "title": "demo: stale worker",
+      "links": [],
+      "agent": "codex-cli",
+      "model": "gpt-6.1-terra",
+      "provider": "openai",
+      "effort": "medium",
+      "role_id": "demo-lead",
+      "session_id": null,
+      "started_at": "2026-11-06T02:36:00+09:00",
+      "ended_at": null,
+      "exit_code": null,
+      "summary": null,
+      "parent_run": null,
+      "resume_of": null,
+      "waits_on": []
+    }
+  ],
+  "jobs": [],
+  "inbox": [],
+  "sessions": [],
+  "attention": [
+    {
+      "reason": "stale",
+      "who": "demo-lead",
+      "subject": {
+        "type": "run",
+        "id": "demo-stale-2",
+        "source_id": "demo@fleetglint",
+        "resolved": true,
+        "display_state": "stale",
+        "title": "demo: stale worker"
+      },
+      "source_id": "demo@fleetglint",
+      "text": "run demo-stale-2 stale 42m — no evidence"
+    }
+  ],
+  "truncated": { "runs": false, "jobs": false, "inbox": false, "sessions": false },
+  "demo": true
+}
