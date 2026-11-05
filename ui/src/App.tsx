@@ -69,21 +69,19 @@ export function App({ fetcher = defaultFetcher, pollMs = 3000 }: AppProps) {
       </main>
     );
   } else if (snapshot) {
-    if (unavailable) {
-      content = (
-        <>
-          <p className="stale-note">
-            Showing last good data from {lastGoodClock ?? "an earlier poll"} — not
-            current.
-          </p>
-          <div className="stale-data" data-stale="true">
-            {routeView(route, snapshot, fetcher)}
-          </div>
-        </>
-      );
-    } else {
-      content = routeView(route, snapshot, fetcher);
-    }
+    // The board keeps the same tree in both states, so a failed poll greys the
+    // rows in place instead of remounting them (scroll and DOM identity stay).
+    content = (
+      <>
+        <p className="stale-note" hidden={!unavailable}>
+          Showing last good data from {lastGoodClock ?? "an earlier poll"} — not
+          current.
+        </p>
+        <div className="stale-data" data-stale={unavailable ? "true" : undefined}>
+          {routeView(route, snapshot, fetcher)}
+        </div>
+      </>
+    );
   }
 
   return (

@@ -12,9 +12,9 @@ describe("App polling", () => {
       () => Promise.reject(new TypeError("Failed to fetch")),
       () => Promise.reject(new TypeError("Failed to fetch")),
     ]);
-    render(<App fetcher={fetcher} pollMs={20} />);
+    render(<App fetcher={fetcher} pollMs={200} />);
 
-    expect(await screen.findByText(TITLE)).toBeInTheDocument();
+    // Wait for the failure first: the old rows must still be there, marked old.
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Failed to fetch");
     expect(alert).toHaveTextContent(/last good data from/);
@@ -27,11 +27,11 @@ describe("App polling", () => {
       () => jsonResponse(snapshot),
       () => jsonResponse({ api: 1, error: { code: "internal", message: "boom" } }, 500),
     ]);
-    render(<App fetcher={fetcher} pollMs={20} />);
+    render(<App fetcher={fetcher} pollMs={200} />);
 
-    expect(await screen.findByText(TITLE)).toBeInTheDocument();
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("HTTP 500");
+    expect(screen.getByText(TITLE)).toBeInTheDocument();
     expect(screen.getByText(/not current/)).toBeInTheDocument();
     expect(document.querySelector("[data-stale='true']")).toBeTruthy();
   });
@@ -42,7 +42,7 @@ describe("App polling", () => {
       () => Promise.reject(new TypeError("Failed to fetch")),
       () => jsonResponse(snapshot),
     ]);
-    render(<App fetcher={fetcher} pollMs={20} />);
+    render(<App fetcher={fetcher} pollMs={200} />);
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
