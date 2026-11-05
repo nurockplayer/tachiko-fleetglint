@@ -15,6 +15,9 @@ COMMANDS = {
     "status": "fleetglint.ingest",
     "source": "fleetglint.ingest",
     "rebuild": "fleetglint.ingest",
+    "doctor": "fleetglint.doctor",
+    "demo": "fleetglint.demo",
+    "hooks": "fleetglint.hooks",
 }
 
 
@@ -45,6 +48,16 @@ def build_parser():
     r.add_argument("source_id")
 
     sub.add_parser("rebuild", help="delete and rebuild the database from retained segments and adapters")
+    sub.add_parser("doctor", help="check paths, permissions, adapters and sources")
+
+    p = sub.add_parser("demo", help="write a labelled sample source (demo@fleetglint)")
+    p.add_argument("--clear", action="store_true", help="remove the demo source instead")
+
+    p = sub.add_parser("hooks", help="opt-in Claude Code hooks")
+    p.add_argument("action", choices=["install", "uninstall", "record"])
+    p.add_argument("tool", choices=["claude"])
+    p.add_argument("--yes", action="store_true", help="install/uninstall without asking")
+
     sub.add_parser("version", help="print versions and paths")
     return parser
 

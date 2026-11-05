@@ -9,8 +9,10 @@ the spec wins and this file is fixed.
 
 ```
 writers / emitters ──► NDJSON segments ─┐
-                                        ├─► ingest ──► SQLite read model ──► query ──► HTTP API ──► web UI
-tachiko-harness files ──► adapter ──────┘     (one writer thread)              (GET only, 127.0.0.1)
+tachiko-harness files ──► adapter ──────┤
+Claude Code transcripts ─► adapter ─────┤
+Codex rollouts ──► adapter ─────────────┼─► ingest ──► SQLite read model ──► query ──► HTTP API ──► web UI
+                                        ┘     (one writer thread)              (GET only, 127.0.0.1)
 ```
 
 One process, `fleetglint serve`: an HTTP server plus one background ingest
@@ -55,7 +57,11 @@ record.
 | `ingest.py` | segment scanning, checkpoints, quarantine, discontinuity, retention, rebuild (spec §7) | `schema`, `store` |
 | `liveness.py` | display state and evidence (spec §8), process checks | — |
 | `adapters/base.py` | adapter interface (§6) | — |
-| `adapters/harness.py` | tachiko-harness adapter | `base` |
+| `adapters/harness.py` | tachiko-harness adapter (§6.1) | `base` |
+| `adapters/claude_code.py` | Claude Code transcript importer (§6.2) | `base` |
+| `adapters/codex.py` | Codex rollout importer (§6.3) | `base` |
+| `hooks.py` | `fleetglint hooks install/uninstall claude` (§6.4) | `emit` |
+| `demo.py` | `fleetglint demo`: a separate, labelled sample source (§8.1) | `emit` |
 | `query.py` | builds the API JSON (§4) from the store | `store`, `liveness`, `redact` |
 | `files.py` | safe bounded reads of `log_path` / `result_path` / link `path` (spec §9) | `redact`, `config` |
 | `server.py` | HTTP server, routing, safety headers, ETag, static files | `query`, `files` |
@@ -86,12 +92,15 @@ The whole board in one response. The UI polls it every 3 s with
      "detail": null, "last_scan_at": "…", "last_record_at": "…",
      "quarantine_count": 0, "records": 42}
   ],
-  "counts": {"running": 3, "waiting": 1, "attention": 4, "stale_lost_unknown": 2},
+  "counts": {"running": 3, "waiting": 1, "attention": 4, "stale_lost_unknown": 2,
+             "sessions_recent": 5},
   "runs": [RunSummary, …],
   "jobs": [JobSummary, …],
   "inbox": [InboxSummary, …],
+  "sessions": [SessionSummary, …],
   "attention": [AttentionEntry, …],
-  "truncated": {"runs": false, "jobs": false, "inbox": false}
+  "truncated": {"runs": false, "jobs": false, "inbox": false, "sessions": false},
+  "demo": false
 }
 ```
 
@@ -102,7 +111,13 @@ The whole board in one response. The UI polls it every 3 s with
   and terminal runs/jobs and acked items whose `updated_at` is within
   `window_hours` (config, default 24). At most 500 per list, newest
   `updated_at` first; `truncated` says if a list was cut.
-- `counts.attention` is `len(attention)`.
+- Sessions (spec §4.4): every session whose `last_activity_at` is within
+  `window_hours`, at most 500, newest activity first.
+- `counts.attention` is `len(attention)`. `counts.sessions_recent` counts
+  sessions whose display state is `recent`; sessions never count as
+  running.
+- `demo` is `true` when any included record comes from a demo source
+  (§8.1); the UI then shows a permanent DEMO DATA banner.
 
 **Common summary fields** (every RunSummary, JobSummary, InboxSummary):
 
@@ -116,7 +131,7 @@ The whole board in one response. The UI polls it every 3 s with
 
 - `ref` always has all three fields (resolved defaults).
 - `display_state`: one of `queued running waiting done failed cancelled
-  stale lost unknown open acked` (spec §8.1).
+  stale lost unknown open acked recent idle ended` (spec §8.1, §8.3).
 - `evidence.kind`: `process` (a process check matched), `process_gone`
   (it did not: gives `lost`), `observed` (writer refresh within
   `stale_after_s`), `expired` (gives `stale`), `terminal`, `writer_unknown`,
@@ -139,6 +154,12 @@ when resolved, `"display_state"` and `"title"`.
 **InboxSummary** adds: `role_id`, `kind`, `subject` (Ref, extended),
 `outcome`, `action_required`, `created_at`, `acked_at`, `detail` (redacted,
 first 300 chars), `blocks_retention` (bool, spec §7.5).
+
+**SessionSummary** adds: `agent`, `model`, `models`, `provider`, `effort`,
+`role_id`, `started_at`, `last_activity_at`, `ended_at`, `turn_open`,
+`entries`, `parent_session` (Ref, extended, or `null`), `usage`. Its
+`evidence.kind` is `activity` (`age_s` = seconds since `last_activity_at`)
+or `terminal` / `source_problem`.
 
 External refs are passed through as written (`type`, `kind`, `key`,
 `url`); `resolved` is absent for them.
@@ -320,6 +341,17 @@ terminal or `unknown` state when it can tell.
 Observation refreshes (same record, only `observed_at` changed) update
 `records` but do not add a history row.
 
+Adapters for other tools' history files (§6.2, §6.3) must also:
+- read incrementally: remember per file `(inode, size, mtime, offset)` in
+  memory and in `meta` so a rescan of an unchanged file costs one `stat`;
+  re-read a file from the start when it shrank or its inode changed;
+- copy **metadata only** into records (ids, times, model names, counts,
+  token usage); never prompts, model output, tool input/output, file
+  contents or full commands (spec §4.4);
+- skip a line they cannot parse (count it in `detail`), never fail the scan;
+- not add their history directories to `allowed_roots`: transcripts are
+  never served through `/api/file`.
+
 ### 6.1 tachiko-harness adapter (`adapters/harness.py`)
 
 Read-only over `~/.local/state` (configurable `state_dir`); enabled
@@ -344,6 +376,48 @@ automatically when `<state_dir>/worker-ledger/runs.tsv` exists. Sources
   without a zone is not guessed: the field is left out (or the record goes
   to quarantine if the field is required).
 - No links between records unless a file states them (spec §1.3).
+
+### 6.2 Claude Code transcripts (`adapters/claude_code.py`)
+
+Source id `claude-code@<hostname -s>`. Reads
+`$CLAUDE_CONFIG_DIR/projects/**/*.jsonl` (default `~/.claude/projects`),
+including `<session>/subagents/agent-*.jsonl`. One `session` record per
+file: `id` = the entries' `sessionId` (main file) or the file stem
+`agent-…` (subagent file); `parent_session` = the directory's session id
+for a subagent file (the path states it); `project` = last path component
+of the entries' `cwd`; `title` from an `ai-title` entry when present;
+`started_at` / `last_activity_at` from the oldest / newest `timestamp`;
+`model`/`models` from assistant entries' `message.model`; `usage` summed
+from assistant entries' `message.usage` (`basis: measured`); `entries` =
+lines counted; `state: unknown` (a transcript has no end marker);
+`turn_open: null`. No runs, jobs or inbox items.
+
+### 6.3 Codex rollouts (`adapters/codex.py`)
+
+Source id `codex-cli@<hostname -s>`. Reads
+`$CODEX_HOME/sessions/**/rollout-*.jsonl` and
+`$CODEX_HOME/archived_sessions/**` (default `~/.codex`). One `session` per
+file: `id` from `session_meta.payload.id`; `project` from its `cwd`'s last
+component; `provider` from `session_meta`; `model`/`effort` from the newest
+`turn_context`; `models` from all of them; `turn_open` = the newest of
+`task_started` vs `task_complete`/`turn_aborted` events is a start;
+`usage` from the newest `token_count` event's totals; `state: unknown`.
+Archived files: same, plus nothing else (archiving is not an end).
+
+### 6.4 Claude Code hooks (`hooks.py`, opt-in)
+
+`fleetglint hooks install claude` adds hook entries to
+`~/.claude/settings.json` (after printing the diff and asking, `--yes` to
+skip the prompt; a backup is written next to it) that pipe
+`SessionStart`, `SessionEnd`, `SubagentStart` and `SubagentStop` payloads
+into `fleetglint hooks record claude`, which writes `session` records to
+source `claude-hooks@<hostname -s>` via `emit`: `SessionStart` → `open`
+(the hook's `source` field says startup / resume / clear / compact; it is
+kept in `summary`, it is not a new process), `SessionEnd` → `ended`.
+`Stop` is a turn end, not a session end, and is not used.
+`fleetglint hooks uninstall claude` removes exactly the entries it added.
+Hooks never block Claude: `hooks record` always exits 0 and has a 2 s
+budget.
 
 ## 7. Configuration and paths
 
@@ -372,6 +446,14 @@ max_tail_kib = 64
 [adapters.tachiko_harness]
 enabled = "auto"           # auto | true | false
 state_dir = "~/.local/state"
+
+[adapters.claude_code]
+enabled = "auto"           # auto = on when the projects dir exists
+dir = "~/.claude/projects" # $CLAUDE_CONFIG_DIR/projects when set
+
+[adapters.codex]
+enabled = "auto"
+dir = "~/.codex"           # $CODEX_HOME when set
 ```
 
 Paths follow XDG on every platform (spec §6.2): state
@@ -389,9 +471,21 @@ Paths follow XDG on every platform (spec §6.2): state
 | `fleetglint status` | sources, status, quarantine counts, database path and size |
 | `fleetglint source reset ID` | acknowledge a discontinuity and rebuild that source |
 | `fleetglint rebuild` | delete and rebuild the database from what is retained |
+| `fleetglint doctor` | paths, permissions, what each adapter found (files, sessions, unreadable lines), quarantine, source health; exit 1 if something is wrong |
+| `fleetglint demo [--clear]` | write a labelled sample source `demo@fleetglint` (§8.1); `--clear` removes it |
+| `fleetglint hooks install\|uninstall\|record claude` | opt-in Claude Code hooks (§6.4) |
 | `fleetglint version` | version, record format version, paths |
 
 Exit codes: 0 ok, 1 invalid input / check failed, 2 usage, 3 runtime error.
+
+### 8.1 Demo data
+
+`fleetglint demo` writes the brief's sample chain (lead → worker → job →
+inbox → resumed lead, plus stale / lost / unknown examples) with
+`fleetglint emit` into source `demo@fleetglint` under the normal root, with
+times relative to now. Records of a source whose id starts with `demo@` set
+`snapshot.demo = true`. Demo data is only ever there because the user ran
+`fleetglint demo`; the server never falls back to it.
 
 ## 9. Tests and CI
 
@@ -413,6 +507,14 @@ Exit codes: 0 ok, 1 invalid input / check failed, 2 usage, 3 runtime error.
   GitHub Release.
 
 ## 10. Release gate for v0.1
+
+From research round 4 (2026-11-06): a stranger must see their own existing
+work on first run. Add to the list below: first run on a machine with only
+Claude Code, only Codex, and neither, each works and explains what it found
+(`doctor`, empty state); re-scans are idempotent; no transcript-derived
+record is ever shown as running, done or needing action; no prompt or tool
+content reaches SQLite, the API or logs.
+
 
 From the research rounds (02/03). Each item is an automated test or a
 scripted check:
