@@ -343,6 +343,36 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(self.conn.execute(
             "SELECT count(*) FROM records WHERE source_id = 'demo@fleetglint'").fetchone()[0], 0)
 
+    def test_removing_the_demo_source_clears_its_retention_markers(self):
+        self.write_segment([run(id="r1", source_id="demo@fleetglint")],
+                           source_id="demo@fleetglint")
+        self.ing.scan_roots()
+        store.set_meta(self.conn, "retired:demo@fleetglint:1", "{}")
+        store.set_meta(self.conn, "retention_deleted:demo@fleetglint", "1")
+        shutil.rmtree(self.source_dir("demo@fleetglint"))
+        self.ing.scan_roots()
+        self.assertIsNone(store.get_meta(self.conn, "retired:demo@fleetglint:1"))
+        self.assertIsNone(store.get_meta(self.conn, "retention_deleted:demo@fleetglint"))
+
+    def test_another_demo_named_source_is_kept_when_its_directory_vanishes(self):
+        self.write_segment([run(id="r1", source_id="demo@host")], source_id="demo@host")
+        self.ing.scan_roots()
+        shutil.rmtree(self.source_dir("demo@host"))
+        self.ing.scan_roots()
+        self.assertEqual(store.get_source(self.conn, "demo@host")["status"], "discontinuity")
+        self.assertIsNotNone(store.get_latest(self.conn, "demo@host", "run", "r1"))
+
+    def test_a_missing_source_is_marked_once(self):
+        self.write_segment([run(id="r1")])
+        self.ing.scan_roots()
+        shutil.rmtree(self.source_dir())
+        self.ing.scan_roots()
+        changes = self.conn.total_changes
+        marked = store.get_source(self.conn, "s@host")["discontinuity_at"]
+        self.ing.scan_roots()
+        self.assertEqual(self.conn.total_changes, changes)
+        self.assertEqual(store.get_source(self.conn, "s@host")["discontinuity_at"], marked)
+
     def test_all_segments_missing_is_a_discontinuity(self):
         self.write_segment([run()], seq=1)
         self.ing.scan_roots()

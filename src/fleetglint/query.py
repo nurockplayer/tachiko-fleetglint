@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from fleetglint import __version__, files, liveness, redact, store
+from fleetglint.demo import SOURCE_ID as DEMO_SOURCE_ID
 from fleetglint.adapters.base import short_hostname
 
 LIST_LIMIT = 500
@@ -415,7 +416,7 @@ class QueryBackend:
             "attention": attention[:view.list_limit],
             "truncated": {"runs": runs_cut, "jobs": jobs_cut,
                           "inbox": inbox_cut, "sessions": sessions_cut},
-            "demo": any(item["ref"]["source_id"].startswith("demo@")
+            "demo": any(item["ref"]["source_id"] == DEMO_SOURCE_ID
                         for item in runs + jobs + inbox + sessions),
         }
 

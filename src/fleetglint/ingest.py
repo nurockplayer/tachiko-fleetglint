@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fleetglint import config, store
+from fleetglint.demo import SOURCE_ID as DEMO_SOURCE_ID
 
 _SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._-]*)?$")
 _SEGMENT_RE = re.compile(r"^(\d{10})\.ndjson(\.gz)?$")
@@ -129,8 +130,10 @@ class Ingestor:
             source_id = source["source_id"]
             if source_id in present or Path(source["root"]) != root:
                 continue
-            if source_id.startswith("demo@"):
-                self._remove_source(source_id)  # `fleetglint demo --clear` empties the board
+            if source_id == DEMO_SOURCE_ID:
+                self._forget_source(source_id)  # `fleetglint demo --clear` empties the board
+                continue
+            if source["status"] == "discontinuity":
                 continue
             checkpoint = store.get_checkpoint(self.conn, source_id)
             if not store.segments_for(self.conn, source_id) and (
@@ -139,11 +142,14 @@ class Ingestor:
                 continue
             self._set_discontinuity(source_id, "source directory is missing")
 
-    def _remove_source(self, source_id):
+    def _forget_source(self, source_id):
+        """Drop everything stored for a source, including its retention markers."""
         conn = self.conn
         conn.execute("BEGIN IMMEDIATE")
         try:
             store.delete_source_rows(conn, source_id)
+            conn.execute("DELETE FROM meta WHERE key = ?", (self._retention_marker_key(source_id),))
+            conn.execute("DELETE FROM meta WHERE key GLOB ?", (f"retired:{source_id}:*",))
             store.bump_change_counter(conn)
             conn.execute("COMMIT")
         except BaseException:
@@ -533,17 +539,7 @@ class Ingestor:
 
     def reset_source(self, source_id):
         """Clear a discontinuity: drop the source's rows and ingest its remaining segments again."""
-        conn = self.conn
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            store.delete_source_rows(conn, source_id)
-            conn.execute("DELETE FROM meta WHERE key = ?", (self._retention_marker_key(source_id),))
-            conn.execute("DELETE FROM meta WHERE key GLOB ?", (f"retired:{source_id}:*",))
-            store.bump_change_counter(conn)
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
+        self._forget_source(source_id)
         self.scan_roots()
         if any(getattr(adapter, "source_id", None) == source_id for adapter in self.adapters):
             self.scan_adapters()
