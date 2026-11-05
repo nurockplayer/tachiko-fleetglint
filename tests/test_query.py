@@ -406,6 +406,7 @@ class QueryTest(unittest.TestCase):
         self.assertFalse(self.snapshot()["demo"])
         # Every demo@ source is demo data, not only the built-in one (architecture §8.1).
         self.write("demo@host", [run("demo-2", source_id="demo@host")])
+        self.ing.scan_roots()
         self.assertTrue(self.snapshot()["demo"])
 
     # --- record -----------------------------------------------------------
