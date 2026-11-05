@@ -341,23 +341,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # ---- static files ----------------------------------------------------
 
+    def _contained_file(self, path: Path):
+        """Resolve `path`; return it only if it is a regular file inside web_root."""
+        try:
+            target = path.resolve()
+        except (OSError, RuntimeError):
+            return None
+        if target.is_file() and target.is_relative_to(self.server.web_root):
+            return target
+        return None
+
     def _static(self, raw_path):
-        root = self.server.web_root
         try:
             decoded = urllib.parse.unquote(raw_path)
         except ValueError:
             decoded = ""
         target = None
         if decoded and "\x00" not in decoded:
-            try:
-                target = (root / decoded.lstrip("/")).resolve()
-            except (OSError, RuntimeError):
-                target = None
-        if target is not None and target.is_file() and target.is_relative_to(root):
+            target = self._contained_file(self.server.web_root / decoded.lstrip("/"))
+        if target is not None:
             self._send_file(target)
             return
-        index = root / "index.html"
-        if index.is_file():
+        index = self._contained_file(self.server.web_root / "index.html")
+        if index is not None:
             self._send_file(index)
         else:
             self._respond(200, NOT_BUILT_HTML, "text/html; charset=utf-8")

@@ -400,6 +400,19 @@ class ServerTest(unittest.TestCase):
             self.assertNotIn(b"TOP SECRET", body, path)
             self.assertEqual(body, INDEX_HTML, path)
 
+    def test_symlinked_index_outside_web_dir_is_not_served(self):
+        web = self.root / "symlink-web"
+        web.mkdir(exist_ok=True)
+        (web / "index.html").symlink_to(self.secret)
+        srv, thread = start_server(web)
+        try:
+            status, _, body = request(srv.server_address[1], "GET", "/")
+            self.assertEqual(status, 200)
+            self.assertNotIn(b"TOP SECRET", body)
+            self.assertEqual(body, server.NOT_BUILT_HTML)
+        finally:
+            stop_server(srv, thread)
+
     def test_not_built_page_when_no_index(self):
         empty = self.root / "empty-web"
         empty.mkdir(exist_ok=True)
