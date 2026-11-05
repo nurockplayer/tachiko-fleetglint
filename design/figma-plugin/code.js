@@ -397,7 +397,7 @@ function makeRect(w, h, opt) {
   r.strokes = o.stroke ? [paint(o.stroke)] : [];
   if (o.stroke) r.strokeWeight = o.strokeWeight || 1;
   if (o.radius != null) r.cornerRadius = o.radius;
-  if (o.dash) r.strokeDashes = o.dash;
+  if (o.dash) r.dashPattern = o.dash;
   return r;
 }
 
@@ -408,7 +408,7 @@ function addEllipse(parent, x, y, w, h, opt) {
   e.fills = o.fill ? [paint(o.fill)] : [];
   e.strokes = o.stroke ? [paint(o.stroke)] : [];
   if (o.stroke) e.strokeWeight = o.weight || 1;
-  if (o.dash) e.strokeDashes = o.dash;
+  if (o.dash) e.dashPattern = o.dash;
   parent.appendChild(e);
   e.x = x;
   e.y = y;
@@ -788,7 +788,7 @@ function buildStateBadge(page) {
         c.strokes = [paint(stateColorVar(state, "border"))];
         c.strokeWeight = 1;
         c.cornerRadius = TOKENS.geometry.radiusChip;
-        if (state === "stale") c.strokeDashes = [3, 2];
+        if (state === "stale") c.dashPattern = [3, 2];
         if (state === "attention") {
           const bar = makeRect(2, 12, { fill: stateColorVar(state, "border") });
           c.appendChild(bar);
@@ -895,7 +895,7 @@ function buildRefLink(page) {
     c.appendChild(row);
     if (kind === "unresolved") {
       const line = addVector(c, "M 0 0 L 220 0", "line/unresolved", 1);
-      line.strokeDashes = [2, 2];
+      line.dashPattern = [2, 2];
     }
     c.x = 0;
     c.y = i * 30;
