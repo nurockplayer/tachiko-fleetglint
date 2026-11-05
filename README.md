@@ -51,8 +51,7 @@ the health of each source. It exits 1 when something needs fixing.
 `fleetglint demo` writes a labelled sample workflow so you can see the board
 with data. Demo records always carry `[demo]` in their titles and the board
 shows a permanent DEMO DATA banner while they are present. `fleetglint demo
---clear` removes the demo source; its rows leave the board after the next
-rebuild or `fleetglint source reset demo@fleetglint`.
+--clear` removes the demo source, and its rows leave the board on the next scan.
 
 ## What the states mean
 
