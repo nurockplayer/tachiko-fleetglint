@@ -439,24 +439,33 @@ class Ingestor:
         conn = self.conn
         conn.execute("BEGIN IMMEDIATE")
         try:
+            existing = store.get_source(conn, source_id)
             store.ensure_source(conn, source_id, "adapter", None)
+            changed = existing is None
             checkpoint = store.get_checkpoint(conn, source_id)
             position = checkpoint["byte_offset"] if checkpoint else 0
             ingested_ts = now.timestamp()
             for record in result.records:
                 position += 1
-                self._apply_adapter_record(source_id, record, position, ingested_ts)
+                changed = self._apply_adapter_record(source_id, record, position,
+                                                     ingested_ts) or changed
             store.set_checkpoint(conn, source_id, 0, position)
+            if existing is None or existing["status"] != "ok" or existing["detail"] is not None:
+                changed = True
             store.update_source(conn, source_id, status="ok", detail=None,
                                 last_scan_at=now.isoformat())
             store.refresh_last_record(conn, source_id)
-            store.bump_change_counter(conn)
+            # A scan that changed nothing (the usual re-scan) must not move the
+            # change counter, or the board's ETag never settles (architecture §10).
+            if changed:
+                store.bump_change_counter(conn)
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")
             raise
 
     def _apply_adapter_record(self, source_id, original, position, ingested_ts):
+        """Upsert one adapter record; return whether anything visible changed."""
         record, reason, detail = self._validate(original, source_id)
         if record is not None and record.get("source_id") != source_id:
             record, reason, detail = None, "source_mismatch", \
@@ -465,7 +474,7 @@ class Ingestor:
         if record is None:
             store.add_quarantine(conn, source_id, 0, position, reason or "schema", detail,
                                  _json_excerpt(original), self._now_text())
-            return
+            return True
         conn.execute("SAVEPOINT record")
         try:
             stored = store.get_latest(conn, source_id, record["type"], record["id"])
@@ -474,12 +483,14 @@ class Ingestor:
             else:
                 previous = json.loads(stored["json"])
                 if previous == record:
-                    changed = False
-                elif _without_observed(previous) == _without_observed(record):
+                    conn.execute("RELEASE record")
+                    return False
+                if _without_observed(previous) == _without_observed(record):
+                    # A fresh observed_at alone reaches clients with the ETag's time bucket.
                     store.put_latest(conn, record, 0, position)
-                    changed = False
-                else:
-                    changed = True
+                    conn.execute("RELEASE record")
+                    return False
+                changed = True
             if changed:
                 store.insert_history(conn, record, 0, position, ingested_ts)
                 store.put_latest(conn, record, 0, position)
@@ -489,8 +500,9 @@ class Ingestor:
             conn.execute("RELEASE record")
             store.add_quarantine(conn, source_id, 0, position, "schema", str(exc),
                                  _json_excerpt(original), self._now_text())
-            return
+            return True
         conn.execute("RELEASE record")
+        return True
 
     # --- source state -----------------------------------------------------
 
