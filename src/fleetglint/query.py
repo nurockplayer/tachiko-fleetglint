@@ -1,0 +1,588 @@
+"""Builds the API JSON from the SQLite read model (docs/architecture.md §4).
+
+Every call opens its own read-only connection and closes it (architecture §5): the
+HTTP threads never share the ingest thread's connection.
+"""
+import json
+import sqlite3
+import time
+from pathlib import Path
+
+from fleetglint import __version__, files, liveness, redact, store
+from fleetglint.adapters.base import short_hostname
+
+LIST_LIMIT = 500
+HISTORY_LIMIT = 50
+QUARANTINE_LIMIT = 100
+SHORT_TEXT = 300
+ATTENTION_TEXT = 200
+PROCESS_CACHE_S = 2.0
+TERMINAL_STATES = frozenset({"done", "failed", "cancelled"})
+
+_SOURCES_SQL = (
+    "SELECT s.source_id, s.kind, s.status, s.detail, s.last_scan_at, s.last_record_at,"
+    " (SELECT count(*) FROM records r WHERE r.source_id = s.source_id) AS records,"
+    " (SELECT count(*) FROM quarantine q WHERE q.source_id = s.source_id) AS quarantine"
+    " FROM sources s ORDER BY s.source_id")
+
+
+def _text(value, limit=None):
+    """A redacted string (spec §9), optionally cut to `limit` characters."""
+    if not isinstance(value, str):
+        return value
+    redacted = redact.redact(value)[0]
+    return redacted[:limit] if limit is not None else redacted
+
+
+def _redact_json(value):
+    """The raw view: every string in the JSON tree is redacted (spec §9)."""
+    if isinstance(value, str):
+        return redact.redact(value)[0]
+    if isinstance(value, list):
+        return [_redact_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_json(item) for key, item in value.items()}
+    return value
+
+
+def _age_text(seconds):
+    if seconds is None:
+        return ""
+    if seconds < 3600:
+        return f"{max(1, seconds // 60)}m "
+    if seconds < 86400:
+        return f"{seconds // 3600}h "
+    return f"{seconds // 86400}d "
+
+
+def _included(row, window_start):
+    """Non-terminal records, and terminal or acked ones inside the window (architecture §4.1)."""
+    if row["type"] == "inbox_item":
+        return row["state"] == "open" or row["updated_ts"] >= window_start
+    return row["state"] not in TERMINAL_STATES or row["updated_ts"] >= window_start
+
+
+class _CachedProcessChecker:
+    """A `ProcessChecker` whose answers live for a couple of seconds (one board, one check per pid)."""
+
+    def __init__(self, checker, ttl=PROCESS_CACHE_S, clock=time.monotonic):
+        self._checker = checker
+        self._ttl = ttl
+        self._clock = clock
+        self._seen = {}
+
+    def check(self, process):
+        key = json.dumps(process, sort_keys=True, default=str)
+        now = self._clock()
+        cached = self._seen.get(key)
+        if cached is not None and now - cached[0] < self._ttl:
+            return cached[1]
+        result = self._checker.check(process)
+        self._seen[key] = (now, result)
+        return result
+
+
+class _View:
+    """One read of the store: summaries, display states and extended refs (architecture §4.1, §4.2)."""
+
+    def __init__(self, conn, now, *, default_stale_after_s, process_checker,
+                 allowed_roots, list_limit):
+        self.conn = conn
+        self.now = now
+        self.default_stale_after_s = default_stale_after_s
+        self.process_checker = process_checker
+        self.allowed_roots = allowed_roots
+        self.list_limit = list_limit
+        self.statuses = {row["source_id"]: row["status"]
+                         for row in conn.execute("SELECT source_id, status FROM sources")}
+        self._records = {}
+        self._latest = {}
+
+    # -- lookups -----------------------------------------------------------
+
+    def record(self, row):
+        key = (row["source_id"], row["type"], row["id"])
+        value = self._records.get(key)
+        if value is None:
+            value = json.loads(row["json"])
+            self._records[key] = value
+        return value
+
+    def latest(self, source_id, type, id):
+        key = (source_id, type, id)
+        if key not in self._latest:
+            self._latest[key] = store.get_latest(self.conn, source_id, type, id)
+        return self._latest[key]
+
+    def source_ok(self, source_id):
+        return self.statuses.get(source_id, "ok") == "ok"
+
+    def display(self, record, source_id):
+        return liveness.display(
+            record, self.now,
+            default_stale_after_s=self.default_stale_after_s,
+            source_ok=self.source_ok(source_id),
+            process_checker=self.process_checker)
+
+    # -- refs --------------------------------------------------------------
+
+    def extended_identity(self, type, source_id, id):
+        """A record ref with `resolved` and, when resolved, `display_state` and `title`."""
+        out = {"type": type, "id": id, "source_id": source_id}
+        row = self.latest(source_id, type, id)
+        out["resolved"] = row is not None
+        if row is not None:
+            record = self.record(row)
+            out["display_state"] = self.display(record, source_id).state
+            out["title"] = _text(record.get("title"))
+        return out
+
+    def extended(self, ref, default_source):
+        """A record ref extended, or an external ref passed through (architecture §4.1)."""
+        if not isinstance(ref, dict):
+            return None
+        if ref.get("type") == "external":
+            out = {"type": "external"}
+            for key in ("kind", "key", "url"):
+                if key in ref:
+                    out[key] = ref[key]
+            return out
+        if not isinstance(ref.get("type"), str) or not isinstance(ref.get("id"), str):
+            return None
+        return self.extended_identity(ref["type"], ref.get("source_id") or default_source, ref["id"])
+
+    def ref(self, record_ref):
+        return self.extended_identity(record_ref["type"], record_ref["source_id"], record_ref["id"])
+
+    # -- summaries ---------------------------------------------------------
+
+    def file_ref(self, path):
+        if not isinstance(path, str):
+            return None
+        return {"path": path, "readable": files.is_readable(path, self.allowed_roots)}
+
+    def links(self, record):
+        links = []
+        for link in record.get("links") or ():
+            if not isinstance(link, dict):
+                continue
+            entry = {"label": _text(link.get("label"))}
+            if isinstance(link.get("url"), str):
+                entry["url"] = link["url"]
+            elif isinstance(link.get("path"), str):
+                entry["path"] = link["path"]
+                entry["readable"] = files.is_readable(link["path"], self.allowed_roots)
+            links.append(entry)
+        return links
+
+    def summary(self, row):
+        record = self.record(row)
+        source_id = row["source_id"]
+        display = self.display(record, source_id)
+        summary = {
+            "ref": {"type": row["type"], "id": row["id"], "source_id": source_id},
+            "state": row["state"],
+            "display_state": display.state,
+            "evidence": {"kind": display.evidence, "age_s": display.age_s, "detail": None},
+            "updated_at": row["updated_at"],
+            # Sessions observe activity through `last_activity_at` (spec §2, §8.3).
+            "observed_at": record.get("observed_at") or (
+                record.get("last_activity_at") if row["type"] == "session" else None
+            ) or row["updated_at"],
+            "project": record.get("project"),
+            "title": _text(record.get("title")),
+            "links": self.links(record),
+        }
+        summary.update(_FIELDS[row["type"]](self, record, row, source_id))
+        return summary
+
+    # -- per-type summary fields ------------------------------------------
+
+    def _run_fields(self, record, row, source_id):
+        return {
+            "agent": record.get("agent"),
+            "model": record.get("model"),
+            "provider": record.get("provider"),
+            "effort": record.get("effort"),
+            "role_id": record.get("role_id"),
+            "session_id": record.get("session_id"),
+            "started_at": record.get("started_at"),
+            "ended_at": record.get("ended_at"),
+            "exit_code": record.get("exit_code"),
+            "summary": _text(record.get("summary"), SHORT_TEXT),
+            "parent_run": self.extended(record.get("parent_run"), source_id),
+            "resume_of": self.extended(record.get("resume_of"), source_id),
+            "waits_on": [ref for ref in (self.extended(item, source_id)
+                                         for item in record.get("waits_on") or ()) if ref],
+        }
+
+    def _job_fields(self, record, row, source_id):
+        return {
+            "kind": record.get("kind"),
+            "command_summary": _text(record.get("command_summary")),
+            "run": self.extended(record.get("run"), source_id),
+            "role_id": record.get("role_id"),
+            "started_at": record.get("started_at"),
+            "ended_at": record.get("ended_at"),
+            "exit_code": record.get("exit_code"),
+            "signal": record.get("signal"),
+            "summary": _text(record.get("summary"), SHORT_TEXT),
+            "log": self.file_ref(record.get("log_path")),
+            "result": self.file_ref(record.get("result_path")),
+        }
+
+    def _inbox_fields(self, record, row, source_id):
+        return {
+            "role_id": record.get("role_id"),
+            "kind": record.get("kind"),
+            "subject": self.extended(record.get("subject"), source_id),
+            "outcome": _text(record.get("outcome")),
+            "action_required": bool(record.get("action_required", False)),
+            "created_at": record.get("created_at"),
+            "acked_at": record.get("acked_at"),
+            "detail": _text(record.get("detail"), SHORT_TEXT),
+            "blocks_retention": bool(row["blocks_retention"]),
+        }
+
+    def _session_fields(self, record, row, source_id):
+        models = record.get("models")
+        usage = record.get("usage")
+        return {
+            "agent": record.get("agent"),
+            "model": record.get("model"),
+            "models": list(models) if isinstance(models, list) else [],
+            "provider": record.get("provider"),
+            "effort": record.get("effort"),
+            "role_id": record.get("role_id"),
+            "started_at": record.get("started_at"),
+            "last_activity_at": record.get("last_activity_at"),
+            "ended_at": record.get("ended_at"),
+            "turn_open": record.get("turn_open"),
+            "entries": record.get("entries"),
+            "parent_session": self.extended(record.get("parent_session"), source_id),
+            "usage": usage if isinstance(usage, dict) else None,
+        }
+
+
+_FIELDS = {
+    "run": _View._run_fields,
+    "job": _View._job_fields,
+    "inbox_item": _View._inbox_fields,
+    "session": _View._session_fields,
+}
+
+
+class QueryBackend:
+    """The server's read model (architecture §4)."""
+
+    def __init__(self, cfg, *, process_checker=None, adapters=()):
+        self.cfg = cfg
+        self.list_limit = LIST_LIMIT
+        checker = liveness.ProcessChecker() if process_checker is None else process_checker
+        self.process_checker = _CachedProcessChecker(checker)
+        self.allowed_roots = [Path(path) for path in cfg.allowed_roots]
+        self.allowed_roots.extend(Path(root) for root in cfg.roots)
+        for adapter in adapters:
+            self.allowed_roots.extend(Path(root) for root in getattr(adapter, "allowed_roots", ()))
+
+    # -- connections -------------------------------------------------------
+
+    def _open(self):
+        path = Path(self.cfg.db_path)
+        if not path.exists():
+            return None
+        try:
+            return store.open_db(path, readonly=True)
+        except sqlite3.OperationalError:
+            return None
+
+    def _view(self, conn, now):
+        return _View(conn, now,
+                     default_stale_after_s=self.cfg.default_stale_after_s,
+                     process_checker=self.process_checker,
+                     allowed_roots=self.allowed_roots,
+                     list_limit=self.list_limit)
+
+    def _server(self):
+        return {"version": __version__, "host": short_hostname(), "read_only": True}
+
+    # -- endpoints ---------------------------------------------------------
+
+    def change_counter(self):
+        conn = self._open()
+        if conn is None:
+            return 0
+        try:
+            return store.get_change_counter(conn)
+        finally:
+            conn.close()
+
+    def snapshot(self, now):
+        conn = self._open()
+        if conn is None:
+            return self._empty_snapshot(now)
+        try:
+            return self._snapshot(conn, now)
+        finally:
+            conn.close()
+
+    def _empty_snapshot(self, now):
+        return {
+            "api": 1,
+            "generated_at": now.isoformat(),
+            "server": self._server(),
+            "window_hours": self.cfg.window_hours,
+            "sources": [],
+            "counts": {"running": 0, "waiting": 0, "attention": 0,
+                       "stale_lost_unknown": 0, "sessions_recent": 0},
+            "runs": [],
+            "jobs": [],
+            "inbox": [],
+            "sessions": [],
+            "attention": [],
+            "truncated": {"runs": False, "jobs": False, "inbox": False, "sessions": False},
+            "demo": False,
+        }
+
+    def _snapshot(self, conn, now):
+        view = self._view(conn, now)
+        window_start = now.timestamp() - self.cfg.window_hours * 3600
+        rows = {"run": [], "job": [], "inbox_item": [], "session": []}
+        for row in store.iter_latest(conn):
+            if row["type"] == "session":
+                if row["observed_ts"] >= window_start:
+                    rows["session"].append(row)
+            elif _included(row, window_start):
+                rows[row["type"]].append(row)
+
+        runs, runs_cut = self._summaries(view, rows["run"], "updated_ts")
+        jobs, jobs_cut = self._summaries(view, rows["job"], "updated_ts")
+        inbox, inbox_cut = self._summaries(view, rows["inbox_item"], "updated_ts")
+        sessions, sessions_cut = self._summaries(view, rows["session"], "observed_ts")
+        sources = self._sources(conn)
+        attention = _attention(view, runs, jobs, inbox, sources)
+        work = runs + jobs
+        return {
+            "api": 1,
+            "generated_at": now.isoformat(),
+            "server": self._server(),
+            "window_hours": self.cfg.window_hours,
+            "sources": sources,
+            "counts": {
+                "running": sum(1 for item in work if item["display_state"] == "running"),
+                "waiting": sum(1 for item in work if item["display_state"] == "waiting"),
+                "attention": len(attention),
+                "stale_lost_unknown": sum(1 for item in work
+                                          if item["display_state"] in ("stale", "lost", "unknown")),
+                "sessions_recent": sum(1 for item in sessions
+                                       if item["display_state"] == "recent"),
+            },
+            "runs": runs,
+            "jobs": jobs,
+            "inbox": inbox,
+            "sessions": sessions,
+            "attention": attention,
+            "truncated": {"runs": runs_cut, "jobs": jobs_cut,
+                          "inbox": inbox_cut, "sessions": sessions_cut},
+            "demo": any(item["ref"]["source_id"].startswith("demo@")
+                        for item in runs + jobs + inbox + sessions),
+        }
+
+    def _summaries(self, view, rows, order_field):
+        rows.sort(key=lambda row: (row[order_field], row["seq"], row["byte_offset"],
+                                   row["source_id"], row["type"], row["id"]), reverse=True)
+        limit = view.list_limit
+        return [view.summary(row) for row in rows[:limit]], len(rows) > limit
+
+    def _sources(self, conn):
+        return [{
+            "source_id": row["source_id"],
+            "kind": row["kind"],
+            "status": row["status"],
+            "detail": _text(row["detail"]) if row["status"] != "ok" else None,
+            "last_scan_at": row["last_scan_at"],
+            "last_record_at": row["last_record_at"],
+            "quarantine_count": row["quarantine"],
+            "records": row["records"],
+        } for row in conn.execute(_SOURCES_SQL)]
+
+    def record(self, now, source_id, type, id):
+        conn = self._open()
+        if conn is None:
+            return None
+        try:
+            row = store.get_latest(conn, source_id, type, id)
+            if row is None:
+                return None
+            view = self._view(conn, now)
+            record = view.record(row)
+            usage = record.get("usage")
+            return {
+                "api": 1,
+                "generated_at": now.isoformat(),
+                "record": view.summary(row),
+                "full": _redact_json(record),
+                "relations": _relations(view, row, record),
+                "history": self._history(conn, row),
+                "usage": usage if isinstance(usage, dict) else None,
+            }
+        finally:
+            conn.close()
+
+    def _history(self, conn, row):
+        return [{
+            "seq": entry["seq"],
+            "byte_offset": entry["byte_offset"],
+            "updated_at": entry["updated_at"],
+            "state": entry["state"],
+        } for entry in conn.execute(
+            "SELECT seq, byte_offset, updated_at, state FROM history"
+            " WHERE source_id = ? AND type = ? AND id = ?"
+            " ORDER BY seq DESC, byte_offset DESC LIMIT ?",
+            (row["source_id"], row["type"], row["id"], HISTORY_LIMIT))]
+
+    def file(self, now, source_id, type, id, field, index):
+        conn = self._open()
+        if conn is None:
+            return None
+        try:
+            row = store.get_latest(conn, source_id, type, id)
+            if row is None:
+                return None
+            record = json.loads(row["json"])
+        finally:
+            conn.close()
+        path = _file_path(record, field, index)
+        if path is None:
+            return {"api": 1, "readable": False, "reason": "no_path"}
+        result = files.read_tail(path, self.allowed_roots,
+                                 self.cfg.max_tail_kib * 1024, redact=redact.redact)
+        return {"api": 1, **result}
+
+    def quarantine(self, source_id):
+        conn = self._open()
+        if conn is None:
+            return None
+        try:
+            if store.get_source(conn, source_id) is None:
+                return None
+            return [{
+                "position": f"{row['seq']:010d}:{row['byte_offset']}",
+                "reason": row["reason"],
+                "excerpt": _text(row["excerpt"]),
+            } for row in store.quarantine_for(conn, source_id, QUARANTINE_LIMIT)]
+        finally:
+            conn.close()
+
+
+def _file_path(record, field, index):
+    """The path the field names, from the record itself; the client never sends one (architecture §4.3)."""
+    if field in ("log_path", "result_path"):
+        path = record.get(field)
+        return path if isinstance(path, str) else None
+    if field == "link" and isinstance(index, int):
+        links = record.get("links")
+        if isinstance(links, list) and 0 <= index < len(links) and isinstance(links[index], dict):
+            path = links[index].get("path")
+            return path if isinstance(path, str) else None
+    return None
+
+
+def _relations(view, row, record):
+    source_id, type, id = row["source_id"], row["type"], row["id"]
+
+    def pointing(rel):
+        rows = view.conn.execute(
+            "SELECT DISTINCT from_source, from_type, from_id FROM refs"
+            " WHERE rel = ? AND to_source = ? AND to_type = ? AND to_id = ?"
+            " ORDER BY from_source, from_type, from_id", (rel, source_id, type, id))
+        return [view.extended_identity(item["from_type"], item["from_source"], item["from_id"])
+                for item in rows]
+
+    if type == "run":
+        parent = view.extended(record.get("parent_run"), source_id)
+        resume_of = view.extended(record.get("resume_of"), source_id)
+        children = pointing("parent_run")
+        resumed_by = pointing("resume_of")
+        jobs = pointing("job_run")
+    else:
+        parent = resume_of = None
+        children, resumed_by, jobs = [], [], []
+    return {
+        "parent": parent,
+        "resume_of": resume_of,
+        "children": children,
+        "resumed_by": resumed_by,
+        "jobs": jobs,
+        "inbox": pointing("subject"),
+        "waited_on_by": pointing("waits_on"),
+    }
+
+
+def _attention(view, runs, jobs, inbox, sources):
+    """Needs attention, in the brief's order (architecture §4.1)."""
+    entries = []
+
+    def add(reason, who, subject, source_id, text):
+        entries.append({"reason": reason, "who": who, "subject": subject,
+                        "source_id": source_id, "text": _clip(text)})
+
+    open_items = [item for item in inbox if item["state"] == "open"]
+    for item in open_items:
+        if item["action_required"]:
+            add("action_required", item["role_id"], item["subject"],
+                item["ref"]["source_id"], _inbox_text(item))
+    for item in open_items:
+        if not item["action_required"]:
+            add("inbox", item["role_id"], item["subject"],
+                item["ref"]["source_id"], _inbox_text(item))
+    for reason in ("lost", "stale", "unknown"):
+        for item in runs + jobs:
+            if item["display_state"] == reason:
+                add(reason, _who(view, item), view.ref(item["ref"]), item["ref"]["source_id"],
+                    _work_text(item))
+    for source in sources:
+        if source["status"] != "ok":
+            add("source", None, None, source["source_id"],
+                f"{source['status']}: {source['detail'] or 'no detail'}")
+    return entries
+
+
+def _clip(text, limit=ATTENTION_TEXT):
+    return text[:limit] if isinstance(text, str) else text
+
+
+def _inbox_text(item):
+    parts = [item["kind"] or "inbox_item"]
+    if item["outcome"]:
+        parts.append(item["outcome"])
+    line = " · ".join(parts)
+    return f"{line} — {item['detail']}" if item["detail"] else line
+
+
+def _work_text(item):
+    ref, state = item["ref"], item["display_state"]
+    prefix = f"{ref['type']} {ref['id']} {state}"
+    if state == "lost":
+        return f"{prefix} — process gone, no terminal record"
+    if state == "stale":
+        return f"{prefix} {_age_text(item['evidence']['age_s'])}— no evidence"
+    return f"{prefix} — no usable evidence"
+
+
+def _who(view, item):
+    """A run/job's own role, else the owning run's role (architecture §4.1)."""
+    if item.get("role_id"):
+        return item["role_id"]
+    if item["ref"]["type"] == "job" and item.get("run") and item["run"].get("resolved"):
+        row = view.latest(item["run"]["source_id"], "run", item["run"]["id"])
+        if row is not None:
+            return view.record(row).get("role_id")
+    return None
+
+
+def backend(cfg):
+    """The backend `fleetglint serve` hands to the HTTP server."""
+    from fleetglint import ingest
+
+    return QueryBackend(cfg, adapters=ingest.default_adapters(cfg))
