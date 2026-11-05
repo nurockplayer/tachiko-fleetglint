@@ -1,5 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { RunDetail } from "./RunDetail";
+import type { Fetcher } from "../api/client";
 import {
   fileNotReadable,
   fileReadable,
@@ -19,6 +20,24 @@ const jobParams = {
   type: "job",
   id: "build-fg-1",
 };
+
+async function until(predicate: () => boolean) {
+  for (let i = 0; i < 100; i += 1) {
+    if (predicate()) return;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+  }
+  throw new Error("condition not reached");
+}
+
+async function flush() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
 
 describe("RunDetail", () => {
   it("shows both states, marks redacted spans, and shows unresolved refs", async () => {
@@ -83,6 +102,91 @@ describe("RunDetail", () => {
         document.querySelector('header.detail-head .badge[data-state="done"]'),
       ).toBeTruthy(),
     );
+  });
+
+  it("keeps one poll in flight across a visibility change", async () => {
+    vi.useFakeTimers();
+    try {
+      let recordCalls = 0;
+      let resolveFirst!: (response: Response) => void;
+      const first = new Promise<Response>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const fetcher: Fetcher = async (url) => {
+        if (url.startsWith("/api/record")) {
+          recordCalls += 1;
+          return recordCalls === 1 ? first : jsonResponse(recordRun);
+        }
+        return jsonResponse(fileReadable);
+      };
+      render(<RunDetail params={runParams} fetcher={fetcher} pollMs={1000} />);
+      await flush();
+      expect(recordCalls).toBe(1);
+
+      // The page becomes visible while the first request is still pending.
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+      expect(recordCalls).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+
+      resolveFirst(jsonResponse(recordRun));
+      await flush();
+      expect(recordCalls).toBe(1);
+      expect(vi.getTimerCount()).toBe(1);
+
+      // One interval later the single loop makes exactly one more call.
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      await flush();
+      expect(recordCalls).toBe(2);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refreshes a live log while updated_at stays the same", async () => {
+    const running = structuredClone(recordRun);
+    running.record.display_state = "running";
+    const grown = structuredClone(fileReadable);
+    grown.text += "12:50:00 still running\n";
+    let fileCalls = 0;
+    const fetcher = routeFetcher({
+      "/api/record": () => jsonResponse(running),
+      "/api/file": () => {
+        fileCalls += 1;
+        return jsonResponse(fileCalls === 1 ? fileReadable : grown);
+      },
+    });
+    render(<RunDetail params={runParams} fetcher={fetcher} pollMs={50} />);
+
+    expect(await screen.findByText(/worker started/)).toBeInTheDocument();
+    await until(() => screen.queryByText(/still running/) !== null);
+    expect(fileCalls).toBeGreaterThan(1);
+  });
+
+  it("does not refetch the log once the record is terminal", async () => {
+    const done = structuredClone(recordRun);
+    done.record.state = "done";
+    done.record.display_state = "done";
+    let fileCalls = 0;
+    const fetcher = routeFetcher({
+      "/api/record": () => jsonResponse(done),
+      "/api/file": () => {
+        fileCalls += 1;
+        return jsonResponse(fileReadable);
+      },
+    });
+    render(<RunDetail params={runParams} fetcher={fetcher} pollMs={20} />);
+
+    expect(await screen.findByText(/worker started/)).toBeInTheDocument();
+    await until(() => fileCalls > 0);
+    const afterFirst = fileCalls;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+    expect(fileCalls).toBe(afterFirst);
   });
 
   it("hides sections that do not apply to a job", async () => {

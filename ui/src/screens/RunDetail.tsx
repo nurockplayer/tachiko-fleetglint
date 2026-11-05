@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   FileResponse,
   InboxSummary,
@@ -264,6 +264,7 @@ export function RunDetail({
     let timer: ReturnType<typeof setTimeout> | undefined;
     let etag: string | null = null;
     let last: { data: RecordResponse; receivedAt: number } | null = null;
+    let inFlight = false;
     setDetail({ data: null, receivedAt: null, error: null, loading: true });
 
     const schedule = () => {
@@ -272,12 +273,15 @@ export function RunDetail({
 
     // The detail page polls like the board: a 304 keeps the record, a failure
     // keeps it on screen greyed and labelled with its time, and recovery is
-    // automatic. A changed updated_at refetches the log tail.
+    // automatic. One request is in flight at a time, so a visibility change
+    // cannot start a second loop or let an older response win.
     async function tick() {
+      if (inFlight) return;
       if (document.hidden) {
         schedule();
         return;
       }
+      inFlight = true;
       try {
         const headers: Record<string, string> = {};
         if (etag) headers["If-None-Match"] = etag;
@@ -318,12 +322,14 @@ export function RunDetail({
             loading: false,
           });
         }
+      } finally {
+        inFlight = false;
+        schedule();
       }
-      schedule();
     }
 
     const onVisibilityChange = () => {
-      if (!document.hidden) {
+      if (!document.hidden && !inFlight) {
         clearTimeout(timer);
         void tick();
       }
@@ -341,16 +347,28 @@ export function RunDetail({
   const record = detail.data?.record ?? null;
   const target = record ? logTarget(record) : null;
   const targetKey = target
-    ? `${target.source_id}/${target.type}/${target.id}/${target.field}/${target.index ?? ""}/${record?.updated_at ?? ""}`
+    ? `${target.source_id}/${target.type}/${target.id}/${target.field}/${target.index ?? ""}`
     : "";
+  // A live record's log can grow without its updated_at moving, so refetch the
+  // tail on every poll; a terminal record only refetches when the record does.
+  const live = record?.display_state === "running" || record?.display_state === "waiting";
+  const fileKey = target
+    ? `${targetKey}/${live ? (detail.receivedAt ?? "") : (record?.updated_at ?? "")}`
+    : "";
+  const fileTargetRef = useRef("");
 
   useEffect(() => {
     if (!target) {
+      fileTargetRef.current = "";
       setFile({ loading: false, data: null, error: null });
       return;
     }
+    const sameTarget = fileTargetRef.current === targetKey;
+    fileTargetRef.current = targetKey;
     let cancelled = false;
-    setFile({ loading: true, data: null, error: null });
+    // A refetch of the same tail keeps the text on screen: no loading flash
+    // and no empty panel while the request is in flight.
+    if (!sameTarget) setFile({ loading: true, data: null, error: null });
     (async () => {
       try {
         const response = await fetcher(fileUrl(target), { cache: "no-store" });
@@ -360,11 +378,11 @@ export function RunDetail({
         if (!cancelled) setFile({ loading: false, data: body, error: null });
       } catch (error) {
         if (!cancelled) {
-          setFile({
+          setFile((previous) => ({
             loading: false,
-            data: null,
+            data: previous.data,
             error: error instanceof Error ? error.message : String(error),
-          });
+          }));
         }
       }
     })();
@@ -372,7 +390,7 @@ export function RunDetail({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetcher, targetKey]);
+  }, [fetcher, fileKey]);
 
   const receivedClock =
     detail.receivedAt != null
