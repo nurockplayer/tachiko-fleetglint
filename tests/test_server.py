@@ -1,16 +1,18 @@
 """Tests for the HTTP transport (`fleetglint server`), docs/architecture.md §4."""
+import argparse
 import contextlib
 import http.client
 import io
 import json
 import math
 import pathlib
+import sys
 import tempfile
 import threading
-import time
 import unittest
 import urllib.parse
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 from fleetglint import __version__, server
 
@@ -202,10 +204,16 @@ class ServerTest(unittest.TestCase):
         status, headers, _ = self.get(url, {"If-None-Match": f'W/"7-{WINDOW}"'})
         self.assertEqual(status, 304)
         self.assert_security(headers)
-        self.assertEqual(self.backend.calls, [])
+        self.assertEqual(self.backend.calls, [("src@host", "run", "cx.1")])
 
     def test_record_unknown_is_404(self):
         status, headers, body = self.get("/api/record?source_id=src&type=run&id=nope")
+        self.assertEqual(status, 404)
+        self.assert_error(status, headers, body, "not_found")
+
+    def test_record_unknown_wins_over_if_none_match(self):
+        status, headers, body = self.get("/api/record?source_id=src&type=run&id=nope",
+                                         {"If-None-Match": "*"})
         self.assertEqual(status, 404)
         self.assert_error(status, headers, body, "not_found")
 
@@ -247,6 +255,13 @@ class ServerTest(unittest.TestCase):
         status, headers, body = self.get("/api/file?source_id=x&type=job&id=j&field=log_path")
         self.assertEqual(status, 404)
         self.assert_error(status, headers, body, "not_found")
+
+    def test_file_non_ascii_index_is_400(self):
+        url = "/api/file?source_id=src&type=job&id=j1&field=link&index=%C2%B2"
+        status, headers, body = self.get(url)
+        self.assertEqual(status, 400)
+        self.assert_error(status, headers, body, "bad_request")
+        self.assertEqual(self.backend.calls, [])
 
     # ---- quarantine ------------------------------------------------------
 
@@ -430,6 +445,20 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(status, 200)
         finally:
             stop_server(srv, thread)
+
+
+class RunTest(unittest.TestCase):
+    def test_missing_query_layer_exits_3_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(config=str(pathlib.Path(tmp) / "config.toml"),
+                                      port=None, open=False)
+            err, out = io.StringIO(), io.StringIO()
+            with mock.patch.dict(sys.modules, {"fleetglint.query": None}), \
+                    contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+                code = server.run(args)
+        self.assertEqual(code, 3)
+        self.assertIn("this build has no query layer yet", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
 
 
 class MakeServerTest(unittest.TestCase):

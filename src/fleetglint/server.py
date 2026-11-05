@@ -264,19 +264,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._error(400, "bad_request", "type must be run, job or inbox_item")
             return
         now = self.server.clock()
-        counter = self._guard(self.server.backend.change_counter)
-        if counter is _ERROR:
-            return
-        etag = weak_etag(counter, now)
-        if etag_matches(self.headers.get("If-None-Match"), etag):
-            self._not_modified(etag)
-            return
         data = self._guard(self.server.backend.record, now, params["source_id"],
                            params["type"], params["id"])
         if data is _ERROR:
             return
         if data is None:
             self._error(404, "not_found", "unknown record")
+            return
+        counter = self._guard(self.server.backend.change_counter)
+        if counter is _ERROR:
+            return
+        etag = weak_etag(counter, now)
+        if etag_matches(self.headers.get("If-None-Match"), etag):
+            self._not_modified(etag)
             return
         body = self._dump(data)
         if body is None:
@@ -296,7 +296,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         index = None
         if "index" in query:
             raw = query["index"][0]
-            if not raw.isdigit():
+            if not (raw.isascii() and raw.isdigit()):
                 self._error(400, "bad_request", "index must be a non-negative integer")
                 return
             index = int(raw)
@@ -389,7 +389,7 @@ def make_server(backend: Backend, port: int, web_dir: Path | None = None, clock=
 
 def run(args) -> int:
     """`fleetglint serve`: the ingest thread plus the HTTP server (docs/architecture.md §8)."""
-    from fleetglint import config, ingest, query
+    from fleetglint import config
 
     try:
         cfg = config.load(getattr(args, "config", None))
@@ -398,15 +398,21 @@ def run(args) -> int:
         return 3
     port = cfg.port if getattr(args, "port", None) is None else args.port
 
-    # query.py and ingest.py land in parallel PRs; the lead wires these two calls
-    # once they merge.
-    backend = query.backend(cfg)
+    # query.py and the ingest loop land in parallel PRs; the lead replaces these
+    # two calls once they merge.
+    try:
+        from fleetglint import ingest, query
+        backend = query.backend(cfg)
+        ingest_thread = threading.Thread(target=ingest.serve, args=(cfg,), daemon=True)
+    except (ImportError, AttributeError):
+        print("fleetglint serve: this build has no query layer yet", file=sys.stderr)
+        return 3
     try:
         server = make_server(backend, port)
     except OSError as exc:
         print(f"fleetglint serve: cannot listen on 127.0.0.1:{port}: {exc}", file=sys.stderr)
         return 3
-    threading.Thread(target=ingest.serve, args=(cfg,), daemon=True).start()
+    ingest_thread.start()
 
     url = f"http://127.0.0.1:{server.server_address[1]}/"
     print(f"Fleetglint on {url} (read-only)", flush=True)
