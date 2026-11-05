@@ -459,6 +459,11 @@ summary:focus-visible {
   letter-spacing: 0.06em;
 }
 
+.tile-note {
+  color: var(--text-secondary);
+  font-size: var(--text-meta);
+}
+
 .tile-badges {
   display: flex;
   gap: var(--space-4);

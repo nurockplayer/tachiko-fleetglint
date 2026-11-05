@@ -57,6 +57,25 @@ describe("Overview", () => {
     ).toBeInTheDocument();
   });
 
+  it("uses singular nouns for a single run and job", () => {
+    const one = structuredClone(snapshot);
+    one.runs = one.runs.filter((run) => run.display_state === "running");
+    one.jobs = one.jobs.slice(0, 1);
+    const { container } = render(<Overview snapshot={one} />);
+    expect(screen.getByText(/1 run · 1 job · read-only/)).toBeInTheDocument();
+    const heads = Array.from(
+      container.querySelectorAll(".row-group-head .count"),
+    ).map((node) => node.textContent);
+    expect(heads).toEqual(["1 run"]);
+  });
+
+  it("says how many attention items are shown when the count exceeds the list", () => {
+    const cut = structuredClone(snapshot);
+    cut.counts.attention = 9;
+    render(<Overview snapshot={cut} />);
+    expect(screen.getByText(`Showing ${cut.attention.length} of 9`)).toBeInTheDocument();
+  });
+
   it("groups non-terminal runs by project and keeps terminal runs collapsed", () => {
     const { container } = render(<Overview snapshot={snapshot} />);
     const groups = Array.from(container.querySelectorAll(".row-group-head strong")).map(

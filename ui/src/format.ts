@@ -1,3 +1,8 @@
+/** "1 run", "2 runs"; a cut list ("1+") stays plural. */
+export function countNoun(count: number, noun: string, more = false): string {
+  return `${count}${more ? "+" : ""} ${noun}${count === 1 && !more ? "" : "s"}`;
+}
+
 export function formatAge(seconds: number | null | undefined): string {
   if (seconds == null || Number.isNaN(seconds)) return "—";
   const s = Math.max(0, Math.round(seconds));

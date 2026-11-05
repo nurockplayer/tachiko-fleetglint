@@ -188,13 +188,15 @@ export interface CountTileProps {
   value: number;
   states: BadgeState[];
   href: string;
+  note?: string;
 }
 
-export function CountTile({ label, value, states, href }: CountTileProps) {
+export function CountTile({ label, value, states, href, note }: CountTileProps) {
   return (
     <a className="tile" href={href} data-tile={label}>
       <span className="tile-number mono">{value}</span>
       <span className="tile-label">{label}</span>
+      {note ? <span className="tile-note">{note}</span> : null}
       <span className="tile-badges">
         {states.map((state) => (
           <StateBadge key={state} state={state} />
