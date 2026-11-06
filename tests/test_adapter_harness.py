@@ -370,8 +370,8 @@ class HarnessAdapterTest(unittest.TestCase):
                 write_running(state, 4102, log)
                 record = by_id(harness.HarnessAdapter(state, hostname="h").scan(NOW).records)[
                     run_id("ds", str(log))]
-        self.assertEqual(record["state"], "running")
-        self.assertNotIn("waits_on", record)
+                self.assertEqual(record["state"], "running")
+                self.assertNotIn("waits_on", record)
 
     def test_jobs(self):
         records = by_id(self.result.records)
@@ -607,6 +607,18 @@ class HarnessAdapterTest(unittest.TestCase):
                           "key": "from:lead-alpha"})
         self.assertEqual(records["owner-notify.key-b"]["outcome"], "skipped")
         self.assertEqual(result.detail, "1 malformed row(s) skipped")
+
+    def test_owner_notify_rows_without_a_key_stay_separate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            (state / "owner-notify").mkdir()
+            (state / "owner-notify" / "log.tsv").write_text(
+                "2026-11-07 07:08 JST\t-\tlead-alpha\tsent\tfirst\n"
+                "2026-11-07 07:09 JST\t-\tlead-beta\tsent\tsecond\n")
+            result = harness.HarnessAdapter(state, hostname="h").scan(NOW)
+        items = [r for r in result.records if r.get("kind") == "owner-notify"]
+        self.assertEqual(sorted(r["detail"] for r in items), ["first", "second"])
+        self.assertEqual(len({r["id"] for r in items}), 2)
 
     def test_owner_notify_without_a_log_is_empty(self):
         with tempfile.TemporaryDirectory() as tmp:

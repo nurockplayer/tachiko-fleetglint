@@ -854,6 +854,9 @@ class HarnessAdapter:
                 stats.malformed += 1
                 continue
             status = status.strip()
+            # owner-notify logs an absent --key as "-": each such row is its own notification.
+            if key == "-":
+                key = "row." + hashlib.sha1(line.encode("utf-8", "replace")).hexdigest()[:12]
             # A key's newest sent/failed row wins; a skipped-only key keeps its newest skip.
             priority = 0 if status in ("sent", "failed") else 1 if status == "skipped" else None
             if priority is None:
