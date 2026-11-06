@@ -29,7 +29,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg.db_path, self.dir / "state/fleetglint/fleetglint.sqlite")
         self.assertEqual(cfg.viewer_roles, ["owner"])
         self.assertEqual(cfg.needs_you_hours, 24)
-        self.assertEqual(cfg.inbox_old_after_s, 7200)
+        self.assertEqual(cfg.inbox_old_after_s, 14400)
 
     def test_ui_values_are_read(self):
         cfg = config.load(self.write('[ui]\nviewer_roles = ["owner", "lead"]\n'

@@ -33,7 +33,7 @@ ATTENTION_KEYS = {"reason", "who", "subject", "source_id", "text"}
 RECORD_KEYS = {"api", "generated_at", "record", "full", "relations", "history", "usage"}
 RELATION_KEYS = {"parent", "resume_of", "children", "resumed_by", "jobs", "inbox",
                  "waited_on_by"}
-BOARD_KEYS = {"api", "generated_at", "server", "window_hours", "demo", "sources",
+BOARD_KEYS = {"api", "generated_at", "server", "window_hours", "inbox_old_after_s", "demo", "sources",
               "capabilities", "counts", "needs_you", "lead_inbox", "waiting", "running",
               "exceptions", "recent", "sessions", "sessions_total", "truncated"}
 BOARD_COUNT_KEYS = {"needs_you", "waiting", "running", "lead_inbox_open", "lead_inbox_old",

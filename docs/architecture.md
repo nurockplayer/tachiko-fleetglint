@@ -185,11 +185,11 @@ The viewer's first screen: a small answer organised by what the viewer asks,
 instead of one list per record type. Same safety, ETag and redaction rules as
 §4.5; the empty-database response has the same shape with empty lists and
 zeros. `[ui]` settings: `viewer_roles` (default `["owner"]`),
-`needs_you_hours` (24) and `inbox_old_after_s` (7200).
+`needs_you_hours` (24) and `inbox_old_after_s` (14400).
 
 ```json
 {
-  "api": 1, "generated_at": "…", "server": {…}, "window_hours": 24,
+  "api": 1, "generated_at": "…", "server": {…}, "window_hours": 24, "inbox_old_after_s": 14400,
   "demo": false, "sources": [Source, …],
   "capabilities": {"execution": true, "requests": true},
   "counts": {"needs_you": 1, "waiting": 2, "running": 3, "lead_inbox_open": 4,

@@ -55,7 +55,7 @@ class Config:
     window_hours: int = 24
     viewer_roles: list[str] = field(default_factory=lambda: ["owner"])
     needs_you_hours: int = 24
-    inbox_old_after_s: int = 7200
+    inbox_old_after_s: int = 14400
     segment_days: int = 30
     abandon_days: int = 90
     history_days: int = 30
