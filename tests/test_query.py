@@ -728,7 +728,7 @@ class BoardTest(unittest.TestCase):
 
     def test_rule2_lead_inbox_groups_sorts_and_caps_items(self):
         records = [inbox("lead-old", role_id="lead", kind="message",
-                         created_at=stamp(hours=-3), updated_at=stamp(hours=-3))]
+                         created_at=stamp(hours=-5), updated_at=stamp(hours=-5))]
         records += [inbox(f"lead-{age}", role_id="lead", kind="message",
                           action_required=(age == 40),
                           created_at=stamp(minutes=-age), updated_at=stamp(minutes=-age))
@@ -741,7 +741,7 @@ class BoardTest(unittest.TestCase):
                          ["lead", "worker"])
         lead, worker = board["lead_inbox"]
         self.assertEqual((lead["open"], lead["old"]), (7, 1))
-        self.assertEqual(lead["oldest_age_s"], 3 * 3600)
+        self.assertEqual(lead["oldest_age_s"], 5 * 3600)
         self.assertEqual(lead["action_required"], 1)
         self.assertEqual([item["ref"]["id"] for item in lead["items"]],
                          ["lead-10", "lead-20", "lead-30", "lead-40", "lead-50"])
