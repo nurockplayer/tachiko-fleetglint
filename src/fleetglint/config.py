@@ -53,6 +53,9 @@ class Config:
     adapter_poll_s: float = 5
     default_stale_after_s: int = 900
     window_hours: int = 24
+    viewer_roles: list[str] = field(default_factory=lambda: ["owner"])
+    needs_you_hours: int = 24
+    inbox_old_after_s: int = 7200
     segment_days: int = 30
     abandon_days: int = 90
     history_days: int = 30
@@ -106,6 +109,13 @@ def load(path=None):
     cfg.window_hours = _get(ingest, "window_hours", int, cfg.window_hours)
     if "db_path" in ingest:
         cfg.db_path = expand(_get(ingest, "db_path", str, ""))
+
+    ui = data.get("ui", {})
+    cfg.viewer_roles = _get(ui, "viewer_roles", list, cfg.viewer_roles)
+    if any(not isinstance(role, str) for role in cfg.viewer_roles):
+        raise ConfigError("ui.viewer_roles: expected a list of strings")
+    cfg.needs_you_hours = _get(ui, "needs_you_hours", int, cfg.needs_you_hours)
+    cfg.inbox_old_after_s = _get(ui, "inbox_old_after_s", int, cfg.inbox_old_after_s)
 
     retention = data.get("retention", {})
     cfg.segment_days = _get(retention, "segment_days", int, cfg.segment_days)

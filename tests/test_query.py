@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from fleetglint import config, ingest, query, store
 
@@ -32,6 +33,17 @@ ATTENTION_KEYS = {"reason", "who", "subject", "source_id", "text"}
 RECORD_KEYS = {"api", "generated_at", "record", "full", "relations", "history", "usage"}
 RELATION_KEYS = {"parent", "resume_of", "children", "resumed_by", "jobs", "inbox",
                  "waited_on_by"}
+BOARD_KEYS = {"api", "generated_at", "server", "window_hours", "demo", "sources",
+              "capabilities", "counts", "needs_you", "lead_inbox", "waiting", "running",
+              "exceptions", "recent", "sessions", "sessions_total", "truncated"}
+BOARD_COUNT_KEYS = {"needs_you", "waiting", "running", "lead_inbox_open", "lead_inbox_old",
+                    "process_gone", "out_of_date", "unverified_recent", "failed_recent",
+                    "older_unverified", "sessions_recent"}
+BOARD_TRUNCATED_KEYS = {"waiting", "running", "exceptions", "recent", "lead_inbox"}
+LEAD_INBOX_KEYS = {"role_id", "open", "old", "oldest_age_s", "action_required", "items"}
+WORK_BOARD_KEYS = RUN_KEYS | {"started_age_s", "section_reason"}
+JOB_BOARD_KEYS = JOB_KEYS | {"started_age_s", "section_reason"}
+INBOX_BOARD_KEYS = INBOX_KEYS | {"age_s"}
 
 
 def stamp(**delta):
@@ -359,6 +371,20 @@ class QueryTest(unittest.TestCase):
         self.assertIn("42m", stale["text"])
         self.assertEqual(unknown["subject"]["id"], "unknown-1")
 
+    def test_attention_skips_lost_stale_unknown_older_than_the_window(self):
+        self.write("work@mbp", [
+            run("old-stale", updated_at=stamp(hours=-30), observed_at=stamp(hours=-30)),
+            run("old-unknown", state="unknown", updated_at=stamp(hours=-30)),
+        ])
+        self.ing.scan_roots()
+        snap = self.snapshot()
+        reasons = {(entry["reason"], (entry["subject"] or {}).get("id"))
+                   for entry in snap["attention"]}
+        self.assertNotIn(("stale", "old-stale"), reasons)
+        self.assertNotIn(("unknown", "old-unknown"), reasons)
+        self.assertEqual(snap["counts"]["stale_lost_unknown"], 2)  # stale-1, unknown-1 only
+        self.assertEqual(snap["counts"]["attention"], 4)
+
     def test_source_entries(self):
         snap = self.snapshot()
         sources = {source["source_id"]: source for source in snap["sources"]}
@@ -579,6 +605,306 @@ class QueryTest(unittest.TestCase):
         self.write("work@mbp", [run("counter-1", updated_at=stamp(seconds=-1))])
         self.ing.scan_roots()
         self.assertGreater(self.backend.change_counter(), before)
+
+
+class BoardTest(unittest.TestCase):
+    """GET /api/board: one place per record, in the documented order (architecture §4.1b)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.root = self.dir / "sources"
+        self.root.mkdir()
+        cfg = config.Config()
+        cfg.roots = [self.root]
+        cfg.db_path = self.dir / "db.sqlite"
+        for adapter in (cfg.harness, cfg.claude_code, cfg.codex):
+            adapter.enabled = "false"
+        self.cfg = cfg
+        self.conn = store.open_db(cfg.db_path)
+        self.addCleanup(self.conn.close)
+        self.ing = ingest.Ingestor(self.conn, cfg, clock=lambda: NOW)
+        self.backend = query.QueryBackend(cfg)
+
+    def write(self, records, source_id="work@mbp"):
+        directory = self.root / source_id
+        directory.mkdir(parents=True, exist_ok=True)
+        existing = [int(path.name[:10]) for path in directory.iterdir()
+                    if path.name[:10].isdigit()
+                    and path.name.endswith((".ndjson", ".ndjson.gz"))]
+        path = directory / f"{max(existing, default=0) + 1:010d}.ndjson"
+        path.write_text("".join(json.dumps(record) + "\n" for record in records),
+                        encoding="utf-8")
+        self.ing.scan_roots()
+        return path
+
+    def put_raw(self, record):
+        """Store a row the schema would reject, for cases ingest cannot produce."""
+        store.put_latest(self.conn, record, 900, 0)
+        self.conn.commit()
+
+    def board(self, backend=None):
+        return (backend or self.backend).board(NOW)
+
+    def by_id(self, items):
+        return {item["ref"]["id"]: item for item in items}
+
+    # --- shape ------------------------------------------------------------
+
+    def test_board_shape_and_redaction(self):
+        self.write([
+            run("r1", title=f"hello {SECRET}"),
+            job("j1"),
+            inbox("i1", role_id="owner", action_required=True),
+            session("s1"),
+        ])
+        board = self.board()
+        self.assertEqual(set(board), BOARD_KEYS)
+        self.assertEqual(set(board["counts"]), BOARD_COUNT_KEYS)
+        self.assertEqual(set(board["truncated"]), BOARD_TRUNCATED_KEYS)
+        self.assertEqual(set(board["capabilities"]), {"execution", "requests"})
+        self.assertEqual(set(board["exceptions"]),
+                         {"process_gone", "out_of_date", "unverified_recent"})
+        for item in board["running"]:
+            expected = WORK_BOARD_KEYS if item["ref"]["type"] == "run" else JOB_BOARD_KEYS
+            self.assertEqual(set(item), expected)
+        for item in board["needs_you"]:
+            self.assertEqual(set(item), INBOX_BOARD_KEYS)
+        for role in board["lead_inbox"]:
+            self.assertEqual(set(role), LEAD_INBOX_KEYS)
+        self.assertNotIn(SECRET, json.dumps(board))
+        self.assertIn("[redacted]", json.dumps(board))
+        self.assertFalse(board["demo"])
+
+    def test_capabilities_false_and_true(self):
+        self.assertEqual(self.board()["capabilities"],
+                         {"execution": False, "requests": False})
+        self.write([inbox("i1", role_id="lead", kind="message")])
+        self.assertEqual(self.board()["capabilities"],
+                         {"execution": False, "requests": True})
+        self.write([run("r1")])
+        self.assertEqual(self.board()["capabilities"],
+                         {"execution": True, "requests": True})
+
+    def test_empty_database_has_the_same_shape(self):
+        cfg = config.Config()
+        cfg.db_path = self.dir / "no-such-dir" / "empty.sqlite"
+        board = query.QueryBackend(cfg).board(NOW)
+        self.assertEqual(set(board), BOARD_KEYS)
+        self.assertEqual(board["generated_at"], NOW.isoformat())
+        self.assertEqual(board["sources"], [])
+        self.assertEqual(board["capabilities"], {"execution": False, "requests": False})
+        self.assertEqual(board["counts"], dict.fromkeys(BOARD_COUNT_KEYS, 0))
+        for name in ("needs_you", "lead_inbox", "waiting", "running", "recent", "sessions"):
+            self.assertEqual(board[name], [], name)
+        self.assertEqual(board["exceptions"],
+                         {"process_gone": [], "out_of_date": [], "unverified_recent": []})
+        self.assertEqual(board["truncated"], dict.fromkeys(BOARD_TRUNCATED_KEYS, False))
+        self.assertEqual((board["sessions_total"], board["demo"]), (0, False))
+
+    # --- rules ------------------------------------------------------------
+
+    def test_rule1_needs_you_and_24h_age_out(self):
+        self.write([
+            inbox("i-now", role_id="owner", action_required=True,
+                  created_at=stamp(hours=-23)),
+            inbox("i-edge", role_id="owner", action_required=True,
+                  created_at=stamp(hours=-24)),
+            inbox("i-old", role_id="owner", action_required=True,
+                  created_at=stamp(hours=-24, seconds=-1)),
+            inbox("i-lead", role_id="lead", action_required=True,
+                  created_at=stamp(hours=-1)),
+        ])
+        board = self.board()
+        self.assertEqual([item["ref"]["id"] for item in board["needs_you"]],
+                         ["i-now", "i-edge"])
+        self.assertEqual(board["counts"]["needs_you"], 2)
+        self.assertEqual([item["age_s"] for item in board["needs_you"]],
+                         [23 * 3600, 24 * 3600])
+        # The aged-out viewer item lands nowhere; the non-viewer role goes to lead_inbox.
+        self.assertEqual([role["role_id"] for role in board["lead_inbox"]], ["lead"])
+        self.assertEqual(board["lead_inbox"][0]["open"], 1)
+
+    def test_rule2_lead_inbox_groups_sorts_and_caps_items(self):
+        records = [inbox("lead-old", role_id="lead", kind="message",
+                         created_at=stamp(hours=-3), updated_at=stamp(hours=-3))]
+        records += [inbox(f"lead-{age}", role_id="lead", kind="message",
+                          action_required=(age == 40),
+                          created_at=stamp(minutes=-age), updated_at=stamp(minutes=-age))
+                    for age in (10, 20, 30, 40, 50, 60)]
+        records.append(inbox("worker-1", role_id="worker", kind="message",
+                             created_at=stamp(minutes=-5), updated_at=stamp(minutes=-5)))
+        self.write(records)
+        board = self.board()
+        self.assertEqual([role["role_id"] for role in board["lead_inbox"]],
+                         ["lead", "worker"])
+        lead, worker = board["lead_inbox"]
+        self.assertEqual((lead["open"], lead["old"]), (7, 1))
+        self.assertEqual(lead["oldest_age_s"], 3 * 3600)
+        self.assertEqual(lead["action_required"], 1)
+        self.assertEqual([item["ref"]["id"] for item in lead["items"]],
+                         ["lead-10", "lead-20", "lead-30", "lead-40", "lead-50"])
+        self.assertEqual((worker["open"], worker["old"], worker["action_required"]), (1, 0, 0))
+        self.assertEqual((board["counts"]["lead_inbox_open"],
+                          board["counts"]["lead_inbox_old"]), (8, 1))
+        self.assertTrue(board["truncated"]["lead_inbox"])
+
+    def test_rule3_waiting_run(self):
+        self.write([run("wait-run", state="waiting", started_at=stamp(minutes=-7),
+                        updated_at=stamp(seconds=-5))])
+        board = self.board()
+        item = self.by_id(board["waiting"])["wait-run"]
+        self.assertEqual(item["section_reason"], "waits_on")
+        self.assertEqual(item["started_age_s"], 420)
+        self.assertEqual(board["counts"]["waiting"], 1)
+        self.assertEqual(board["running"], [])
+
+    def test_rule4_lead_wait_job(self):
+        self.write([job("wait-job", kind="wait", started_at=stamp(minutes=-2))])
+        board = self.board()
+        item = self.by_id(board["waiting"])["wait-job"]
+        self.assertEqual(item["section_reason"], "lead_wait")
+        self.assertEqual((board["counts"]["waiting"], board["counts"]["running"]), (1, 0))
+
+    def test_rule5_wait_worker_is_hidden_when_a_run_covers_it(self):
+        self.write([
+            run("lead-run", role_id="lead", started_at=stamp(minutes=-3)),
+            job("plumbing", kind="wait-worker", role_id="lead",
+                started_at=stamp(minutes=-4)),
+            job("orphan", kind="wait-worker", role_id="worker",
+                started_at=stamp(minutes=-4)),
+            run("early-run", role_id="early", started_at=stamp(minutes=-6)),
+            job("early-wait", kind="wait-worker", role_id="early",
+                started_at=stamp(minutes=-4)),
+        ])
+        board = self.board()
+        waiting = self.by_id(board["waiting"])
+        self.assertNotIn("plumbing", waiting)
+        self.assertEqual(waiting["orphan"]["section_reason"], "lead_wait")
+        self.assertEqual(waiting["early-wait"]["section_reason"], "lead_wait")
+        self.assertEqual(board["counts"]["waiting"], 2)  # the hidden job adds nothing
+        self.assertEqual(set(self.by_id(board["running"])), {"lead-run", "early-run"})
+
+    def test_rule6_running_newest_started_first_nulls_last(self):
+        self.write([run("r-late", started_at=stamp(minutes=-1)),
+                    run("r-early", started_at=stamp(minutes=-9))])
+        self.put_raw(run("r-null", started_at=None))
+        board = self.board()
+        self.assertEqual([item["ref"]["id"] for item in board["running"]],
+                         ["r-late", "r-early", "r-null"])
+        self.assertIsNone(self.by_id(board["running"])["r-null"]["started_age_s"])
+        self.assertEqual(board["counts"]["running"], 3)
+
+    def test_rule7_lost_and_stale_exceptions(self):
+        self.write([
+            run("lost-1", process={"host": "mbp", "pid": 424242}),
+            run("stale-1", updated_at=stamp(minutes=-42), observed_at=stamp(minutes=-42)),
+            run("old-stale", updated_at=stamp(hours=-30), observed_at=stamp(hours=-30)),
+        ])
+
+        class Dead:
+            def check(self, process):
+                return False
+
+        board = self.board(query.QueryBackend(self.cfg, process_checker=Dead()))
+        self.assertEqual([item["ref"]["id"] for item in board["exceptions"]["process_gone"]],
+                         ["lost-1"])
+        self.assertEqual([item["ref"]["id"] for item in board["exceptions"]["out_of_date"]],
+                         ["stale-1"])
+        self.assertEqual((board["counts"]["process_gone"],
+                          board["counts"]["out_of_date"],
+                          board["counts"]["older_unverified"]), (1, 1, 1))
+        self.assertEqual(board["recent"], [])
+
+    def test_rule8_unknown_recent_without_summarising_old_rows(self):
+        self.write([run("unknown-1", state="unknown", updated_at=stamp(minutes=-5)),
+                    run("old-unknown", state="unknown", updated_at=stamp(hours=-26))])
+        real_loads = json.loads
+        with mock.patch.object(query.json, "loads", wraps=real_loads) as loads:
+            board = self.board()
+        parsed = "".join(call.args[0] for call in loads.call_args_list)
+        self.assertIn('"unknown-1"', parsed)
+        self.assertNotIn('"old-unknown"', parsed)
+        self.assertEqual([item["ref"]["id"] for item in board["exceptions"]["unverified_recent"]],
+                         ["unknown-1"])
+        self.assertEqual(board["counts"]["older_unverified"], 1)
+
+    def test_rule9_recent_skips_wait_worker_and_old_terminal(self):
+        self.write([
+            run("done-1", state="done", updated_at=stamp(minutes=-10),
+                ended_at=stamp(minutes=-10)),
+            run("failed-1", state="failed", updated_at=stamp(minutes=-5),
+                ended_at=stamp(minutes=-5)),
+            run("cancelled-1", state="cancelled", updated_at=stamp(minutes=-20),
+                ended_at=stamp(minutes=-20)),
+            job("plumbing", kind="wait-worker", state="failed",
+                updated_at=stamp(minutes=-4), ended_at=stamp(minutes=-4)),
+            run("old-done", state="done", updated_at=stamp(hours=-30),
+                ended_at=stamp(hours=-30)),
+        ])
+        board = self.board()
+        self.assertEqual([item["ref"]["id"] for item in board["recent"]],
+                         ["failed-1", "done-1", "cancelled-1"])
+        self.assertEqual(board["counts"]["failed_recent"], 1)
+        self.assertEqual(board["counts"]["older_unverified"], 0)
+        self.assertFalse(board["truncated"]["recent"])
+
+    def test_rule10_sessions_within_the_window(self):
+        self.write([
+            session("s-recent", last_activity_at=stamp(seconds=-30)),
+            session("s-idle", last_activity_at=stamp(minutes=-120),
+                    updated_at=stamp(minutes=-120)),
+            session("s-old", last_activity_at=stamp(hours=-30),
+                    updated_at=stamp(hours=-30)),
+        ])
+        board = self.board()
+        self.assertEqual([item["ref"]["id"] for item in board["sessions"]],
+                         ["s-recent", "s-idle"])
+        self.assertEqual(board["sessions_total"], 2)
+        self.assertEqual(board["counts"]["sessions_recent"], 1)
+
+    def test_older_boundary_is_updated_ts_before_the_window(self):
+        self.write([
+            run("edge-done", state="done", updated_at=stamp(hours=-24),
+                ended_at=stamp(hours=-24)),
+            run("before-done", state="done", updated_at=stamp(hours=-24, seconds=-1),
+                ended_at=stamp(hours=-24, seconds=-1)),
+        ])
+        ids = [item["ref"]["id"] for item in self.board()["recent"]]
+        self.assertIn("edge-done", ids)
+        self.assertNotIn("before-done", ids)
+
+    def test_caps_set_truncated_but_counts_stay_full(self):
+        records = [run(f"run-{index}", started_at=stamp(seconds=-index - 1))
+                   for index in range(3)]
+        records += [run(f"stale-{index}", updated_at=stamp(minutes=-42),
+                        observed_at=stamp(minutes=-42)) for index in range(3)]
+        records += [run(f"done-{index}", state="done",
+                        updated_at=stamp(seconds=-10 - index),
+                        ended_at=stamp(seconds=-10 - index)) for index in range(3)]
+        records += [session(f"s-{index}", last_activity_at=stamp(seconds=-10 - index))
+                    for index in range(2)]
+        records += [inbox(f"i-{index}", role_id="lead", kind="message",
+                          created_at=stamp(minutes=-1 - index)) for index in range(2)]
+        self.write(records)
+        with mock.patch.object(query, "BOARD_LIST_LIMIT", 2), \
+                mock.patch.object(query, "BOARD_EXCEPTION_LIMIT", 1), \
+                mock.patch.object(query, "BOARD_RECENT_LIMIT", 1), \
+                mock.patch.object(query, "BOARD_SESSIONS_LIMIT", 1), \
+                mock.patch.object(query, "BOARD_INBOX_ITEMS", 1):
+            board = self.board()
+        self.assertEqual(len(board["running"]), 2)
+        self.assertEqual(len(board["exceptions"]["out_of_date"]), 1)
+        self.assertEqual(len(board["recent"]), 1)
+        self.assertEqual((len(board["sessions"]), board["sessions_total"]), (1, 2))
+        self.assertEqual(len(board["lead_inbox"][0]["items"]), 1)
+        self.assertEqual(board["truncated"],
+                         {"waiting": False, "running": True, "exceptions": True,
+                          "recent": True, "lead_inbox": True})
+        self.assertEqual((board["counts"]["running"], board["counts"]["out_of_date"],
+                          board["counts"]["failed_recent"],
+                          board["counts"]["older_unverified"]), (3, 3, 0, 0))
 
 
 class RedactionTest(unittest.TestCase):

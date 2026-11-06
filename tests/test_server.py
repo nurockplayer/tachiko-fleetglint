@@ -73,6 +73,10 @@ class FakeBackend:
         self._maybe_fail("snapshot")
         return {"api": 1, "generated_at": now.isoformat(), "sources": [], "fake": True}
 
+    def board(self, now):
+        self._maybe_fail("board")
+        return {"api": 1, "generated_at": now.isoformat(), "fake_board": True}
+
     def record(self, now, source_id, type, id):
         self._maybe_fail("record")
         self.calls.append((source_id, type, id))
@@ -189,6 +193,25 @@ class ServerTest(unittest.TestCase):
         self.backend.counter = 8
         status, _, _ = self.get("/api/snapshot", {"If-None-Match": f'W/"7-{WINDOW}"'})
         self.assertEqual(status, 200)
+
+    # ---- board -----------------------------------------------------------
+
+    def test_board_returns_json_and_weak_etag(self):
+        status, headers, body = self.get("/api/board")
+        self.assertEqual(status, 200)
+        self.assertTrue(headers["content-type"].startswith("application/json; charset=utf-8"))
+        self.assertEqual(json.loads(body)["fake_board"], True)
+        self.assertEqual(headers["etag"], f'W/"7-{WINDOW}"')
+        self.assertEqual(headers["content-length"], str(len(body)))
+        self.assert_security(headers)
+
+    def test_board_if_none_match_gives_304(self):
+        _, headers, _ = self.get("/api/board")
+        status, headers304, body = self.get("/api/board", {"If-None-Match": headers["etag"]})
+        self.assertEqual(status, 304)
+        self.assertEqual(body, b"")
+        self.assertEqual(headers304["etag"], headers["etag"])
+        self.assert_security(headers304)
 
     # ---- record ----------------------------------------------------------
 

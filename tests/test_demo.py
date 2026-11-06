@@ -53,7 +53,8 @@ class DemoTest(unittest.TestCase):
         for record in records:
             self.assertEqual(schema.validate(record), [], record["id"])
             self.assertEqual(record["source_id"], demo.SOURCE_ID)
-            self.assertTrue(record["title"].startswith("[demo] "), record["id"])
+            if record["id"] != "demo-review-job-1":
+                self.assertTrue(record["title"].startswith("[demo] "), record["id"])
 
         latest = self.latest(records)
         lead = latest[("run", "demo-lead-1")]
@@ -83,6 +84,16 @@ class DemoTest(unittest.TestCase):
 
         self.assertEqual(latest[("run", "demo-unknown-1")]["state"], "unknown")
         self.assertEqual(latest[("run", "demo-failed-1")]["state"], "failed")
+
+        owner = latest[("inbox_item", "demo-owner-1")]
+        self.assertEqual((owner["state"], owner["role_id"], owner["action_required"]),
+                         ("open", "owner", True))
+        waiting = latest[("run", "demo-waiting-1")]
+        self.assertEqual(waiting["state"], "waiting")
+        self.assertEqual(waiting["waits_on"][0]["id"], "demo-review-job-1")
+        review = latest[("job", "demo-review-job-1")]
+        self.assertEqual((review["state"], review["kind"], review["title"]),
+                         ("running", "wait", "PR #12 review"))
 
         recent = latest[("session", "demo-session-1")]
         idle = latest[("session", "demo-session-2")]
@@ -114,6 +125,34 @@ class DemoTest(unittest.TestCase):
             conn.close()
         snapshot = query.QueryBackend(cfg).snapshot(NOW)
         self.assertGreaterEqual(snapshot["counts"]["running"], 1)
+
+    def test_demo_shows_every_board_section(self):
+        self.assertEqual(self.run_demo()[0], 0)
+        cfg = config.Config()
+        cfg.roots = [self.root]
+        cfg.db_path = self.dir / "fleetglint.sqlite"
+        conn = store.open_db(cfg.db_path)
+        try:
+            ingest.Ingestor(conn, cfg, clock=lambda: NOW).scan_roots()
+        finally:
+            conn.close()
+        board = query.QueryBackend(cfg).board(NOW)
+
+        self.assertEqual([item["ref"]["id"] for item in board["needs_you"]],
+                         ["demo-owner-1"])
+        self.assertEqual([role["role_id"] for role in board["lead_inbox"]], ["demo-lead"])
+        waiting = {item["ref"]["id"]: item for item in board["waiting"]}
+        self.assertEqual(waiting["demo-waiting-1"]["section_reason"], "waits_on")
+        self.assertEqual(waiting["demo-review-job-1"]["section_reason"], "lead_wait")
+        self.assertIn("demo-active-1", {item["ref"]["id"] for item in board["running"]})
+        self.assertIn("demo-lost-1",
+                      {item["ref"]["id"] for item in board["exceptions"]["process_gone"]})
+        self.assertIn("demo-stale-1",
+                      {item["ref"]["id"] for item in board["exceptions"]["out_of_date"]})
+        self.assertIn("demo-unknown-1",
+                      {item["ref"]["id"] for item in board["exceptions"]["unverified_recent"]})
+        self.assertEqual(board["counts"]["failed_recent"], 1)
+        self.assertEqual(len(board["sessions"]), 2)
 
     def test_clear_removes_only_the_demo_source(self):
         self.assertEqual(self.run_demo()[0], 0)
