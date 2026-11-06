@@ -76,6 +76,8 @@ class Backend(Protocol):
 
     def snapshot(self, now: datetime) -> dict: ...
 
+    def board(self, now: datetime) -> dict: ...
+
     def record(self, now: datetime, source_id: str, type: str, id: str) -> dict | None: ...
 
     def file(self, now: datetime, source_id: str, type: str, id: str,
@@ -222,6 +224,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "version": __version__})
         elif path == "/api/snapshot":
             self._snapshot()
+        elif path == "/api/board":
+            self._board()
         elif path == "/api/record":
             self._record(query)
         elif path == "/api/file":
@@ -243,6 +247,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return _ERROR
 
     def _snapshot(self):
+        self._poll_response("snapshot")
+
+    def _board(self):
+        self._poll_response("board")
+
+    def _poll_response(self, name):
+        """A polled JSON document: 304 on a matching ETag, else the backend's answer (§4.5)."""
         now = self.server.clock()
         counter = self._guard(self.server.backend.change_counter)
         if counter is _ERROR:
@@ -251,7 +262,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if etag_matches(self.headers.get("If-None-Match"), etag):
             self._not_modified(etag)
             return
-        data = self._guard(self.server.backend.snapshot, now)
+        data = self._guard(getattr(self.server.backend, name), now)
         if data is _ERROR:
             return
         body = self._dump(data)

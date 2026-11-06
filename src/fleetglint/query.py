@@ -18,6 +18,11 @@ SHORT_TEXT = 300
 ATTENTION_TEXT = 200
 PROCESS_CACHE_S = 2.0
 TERMINAL_STATES = frozenset({"done", "failed", "cancelled"})
+BOARD_LIST_LIMIT = 200
+BOARD_EXCEPTION_LIMIT = 50
+BOARD_RECENT_LIMIT = 20
+BOARD_SESSIONS_LIMIT = 30
+BOARD_INBOX_ITEMS = 5
 
 _SOURCES_SQL = (
     "SELECT s.source_id, s.kind, s.status, s.detail, s.last_scan_at, s.last_record_at,"
@@ -391,7 +396,7 @@ class QueryBackend:
         sources = self._sources(conn)
         # Attention and counts see every included row; only the display lists are cut.
         work = runs + jobs + open_runs + open_jobs
-        attention = _attention(view, work, inbox + open_inbox, sources)
+        attention = _attention(view, work, inbox + open_inbox, sources, window_start)
         sessions_recent = sum(1 for item in sessions if item["display_state"] == "recent")
         sessions_recent += self._recent_sessions_beyond(view, rows["session"])
         return {
@@ -405,7 +410,8 @@ class QueryBackend:
                 "waiting": sum(1 for item in work if item["display_state"] == "waiting"),
                 "attention": len(attention),
                 "stale_lost_unknown": sum(1 for item in work
-                                          if item["display_state"] in ("stale", "lost", "unknown")),
+                                          if item["display_state"] in ("stale", "lost", "unknown")
+                                          and not _beyond_window(item, window_start)),
                 "sessions_recent": sessions_recent,
             },
             "runs": runs,
@@ -418,6 +424,45 @@ class QueryBackend:
             "demo": any(item["ref"]["source_id"].startswith("demo@")
                         for item in runs + jobs + inbox + sessions),
         }
+
+    # -- board -------------------------------------------------------------
+
+    def board(self, now):
+        conn = self._open()
+        if conn is None:
+            return self._empty_board(now)
+        try:
+            return _redact_response(self._board(conn, now))
+        finally:
+            conn.close()
+
+    def _empty_board(self, now):
+        return {
+            "api": 1,
+            "generated_at": now.isoformat(),
+            "server": self._server(),
+            "window_hours": self.cfg.window_hours,
+            "demo": False,
+            "sources": [],
+            "capabilities": {"execution": False, "requests": False},
+            "counts": {"needs_you": 0, "waiting": 0, "running": 0, "lead_inbox_open": 0,
+                       "lead_inbox_old": 0, "process_gone": 0, "out_of_date": 0,
+                       "unverified_recent": 0, "failed_recent": 0, "older_unverified": 0,
+                       "sessions_recent": 0},
+            "needs_you": [],
+            "lead_inbox": [],
+            "waiting": [],
+            "running": [],
+            "exceptions": {"process_gone": [], "out_of_date": [], "unverified_recent": []},
+            "recent": [],
+            "sessions": [],
+            "sessions_total": 0,
+            "truncated": {"waiting": False, "running": False, "exceptions": False,
+                          "recent": False, "lead_inbox": False},
+        }
+
+    def _board(self, conn, now):
+        return _board_data(self._view(conn, now), self.cfg, now, self._server())
 
     def _summaries(self, view, rows, order_field, beyond=None):
         """The newest `list_limit` summaries and, for counting, those of `beyond` rows."""
@@ -558,7 +603,7 @@ def _relations(view, row, record):
     }
 
 
-def _attention(view, work, inbox, sources):
+def _attention(view, work, inbox, sources, window_start):
     """Needs attention, in the brief's order (architecture §4.1)."""
     entries = []
 
@@ -577,7 +622,7 @@ def _attention(view, work, inbox, sources):
                 item["ref"]["source_id"], _inbox_text(item))
     for reason in ("lost", "stale", "unknown"):
         for item in work:
-            if item["display_state"] == reason:
+            if item["display_state"] == reason and not _beyond_window(item, window_start):
                 add(reason, _who(view, item), view.ref(item["ref"]), item["ref"]["source_id"],
                     _work_text(item))
     for source in sources:
@@ -585,6 +630,259 @@ def _attention(view, work, inbox, sources):
             add("source", None, None, source["source_id"],
                 f"{source['status']}: {source['detail'] or 'no detail'}")
     return entries
+
+
+def _epoch(value):
+    """Seconds since the epoch for an RFC 3339 string, or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return store.epoch(value)
+    except ValueError:
+        return None
+
+
+def _age_s(value, now):
+    """Whole seconds since `value`, or None when it is absent or unreadable."""
+    ts = _epoch(value)
+    return None if ts is None else max(0, int(now.timestamp() - ts))
+
+
+def _beyond_window(item, window_start):
+    """Whether a summary's `updated_at` is before the window start (`older`, architecture §4.1b)."""
+    ts = _epoch(item.get("updated_at"))
+    return ts is not None and ts < window_start
+
+
+def _row_order(row):
+    return (row["seq"], row["byte_offset"], row["source_id"], row["type"], row["id"])
+
+
+def _newest(pair):
+    row = pair[0]
+    return (row["updated_ts"],) + _row_order(row)
+
+
+def _inbox_order(pair):
+    row, item = pair
+    ts = _epoch(item["created_at"])
+    return (ts is not None, ts or 0.0) + _row_order(row)
+
+
+def _started_order(pair):
+    row, item = pair
+    ts = _epoch(item["started_at"])
+    return (ts is not None, ts or 0.0) + _row_order(row)
+
+
+def _role_order(role):
+    oldest = role["oldest_age_s"]
+    return (-role["action_required"], -(oldest if oldest is not None else -1),
+            role["role_id"] or "")
+
+
+def _work_item(view, row, section_reason, now):
+    item = view.summary(row)
+    item["started_age_s"] = _age_s(view.record(row).get("started_at"), now)
+    item["section_reason"] = section_reason
+    return item
+
+
+def _inbox_item(view, row, now):
+    item = view.summary(row)
+    item["age_s"] = _age_s(view.record(row).get("created_at"), now)
+    return item
+
+
+def _covered_by_run(row, record, live_runs):
+    """Rule 5: a `wait-worker` job is plumbing when a listed run of the same role started no earlier."""
+    started = _epoch(record.get("started_at"))
+    role_id = row["role_id"]
+    if started is None or role_id is None:
+        return False
+    return any(role == role_id and run_started is not None and run_started >= started
+               for role, run_started in live_runs)
+
+
+def _board_excluded(row, window_start):
+    """A run or job the board never lists: terminal or unknown and older than the window."""
+    if row["type"] not in ("run", "job"):
+        return row["type"] == "inbox_item" and row["state"] != "open"
+    return row["updated_ts"] < window_start and (
+        row["state"] == "unknown" or row["state"] in TERMINAL_STATES)
+
+
+def _board_demo(rows, window_start):
+    return any(row["source_id"].startswith("demo@")
+               and not _board_excluded(row, window_start)
+               for row in rows["run"] + rows["job"] + rows["inbox_item"] + rows["session"])
+
+
+def _board_sessions(view, rows):
+    """The newest sessions in the window and how many of them are recent (rule 10)."""
+    rows = sorted(rows, key=lambda row: (row["observed_ts"],) + _row_order(row), reverse=True)
+    recent = sum(1 for row in rows
+                 if view.display(view.record(row), row["source_id"]).state == "recent")
+    return [view.summary(row) for row in rows[:BOARD_SESSIONS_LIMIT]], recent
+
+
+def _board_inbox(view, rows, cfg, now, viewer_roles, counts):
+    """Rules 1 and 2: needs_you items and open inbox items grouped by role."""
+    needs_you, groups = [], {}
+    for row in rows:
+        if row["state"] != "open":
+            continue
+        item = _inbox_item(view, row, now)
+        if item["action_required"] and item["role_id"] in viewer_roles:
+            if item["age_s"] is not None and item["age_s"] <= cfg.needs_you_hours * 3600:
+                needs_you.append((row, item))
+            continue
+        groups.setdefault(item["role_id"], []).append((row, item))
+    needs_you.sort(key=_inbox_order, reverse=True)
+    counts["needs_you"] = len(needs_you)
+
+    roles = []
+    for role_id, pairs in groups.items():
+        pairs.sort(key=_inbox_order, reverse=True)
+        ages = [item["age_s"] for _, item in pairs if item["age_s"] is not None]
+        old = sum(1 for _, item in pairs
+                  if item["age_s"] is not None and item["age_s"] > cfg.inbox_old_after_s)
+        roles.append({
+            "role_id": role_id,
+            "open": len(pairs),
+            "old": old,
+            "oldest_age_s": max(ages) if ages else None,
+            "action_required": sum(1 for _, item in pairs if item["action_required"]),
+            "items": [item for _, item in pairs[:BOARD_INBOX_ITEMS]],
+        })
+        counts["lead_inbox_open"] += len(pairs)
+        counts["lead_inbox_old"] += old
+    roles.sort(key=_role_order)
+    return [item for _, item in needs_you], roles
+
+
+def _board_work(view, rows, now, window_start, counts):
+    """Rules 3-9: one place per run or job, in this order."""
+    waiting, running, recent = [], [], []
+    exceptions = {"process_gone": [], "out_of_date": [], "unverified_recent": []}
+    live_runs = []  # (role_id, started_ts) of runs in display running or waiting
+
+    def place(row, dstate, older, kind=None):
+        if dstate in ("waiting", "queued"):
+            reason = "waits_on" if dstate == "waiting" else None
+            waiting.append((row, _work_item(view, row, reason, now)))
+        elif dstate == "running":
+            if row["type"] == "job" and kind == "wait":
+                waiting.append((row, _work_item(view, row, "lead_wait", now)))
+            elif row["type"] == "job" and kind == "wait-worker":
+                if not _covered_by_run(row, view.record(row), live_runs):
+                    waiting.append((row, _work_item(view, row, "lead_wait", now)))
+            else:
+                running.append((row, _work_item(view, row, None, now)))
+        elif dstate in ("lost", "stale"):
+            if older:
+                counts["older_unverified"] += 1
+            else:
+                key = "process_gone" if dstate == "lost" else "out_of_date"
+                exceptions[key].append((row, _work_item(view, row, None, now)))
+        elif dstate == "unknown":
+            if older:
+                counts["older_unverified"] += 1
+            else:
+                exceptions["unverified_recent"].append((row, _work_item(view, row, None, now)))
+        elif dstate in TERMINAL_STATES:
+            if row["type"] == "job" and kind == "wait-worker":
+                return
+            recent.append((row, _work_item(view, row, None, now)))
+            if dstate == "failed":
+                counts["failed_recent"] += 1
+
+    for row in rows["run"]:
+        older = row["updated_ts"] < window_start
+        if older and row["state"] == "unknown":
+            counts["older_unverified"] += 1
+            continue
+        if older and row["state"] in TERMINAL_STATES:
+            continue
+        record = view.record(row)
+        dstate = view.display(record, row["source_id"]).state
+        if dstate in ("running", "waiting"):
+            live_runs.append((row["role_id"], _epoch(record.get("started_at"))))
+        place(row, dstate, older)
+
+    for row in rows["job"]:
+        older = row["updated_ts"] < window_start
+        if older and row["state"] == "unknown":
+            counts["older_unverified"] += 1
+            continue
+        if older and row["state"] in TERMINAL_STATES:
+            continue
+        record = view.record(row)
+        place(row, view.display(record, row["source_id"]).state, older, record.get("kind"))
+
+    waiting.sort(key=_newest, reverse=True)
+    running.sort(key=_started_order, reverse=True)
+    for items in exceptions.values():
+        items.sort(key=_newest, reverse=True)
+    recent.sort(key=_newest, reverse=True)
+    return ([item for _, item in waiting], [item for _, item in running],
+            {key: [item for _, item in items] for key, items in exceptions.items()},
+            [item for _, item in recent])
+
+
+def _board_data(view, cfg, now, server):
+    window_start = now.timestamp() - cfg.window_hours * 3600
+    rows = {"run": [], "job": [], "inbox_item": [], "session": []}
+    for row in store.iter_latest(view.conn):
+        if row["type"] == "session":
+            if row["observed_ts"] >= window_start:
+                rows["session"].append(row)
+        else:
+            rows[row["type"]].append(row)
+
+    counts = {"needs_you": 0, "waiting": 0, "running": 0, "lead_inbox_open": 0,
+              "lead_inbox_old": 0, "process_gone": 0, "out_of_date": 0,
+              "unverified_recent": 0, "failed_recent": 0, "older_unverified": 0,
+              "sessions_recent": 0}
+    needs_you, lead_inbox = _board_inbox(view, rows["inbox_item"], cfg, now,
+                                         set(cfg.viewer_roles), counts)
+    waiting, running, exceptions, recent = _board_work(view, rows, now, window_start, counts)
+    sessions, counts["sessions_recent"] = _board_sessions(view, rows["session"])
+    counts["waiting"] = len(waiting)
+    counts["running"] = len(running)
+    counts["process_gone"] = len(exceptions["process_gone"])
+    counts["out_of_date"] = len(exceptions["out_of_date"])
+    counts["unverified_recent"] = len(exceptions["unverified_recent"])
+
+    return {
+        "api": 1,
+        "generated_at": now.isoformat(),
+        "server": server,
+        "window_hours": cfg.window_hours,
+        "demo": _board_demo(rows, window_start),
+        "sources": QueryBackend._sources(view.conn),
+        "capabilities": {"execution": bool(rows["run"] or rows["job"]),
+                         "requests": bool(rows["inbox_item"])},
+        "counts": counts,
+        "needs_you": needs_you[:BOARD_LIST_LIMIT],
+        "lead_inbox": lead_inbox[:BOARD_LIST_LIMIT],
+        "waiting": waiting[:BOARD_LIST_LIMIT],
+        "running": running[:BOARD_LIST_LIMIT],
+        "exceptions": {key: items[:BOARD_EXCEPTION_LIMIT]
+                       for key, items in exceptions.items()},
+        "recent": recent[:BOARD_RECENT_LIMIT],
+        "sessions": sessions,
+        "sessions_total": len(rows["session"]),
+        "truncated": {
+            "waiting": len(waiting) > BOARD_LIST_LIMIT,
+            "running": len(running) > BOARD_LIST_LIMIT,
+            "exceptions": any(len(items) > BOARD_EXCEPTION_LIMIT
+                              for items in exceptions.values()),
+            "recent": len(recent) > BOARD_RECENT_LIMIT,
+            "lead_inbox": len(lead_inbox) > BOARD_LIST_LIMIT
+                          or any(role["open"] > BOARD_INBOX_ITEMS for role in lead_inbox),
+        },
+    }
 
 
 def _clip(text, limit=ATTENTION_TEXT):
