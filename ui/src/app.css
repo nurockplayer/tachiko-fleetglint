@@ -519,7 +519,7 @@ pre,
 
 .column-head {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) 72px;
+  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) 112px;
   gap: var(--space-8);
   margin: 0 calc(-1 * var(--space-8));
   padding: 0 var(--space-8) var(--space-4);
@@ -535,7 +535,7 @@ pre,
 }
 
 .running-row {
-  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) 72px;
+  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) 112px;
   column-gap: var(--space-8);
 }
 
@@ -576,6 +576,8 @@ pre,
 }
 
 .running-row .row-check {
+  display: block;
+  text-align: right;
   color: var(--text-meta);
   font-size: var(--type-meta-size);
   line-height: var(--type-meta-line);
