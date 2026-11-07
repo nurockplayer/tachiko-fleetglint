@@ -157,6 +157,8 @@ The content is illustrative. Rules for each part:
   when recorded, model or agent, `47m` right-aligned. Column headings once at the top of the list.
   The heading carries `process checks 6s ago` once. A row shows its own check time only when it
   differs by more than 60 s. A row with no process evidence says `no process check`.
+- **Queued.** Work accepted but not started is never waiting. Only when non-zero: `N queued` in the
+  summary line and a small `Queued N` group at the end of the Running list.
 - **Lead inbox.** Collapsed to one summary line with per-role counts. Items older than the configured
   threshold get `text-secondary` plus `over 4 h`, not amber: these are addressed to AI leads, not the
   viewer. Expanding shows role groups with their messages.
