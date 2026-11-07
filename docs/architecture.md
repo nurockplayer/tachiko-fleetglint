@@ -179,6 +179,76 @@ External refs are passed through as written (`type`, `kind`, `key`,
 `who` is the inbox item's `role_id`; for a run/job it is its `role_id`, else
 the owning run's `role_id`, else `null`.
 
+### 4.1b `GET /api/board`
+
+The viewer's first screen: a small answer organised by what the viewer asks,
+instead of one list per record type. Same safety, ETag and redaction rules as
+§4.5; the empty-database response has the same shape with empty lists and
+zeros. `[ui]` settings: `viewer_roles` (default `["owner"]`),
+`needs_you_hours` (24) and `inbox_old_after_s` (14400).
+
+```json
+{
+  "api": 1, "generated_at": "…", "server": {…}, "window_hours": 24, "inbox_old_after_s": 14400,
+  "demo": false, "sources": [Source, …],
+  "capabilities": {"execution": true, "requests": true},
+  "counts": {"needs_you": 1, "queued": 0, "waiting": 2, "running": 3, "lead_inbox_open": 4,
+             "lead_inbox_old": 1, "process_gone": 0, "out_of_date": 1,
+             "unverified_recent": 0, "failed_recent": 1, "older_unverified": 2,
+             "sessions_recent": 3},
+  "needs_you": [InboxSummary + "age_s", …],
+  "lead_inbox": [{"role_id": "fleetglint-lead", "open": 3, "old": 1,
+                  "oldest_age_s": 9000, "action_required": 2,
+                  "items": [InboxSummary + "age_s", … newest 5]}],
+  "queued": [WorkSummary, …], "waiting": [WorkSummary, …], "running": [WorkSummary, …],
+  "exceptions": {"process_gone": [WorkSummary, …], "out_of_date": [WorkSummary, …],
+                 "unverified_recent": [WorkSummary, …]},
+  "recent": [WorkSummary, …],
+  "sessions": [SessionSummary, …], "sessions_total": 12,
+  "truncated": {"queued": false, "waiting": false, "running": false, "exceptions": false,
+                "recent": false, "lead_inbox": false}
+}
+```
+
+`InboxSummary` and `SessionSummary` are §4.1's; `age_s` is seconds since
+`created_at` (null when absent). `WorkSummary` is a RunSummary or JobSummary
+plus `started_age_s` (seconds since `started_at`, null when absent) and
+`section_reason` (`waits_on` or `lead_wait`, else null). `capabilities` is
+false when the store has no run/job (resp. inbox) row at all, so the UI can
+say "not observable" instead of 0. Lists are capped at 200 (exceptions 50
+each, `recent` 20, `sessions` 30); counts reflect the full set.
+
+Each run or job lands in exactly one place, in this order; `older` means
+`updated_ts` before `now - window_hours`.
+
+1. An open inbox item with `action_required` and a `role_id` in
+   `viewer_roles` is `needs_you` when `created_at` is within
+   `needs_you_hours`, otherwise dropped (no acknowledged state exists).
+2. Other open inbox items group by `role_id` in `lead_inbox`; `old` counts
+   items older than `inbox_old_after_s`. Roles sort by `action_required`
+   count, then oldest first.
+3. Display `queued` (accepted, not started): `queued`. Display `waiting`:
+   `waiting`, `section_reason: "waits_on"`.
+4. A job in display `running` with kind `wait`: `waiting`,
+   `section_reason: "lead_wait"`.
+5. A job in display `running` with kind `wait-worker` is hidden (no list, no
+   count) when a run in display running or waiting has the same `role_id` and
+   started no earlier; otherwise `waiting`, `section_reason: "lead_wait"`.
+6. Display `running`: `running`, newest `started_at` first, nulls last.
+7. Display `lost` / `stale`: `exceptions.process_gone` / `out_of_date` when
+   not `older`; when `older`, only `counts.older_unverified`.
+8. Display `unknown`: not `older` goes to `exceptions.unverified_recent`;
+   `older` only counts into `older_unverified`, without building a summary.
+9. Display `failed`, `done` or `cancelled` and not `older`: `recent` (`failed`
+   also counts into `failed_recent`); `wait-worker` jobs are skipped; older
+   terminal rows are skipped entirely.
+10. Sessions within the window, as §4.1; `sessions_total` counts them all,
+    `sessions_recent` is §4.1's recent count.
+
+`/api/snapshot` attention follows rule 7/8's window: `lost`, `stale` and
+`unknown` rows older than the window (and `counts.stale_lost_unknown`) are
+dropped there too.
+
 ### 4.2 `GET /api/record?source_id=…&type=run|job|inbox_item&id=…`
 
 One record in full, for Run detail (and job / inbox detail).
