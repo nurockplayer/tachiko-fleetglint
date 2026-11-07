@@ -1,8 +1,8 @@
 # Fleetglint design brief (v0.1)
 
-Status: draft (2026-11-05). The Figma file built from this brief becomes the
-visual authority once the Owner accepts it; this brief stays the authority for
-what the UI must mean.
+Status: from v0.1.1 the visual authority is [visual-spec.md](visual-spec.md), and the
+dark cyber direction below no longer applies. This brief stays the authority for what the UI
+must mean, except where visual-spec.md changes the first screen.
 
 ## 1. Job of the UI
 

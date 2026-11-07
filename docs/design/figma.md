@@ -1,6 +1,7 @@
 # Fleetglint design system in Figma (v0.1)
 
-Status: draft. Built from [the design brief](brief.md) by
+Status: describes the v0.1 dark design and is not updated for v0.1.1; see
+[visual-spec.md](visual-spec.md). Built from [the design brief](brief.md) by
 `design/figma-plugin/code.js`; the Owner imports and runs the plugin in Figma,
 the lead reviews the result. This document is the map of that file.
 
