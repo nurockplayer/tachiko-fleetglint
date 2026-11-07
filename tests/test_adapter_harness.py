@@ -373,6 +373,25 @@ class HarnessAdapterTest(unittest.TestCase):
                 self.assertEqual(record["state"], "running")
                 self.assertNotIn("waits_on", record)
 
+    def test_project_comes_from_the_git_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app" / ".git" / "worktrees" / "feature").mkdir(parents=True)
+            (root / "app" / "ui").mkdir()
+            (root / "elsewhere" / "feature" / "src").mkdir(parents=True)
+            (root / "elsewhere" / "feature" / ".git").write_text(
+                f"gitdir: {root}/app/.git/worktrees/feature\n")
+            (root / "bare.git" / "worktrees" / "topic").mkdir(parents=True)
+            (root / "elsewhere" / "topic").mkdir()
+            (root / "elsewhere" / "topic" / ".git").write_text(
+                f"gitdir: {root}/bare.git/worktrees/topic\n")
+            self.assertEqual(harness._project_from_path(str(root / "app" / "ui")), "app")
+            self.assertEqual(
+                harness._project_from_path(str(root / "elsewhere" / "feature" / "src")), "app")
+            self.assertEqual(harness._project_from_path(str(root / "elsewhere" / "topic")), "bare")
+        self.assertEqual(harness._project_from_path("/gone/repo/.claude/worktrees/x"), "repo")
+        self.assertEqual(harness._project_from_path("/gone/plain"), "plain")
+
     def test_jobs(self):
         records = by_id(self.result.records)
         build = records["build-20261105-090000-777"]

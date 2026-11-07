@@ -308,12 +308,34 @@ def _lead_wait_summary(wait):
     return _command_summary(wait["wrapped"])
 
 
+def _git_repo_name(path):
+    """The repo a directory is in, from its `.git` entry; a worktree's `.git` file names the repo."""
+    current = Path(path)
+    for directory in [current, *current.parents][:8]:
+        entry = directory / ".git"
+        try:
+            if entry.is_dir():
+                return directory.name
+            if entry.is_file():
+                with entry.open(encoding="utf-8", errors="replace") as handle:
+                    line = handle.read(4096).strip()
+                if line.startswith("gitdir:") and "/worktrees/" in line:
+                    common = line[len("gitdir:"):].strip().split("/worktrees/", 1)[0]
+                    if common.endswith("/.git"):
+                        common = common[:-len("/.git")]
+                    return os.path.basename(common.removesuffix(".git").rstrip("/"))
+                return directory.name
+        except OSError:
+            return None
+    return None
+
+
 def _project_from_path(path):
-    """The repo a cwd belongs to: the part before `/.claude/worktrees/`, else the basename."""
+    """The repo a cwd belongs to: the part before `/.claude/worktrees/`, its git repo, else the basename."""
     marker = "/.claude/worktrees/"
     if marker in path:
         path = path.split(marker, 1)[0]
-    return _clip(os.path.basename(path.rstrip("/")), 200) or None
+    return _clip(_git_repo_name(path) or os.path.basename(path.rstrip("/")), 200) or None
 
 
 def _job_project(directory):
