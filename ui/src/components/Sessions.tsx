@@ -1,6 +1,5 @@
 import type { Board, SessionSummary } from "../api/types";
 import { ageSince, formatAgo } from "../format";
-import { detailHref } from "../router";
 import { StateBadge } from "./StateBadge";
 import { CollapsibleSection, Section } from "./Section";
 
@@ -10,9 +9,8 @@ const SESSION_EXPLAIN =
 function SessionRow({ session, now }: { session: SessionSummary; now: number }) {
   const age = formatAgo(session.evidence.age_s ?? ageSince(session.last_activity_at, now));
   return (
-    <a
+    <div
       className="work-row session-row"
-      href={detailHref(session.ref)}
       data-state={session.display_state}
       data-record-id={session.ref.id}
     >
@@ -28,7 +26,7 @@ function SessionRow({ session, now }: { session: SessionSummary; now: number }) 
         </span>
       </span>
       {age ? <span className="row-age">last activity {age}</span> : null}
-    </a>
+    </div>
   );
 }
 

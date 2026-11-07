@@ -41,6 +41,9 @@ export function SummaryLine({
     }
     parts.push(<span key="waiting">waiting: not observable</span>);
     parts.push(<span key="running">running: not observable</span>);
+    if (capabilities.requests) {
+      parts.push(<CountLink key="lead-inbox" href="#lead-inbox" onOpen={onOpenSection} count={counts.lead_inbox_open} noun="lead inbox" />);
+    }
     return (
       <p className="summary-line">
         {parts.map((part, index) => (

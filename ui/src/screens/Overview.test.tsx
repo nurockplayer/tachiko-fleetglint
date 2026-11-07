@@ -286,6 +286,28 @@ describe("Overview", () => {
     expect(screen.queryByText(/Session history shows recent activity/)).toBeNull();
   });
 
+  it("gives session rows no link, because a session has no detail page", () => {
+    render(<Overview board={boardSessions} />);
+    const rows = document.querySelectorAll(".session-row");
+    expect(rows.length).toBeGreaterThan(0);
+    rows.forEach((row) => expect(row.tagName).toBe("DIV"));
+  });
+
+  it("keeps the lead inbox when requests are observable but execution is not", () => {
+    render(
+      <Overview
+        board={{
+          ...boardSessions,
+          capabilities: { execution: false, requests: true },
+          counts: { ...boardSessions.counts, lead_inbox_open: board.counts.lead_inbox_open },
+          lead_inbox: board.lead_inbox,
+        }}
+      />,
+    );
+    expect(summary()).toHaveTextContent(`${board.counts.lead_inbox_open} lead inbox`);
+    expect(screen.getByLabelText("Lead inbox")).toBeInTheDocument();
+  });
+
   it("says execution is not observable instead of showing zeros", () => {
     render(<Overview board={boardSessions} />);
     expect(summary()).toHaveTextContent(

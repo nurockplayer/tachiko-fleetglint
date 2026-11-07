@@ -62,7 +62,7 @@ function RunningRow({ work, referenceAge }: { work: BoardWork; referenceAge: num
       ) : null}
       <span className="row-age">
         {duration}
-        {check ? <span className="row-check"> · {check}</span> : null}
+        {check ? <span className="row-check">{check}</span> : null}
       </span>
     </WorkRow>
   );

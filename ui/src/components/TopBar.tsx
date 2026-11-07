@@ -13,7 +13,7 @@ function SourceChip({ source }: { source: Source }) {
   return (
     <span
       className="source-chip"
-      data-status={source.status}
+      data-status={source.status === "ok" && source.quarantine_count > 0 ? "quarantine" : source.status}
       data-source-id={source.source_id}
       title={source.source_id}
     >
