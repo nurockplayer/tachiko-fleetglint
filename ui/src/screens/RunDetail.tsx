@@ -19,12 +19,14 @@ import {
   formatAgo,
   formatCost,
   formatNumber,
+  sourceName,
 } from "../format";
 import { STATE_LABEL, type BadgeState } from "../states";
 import { StateBadge } from "../components/StateBadge";
 import { RefLink } from "../components/Refs";
 import { Banner } from "../components/Banner";
 import { LogTail } from "../components/LogTail";
+import { workTitle } from "../components/Rows";
 
 interface LogTarget {
   source_id: string;
@@ -59,19 +61,6 @@ function roleOf(record: Summary): string | null {
   return (record as RunSummary).role_id;
 }
 
-function titleOf(record: Summary): string {
-  if (record.ref.type === "inbox_item") return record.title ?? record.ref.id;
-  if (record.ref.type === "job") {
-    const job = record as JobSummary;
-    return job.title ?? job.command_summary;
-  }
-  return record.title ?? record.ref.id;
-}
-
-function looksLikeSlug(text: string): boolean {
-  return !text.includes(" ") && /^[A-Za-z0-9._/#:-]+$/.test(text);
-}
-
 function modelAndAgent(record: Summary): string[] {
   if (record.ref.type === "run") {
     const run = record as RunSummary;
@@ -81,11 +70,14 @@ function modelAndAgent(record: Summary): string[] {
     const session = record as SessionSummary;
     return [session.model, session.agent].filter((value): value is string => Boolean(value));
   }
-  if (record.ref.type === "job") {
-    const job = record as JobSummary;
-    return job.kind ? [job.kind] : [];
-  }
   return [];
+}
+
+/** A lead's wait job is stored as running; it reads as waiting on the board. */
+function isLeadWaitJob(record: Summary): boolean {
+  if (record.ref.type !== "job") return false;
+  const kind = (record as JobSummary).kind;
+  return kind === "wait" || kind === "wait-worker";
 }
 
 function wordsFor(state: string): string {
@@ -148,15 +140,17 @@ function happeningText(record: Summary, now: number): string {
     } else {
       parts.push("Waiting; no wait is recorded.");
     }
-  } else if (record.ref.type === "job" && (record as JobSummary).kind === "wait") {
+  } else if (isLeadWaitJob(record) && state === "running") {
     const job = record as JobSummary;
-    parts.push(
-      (job.title ?? "").startsWith("PR #")
-        ? "Waiting on review. The lead resumes when the review ends."
-        : "This is a lead's wait; the lead resumes when the job ends.",
-    );
+    if ((job.title ?? "").startsWith("PR #")) {
+      parts.push("A lead is waiting on this review.");
+    } else {
+      parts.push(`A lead is waiting on ${job.command_summary}. It resumes when that ends.`);
+    }
   } else if (state === "queued") {
     parts.push("Queued; accepted but not started.");
+  } else if (state === "waiting") {
+    parts.push("Waiting.");
   } else if (state === "running") {
     parts.push("Running.");
   } else if (state === "done") {
@@ -244,7 +238,8 @@ function EvidenceLine({ record, now }: { record: Summary; now: number }) {
       <li>{process}</li>
       <li>writer state: {wordsFor(record.state)}</li>
       <li>
-        source: <span className="mono">{record.ref.source_id}</span>
+        source:{" "}
+        <span title={record.ref.source_id}>{sourceName(record.ref.source_id)}</span>
         {observed ? ` · observed ${observed}` : ""}
       </li>
       {evidence.detail ? <li>evidence: {evidence.detail}</li> : null}
@@ -505,9 +500,13 @@ export function RunDetail({
   const usage =
     data.usage ?? (current.ref.type === "session" ? (current as SessionSummary).usage : null);
   const edges = relationshipEdges(current, data.relations);
-  const title = titleOf(current);
+  const title = workTitle(current);
   const role = roleOf(current);
   const meta = modelAndAgent(current);
+  const badgeState =
+    isLeadWaitJob(current) && current.display_state === "running"
+      ? "waiting"
+      : current.display_state;
 
   return (
     <main className="screen detail-screen">
@@ -531,8 +530,8 @@ export function RunDetail({
         </nav>
 
         <header className="detail-head">
-          <StateBadge state={current.display_state} />
-          <h1 className={`detail-title${looksLikeSlug(title) ? " mono" : ""}`}>{title}</h1>
+          <StateBadge state={badgeState} />
+          <h1 className="detail-title">{title}</h1>
           <p className="detail-meta">
             {meta.length > 0 ? <span>{meta.join(" · ")}</span> : null}
             {role ? (

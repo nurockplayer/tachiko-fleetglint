@@ -5,17 +5,11 @@ import { ageSince, countNoun, formatAgo } from "../format";
 import { detailHref } from "../router";
 import { StateBadge } from "../components/StateBadge";
 import { Banner } from "../components/Banner";
+import { workTitle } from "../components/Rows";
 
 type HistoryItem = RunSummary | JobSummary;
 
 const CAP = 500;
-
-function itemTitle(item: HistoryItem): string {
-  if (item.ref.type === "job") {
-    return item.title ?? (item as JobSummary).command_summary;
-  }
-  return item.title ?? item.ref.id;
-}
 
 function itemRole(item: HistoryItem): string | null {
   return item.ref.type === "job"
@@ -41,7 +35,7 @@ function HistoryRow({ item, now }: { item: HistoryItem; now: number }) {
         <StateBadge state={item.display_state} />
       </span>
       <span className="row-main">
-        <span className="row-title">{itemTitle(item)}</span>
+        <span className="row-title">{workTitle(item)}</span>
         <span className="row-meta">{meta}</span>
       </span>
       {updated ? <span className="row-age">updated {updated}</span> : null}

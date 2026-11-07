@@ -37,20 +37,33 @@ function groupRunning(
 
 function RunningRow({ work, referenceAge }: { work: BoardWork; referenceAge: number | null }) {
   const role = workRole(work);
-  const model = workModel(work);
+  const command = workCommand(work);
+  const model = workModel(work) ?? command;
   const check = checkText(work, referenceAge);
   const duration = workDuration(work);
+  const title = workTitle(work);
   return (
     <WorkRow
       work={work}
       className="running-row"
       glyph={<StateBadge state="running" variant="glyph" />}
     >
-      <span className="row-title mono">{workTitle(work)}</span>
+      <span className="row-title" title={title}>
+        {title}
+      </span>
       {role ? <span className="row-role">{role}</span> : null}
-      {model ? <span className="row-model">{model}</span> : null}
-      {check ? <span className="row-check">{check}</span> : null}
-      {duration ? <span className="row-age">{duration}</span> : null}
+      {model ? (
+        <span
+          className={`row-model${command ? " row-command row-model-command" : ""}`}
+          title={model}
+        >
+          {model}
+        </span>
+      ) : null}
+      <span className="row-age">
+        {duration}
+        {check ? <span className="row-check"> · {check}</span> : null}
+      </span>
     </WorkRow>
   );
 }
@@ -64,7 +77,7 @@ function QueuedRow({ work }: { work: BoardWork }) {
       glyph={<StateBadge state="queued" variant="glyph" />}
     >
       <span className="row-main">
-        <span className="row-title mono">{workTitle(work)}</span>
+        <span className="row-title">{workTitle(work)}</span>
         {command ? <span className="row-command mono">{command}</span> : null}
       </span>
     </WorkRow>
@@ -103,7 +116,6 @@ export function Running({ board, projectOrder }: RunningProps) {
         <span>worker</span>
         <span>role</span>
         <span>model</span>
-        <span>checked</span>
         <span className="column-age">running</span>
       </div>
       {groups.length === 0 ? <p className="quiet">Nothing running.</p> : null}

@@ -1,3 +1,4 @@
+import { Fragment, type ReactNode } from "react";
 import type { Board, BoardInboxItem } from "../api/types";
 import { formatAgo } from "../format";
 import { detailHref } from "../router";
@@ -10,23 +11,56 @@ function itemHref(item: BoardInboxItem): string | null {
   return detailHref(subject);
 }
 
+function withoutPrefix(value: string, prefix: string): string {
+  return value.startsWith(prefix) ? value.slice(prefix.length) : value;
+}
+
+/** The sender from the subject key: never the viewer's own role or a `from:` prefix. */
+function senderOf(item: BoardInboxItem): string | null {
+  const subject = item.subject;
+  if (subject.type !== "external" || !subject.key) return null;
+  return withoutPrefix(subject.key, "from:") || null;
+}
+
+function metaParts(item: BoardInboxItem): Array<{ key: string; node: ReactNode }> {
+  const parts: Array<{ key: string; node: ReactNode }> = [];
+  const sender = senderOf(item);
+  if (sender) parts.push({ key: "sender", node: sender });
+  const key = withoutPrefix(item.ref.id, "owner-notify.");
+  if (key) parts.push({ key: "key", node: key });
+  const age = formatAgo(item.age_s);
+  if (age) parts.push({ key: "age", node: age });
+  if (item.outcome === "failed") {
+    parts.push({
+      key: "outcome",
+      node: <span className="notified-failed">delivery failed</span>,
+    });
+  }
+  return parts;
+}
+
 function NotifiedItem({ item }: { item: BoardInboxItem }) {
   const message = item.detail ?? item.title ?? refKey(item.subject);
   const href = itemHref(item);
   const external = item.subject.type === "external";
+  const parts = metaParts(item);
+
   const body = (
-    <>
+    <div className="notified-body">
       <span className="notified-message" title={message}>
         {message}
       </span>
-      <span className="notified-meta">
-        <span>{item.role_id}</span>
-        <span className="notified-sep"> · </span>
-        <span className="mono">{refKey(item.subject)}</span>
-        <span className="notified-sep"> · </span>
-        <span>{formatAgo(item.age_s)}</span>
-      </span>
-    </>
+      {parts.length > 0 ? (
+        <span className="notified-meta">
+          {parts.map((part, index) => (
+            <Fragment key={part.key}>
+              {index > 0 ? <span className="notified-sep"> · </span> : null}
+              <span>{part.node}</span>
+            </Fragment>
+          ))}
+        </span>
+      ) : null}
+    </div>
   );
 
   if (!href) {

@@ -6,20 +6,25 @@ import { WorkRow, waitWords, workDuration, workRole, workTitle } from "./Rows";
 function WaitingRow({ work }: { work: BoardWork }) {
   const role = workRole(work);
   const duration = workDuration(work);
+  const detail = waitWords(work);
   return (
     <WorkRow
       work={work}
-      className="waiting-row"
+      className={`waiting-row${detail ? "" : " is-single-line"}`}
       glyph={<StateBadge state="waiting" variant="glyph" />}
     >
       <span className="row-main">
         <span className="row-title">{workTitle(work)}</span>
         {role ? <span className="row-role">{role}</span> : null}
       </span>
-      <span className="row-detail">
-        <span className="row-what">{waitWords(work)}</span>
-        {duration ? <span className="row-age">{duration}</span> : null}
-      </span>
+      {detail ? (
+        <span className="row-detail">
+          <span className="row-what" title={detail.title}>
+            {detail.text}
+          </span>
+        </span>
+      ) : null}
+      {duration ? <span className="row-age">{duration}</span> : null}
     </WorkRow>
   );
 }

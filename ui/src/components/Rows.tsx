@@ -5,19 +5,24 @@ import { detailHref } from "../router";
 
 type Work = BoardWork | RunSummary | JobSummary;
 
-/** A job's title, falling back to its command; a run's title, falling back to its id. */
-export function workTitle(work: Work): string {
-  if (work.ref.type === "job") {
-    return work.title ?? (work as JobSummary).command_summary;
-  }
+export interface TitledRecord {
+  title: string | null;
+  ref: { id: string };
+}
+
+/**
+ * The one work title: the record's title, else its id (visual spec §3, §5).
+ * Never a command summary: many jobs share one command.
+ */
+export function workTitle(work: TitledRecord): string {
   return work.title ?? work.ref.id;
 }
 
-/** A job's command summary, shown under its title. */
+/** A job's command summary, shown in the row's model column or under a queued title. */
 export function workCommand(work: Work): string | null {
   if (work.ref.type !== "job") return null;
   const command = (work as JobSummary).command_summary;
-  return command && command !== workTitle(work) ? command : null;
+  return command.trim() ? command : null;
 }
 
 export function workRole(work: Work): string | null {
@@ -33,25 +38,37 @@ export function workModel(work: Work): string | null {
   return run.model ?? run.agent ?? null;
 }
 
-/** What a waiting row says it waits on, in words (visual spec §5, §7). */
-export function waitWords(work: BoardWork): string {
+export interface WaitWords {
+  text: string;
+  /** The full text when the row clips it, for the title attribute. */
+  title?: string;
+}
+
+/**
+ * What a waiting row says it waits on, in words (visual spec §5, §7). A row
+ * never says a bare `waiting`: when nothing is recorded there is no second line.
+ */
+export function waitWords(work: BoardWork): WaitWords | null {
   if (work.section_reason === "lead_wait") {
-    if (work.ref.type === "job") {
-      const job = work as JobSummary;
-      if (job.kind === "wait" && (work.title ?? "").startsWith("PR #")) {
-        return "waits on review";
-      }
+    if (work.ref.type !== "job") return null;
+    const job = work as JobSummary;
+    if ((work.title ?? "").startsWith("PR #")) {
+      return { text: "waits on review" };
     }
-    return "waiting";
+    if (job.kind === "wait-worker") {
+      return { text: "waits on worker" };
+    }
+    const command = job.command_summary.trim();
+    return command ? { text: `waits on ${command}`, title: `waits on ${command}` } : null;
   }
   if (work.ref.type === "run") {
     const waits = (work as RunSummary).waits_on[0];
     if (waits) {
-      if (waits.type === "external") return `waits on ${waits.key ?? waits.kind}`;
-      return `waits on ${waits.type} ${waits.id}`;
+      if (waits.type === "external") return { text: `waits on ${waits.key ?? waits.kind}` };
+      return { text: `waits on ${waits.type} ${waits.id}` };
     }
   }
-  return "waiting";
+  return null;
 }
 
 export function workDuration(work: BoardWork): string | null {

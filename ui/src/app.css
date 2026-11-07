@@ -383,6 +383,10 @@ pre,
   text-decoration: none;
 }
 
+.notified-body {
+  display: block;
+}
+
 .notified-message {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -391,7 +395,6 @@ pre,
   color: var(--text-primary);
   font-size: var(--type-body-size);
   line-height: var(--type-body-line);
-  font-weight: 550;
 }
 
 .notified-meta {
@@ -405,6 +408,24 @@ pre,
 
 .notified-sep {
   color: var(--line-boundary);
+}
+
+.notified-failed {
+  color: var(--state-failed-fg);
+}
+
+/* 1280 and wider: sender, key and age sit in their own column beside the message. */
+@media (min-width: 1280px) {
+  .notified-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 260px;
+    align-items: baseline;
+    column-gap: var(--space-24);
+  }
+
+  .notified-meta {
+    margin-top: 0;
+  }
 }
 
 /* ---- waiting -------------------------------------------------------- */
@@ -421,8 +442,14 @@ pre,
   row-gap: 1px;
 }
 
+.waiting-row.is-single-line {
+  grid-template-areas: "glyph main age";
+  min-height: var(--row-height);
+}
+
 .waiting-row .row-glyph {
   grid-area: glyph;
+  align-self: start;
   padding-top: 2px;
 }
 
@@ -430,24 +457,43 @@ pre,
   grid-area: main;
   display: flex;
   align-items: baseline;
+  flex-wrap: nowrap;
   gap: var(--space-8);
   min-width: 0;
+}
+
+.waiting-row .row-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.waiting-row .row-role {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .waiting-row .row-detail {
   grid-area: detail;
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-8);
   min-width: 0;
 }
 
-.waiting-row .row-detail .row-age {
-  margin-left: auto;
+.waiting-row .row-what {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .waiting-row .row-age {
   grid-area: age;
+  align-self: start;
+  padding-top: 1px;
 }
 
 /* ---- running -------------------------------------------------------- */
@@ -473,7 +519,7 @@ pre,
 
 .column-head {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr) 56px;
+  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) auto;
   gap: var(--space-8);
   margin: 0 calc(-1 * var(--space-8));
   padding: 0 var(--space-8) var(--space-4);
@@ -489,37 +535,56 @@ pre,
 }
 
 .running-row {
-  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr) 56px;
+  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) auto;
   column-gap: var(--space-8);
 }
 
 .running-row .row-glyph {
   grid-column: 1;
+  align-self: start;
+  padding-top: 2px;
 }
 
 .running-row .row-title {
   grid-column: 2;
+  min-width: 0;
   overflow: hidden;
-  font-family: var(--font-mono);
-  color: var(--text-mono-data);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .running-row .row-role {
   grid-column: 3;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .running-row .row-model {
   grid-column: 4;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.running-row .row-model-command {
+  color: var(--text-meta);
+  font-family: var(--font-mono);
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-line);
 }
 
 .running-row .row-check {
-  grid-column: 5;
+  color: var(--text-meta);
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-line);
 }
 
 .running-row .row-age {
-  grid-column: 6;
+  grid-column: 5;
+  white-space: nowrap;
 }
 
 .running-group + .running-group {
@@ -935,11 +1000,6 @@ pre,
   line-height: var(--type-detail-title-line);
   font-weight: var(--type-detail-title-weight);
   overflow-wrap: anywhere;
-}
-
-.detail-title.mono {
-  font-family: var(--font-mono);
-  font-weight: 550;
 }
 
 .detail-meta {

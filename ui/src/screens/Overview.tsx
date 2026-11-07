@@ -19,6 +19,12 @@ const INITIAL_OPEN: Record<SectionKey, boolean> = {
   sessions: false,
 };
 
+/** Summary-line links whose section collapses; following one expands it. */
+const SUMMARY_SECTIONS: Record<string, SectionKey> = {
+  "#lead-inbox": "lead_inbox",
+  "#exceptions": "exceptions",
+};
+
 /** First-seen project order, kept in a ref so a refresh never reorders groups. */
 function useProjectOrder(board: Board): string[] {
   const order = useRef<string[]>([]);
@@ -39,6 +45,10 @@ export function Overview({ board }: { board: Board }) {
   const projectOrder = useProjectOrder(board);
   const toggle = (key: SectionKey) => () =>
     setOpen((previous) => ({ ...previous, [key]: !previous[key] }));
+  const openSection = (href: string) => {
+    const key = SUMMARY_SECTIONS[href];
+    if (key) setOpen((previous) => ({ ...previous, [key]: true }));
+  };
 
   if (board.sources.length === 0) {
     return (
@@ -48,15 +58,10 @@ export function Overview({ board }: { board: Board }) {
     );
   }
 
-  const exceptions =
-    board.counts.process_gone +
-    board.counts.out_of_date +
-    board.counts.unverified_recent;
-
   if (!board.capabilities.execution) {
     return (
       <main className="screen">
-        <SummaryLine board={board} />
+        <SummaryLine board={board} onOpenSection={openSection} />
         {board.needs_you.length > 0 ? <Notified board={board} /> : null}
         <SessionsOnly board={board} />
       </main>
@@ -65,18 +70,14 @@ export function Overview({ board }: { board: Board }) {
 
   return (
     <main className="screen">
-      <SummaryLine board={board} />
+      <SummaryLine board={board} onOpenSection={openSection} />
       <Notified board={board} />
       <div className="columns">
         <Waiting board={board} />
         <Running board={board} projectOrder={projectOrder} />
       </div>
-      {board.counts.lead_inbox_open > 0 ? (
-        <LeadInbox board={board} open={open.lead_inbox} onToggle={toggle("lead_inbox")} />
-      ) : null}
-      {exceptions > 0 || board.counts.older_unverified > 0 ? (
-        <Exceptions board={board} open={open.exceptions} onToggle={toggle("exceptions")} />
-      ) : null}
+      <LeadInbox board={board} open={open.lead_inbox} onToggle={toggle("lead_inbox")} />
+      <Exceptions board={board} open={open.exceptions} onToggle={toggle("exceptions")} />
       {board.counts.failed_recent > 0 || board.recent.length > 0 ? (
         <Recent board={board} open={open.recent} onToggle={toggle("recent")} />
       ) : null}
