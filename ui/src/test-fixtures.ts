@@ -16,9 +16,9 @@ import recordRunJson from "./fixtures/record-run.json";
 import recordJobJson from "./fixtures/record-job.json";
 import fileReadableJson from "./fixtures/file-readable.json";
 import fileNotReadableJson from "./fixtures/file-not-readable.json";
-import { board, boardEmpty, boardSessions } from "./fixtures/board";
+import { board, boardEmpty, boardRealShapes, boardSessions } from "./fixtures/board";
 
-export { board, boardEmpty, boardSessions };
+export { board, boardEmpty, boardRealShapes, boardSessions };
 export const snapshot = snapshotJson as unknown as Snapshot;
 export const snapshotEmpty = snapshotEmptyJson as unknown as Snapshot;
 export const snapshotDemo = snapshotDemoJson as unknown as Snapshot;

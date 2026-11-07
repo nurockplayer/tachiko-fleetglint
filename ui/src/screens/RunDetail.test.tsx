@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { RunDetail } from "./RunDetail";
 import type { Fetcher } from "../api/client";
-import type { RunSummary } from "../api/types";
+import type { JobSummary, RunSummary } from "../api/types";
 import { fileNotReadable, fileReadable, recordJob, recordRun } from "../test-fixtures";
 import { jsonResponse, routeFetcher } from "../test-fetcher";
 
@@ -134,6 +134,29 @@ describe("RunDetail", () => {
 
     expect(
       await screen.findByText(/The worker has handed off and resumes when the job ends\./, undefined, SLOW),
+    ).toBeInTheDocument();
+  });
+
+  it("reads a lead wait job as waiting, with the command it waits on", async () => {
+    const waitJob = structuredClone(recordJob);
+    const job = waitJob.record as JobSummary;
+    job.state = "running";
+    job.display_state = "running";
+    job.kind = "wait";
+    job.title = "t218";
+    job.command_summary = "zsh /private/tmp/x/y.sh";
+    const fetcher = routeFetcher({
+      "/api/record": () => jsonResponse(waitJob),
+      "/api/file": () => jsonResponse(fileReadable),
+    });
+    render(<RunDetail params={jobParams} fetcher={fetcher} />);
+
+    expect(await screen.findByRole("heading", { name: "t218" }, SLOW)).toBeInTheDocument();
+    expect(document.querySelector('.detail-head .state-badge[data-state="waiting"]')).toBeTruthy();
+    expect(
+      screen.getByText(
+        "A lead is waiting on zsh /private/tmp/x/y.sh. It resumes when that ends.",
+      ),
     ).toBeInTheDocument();
   });
 

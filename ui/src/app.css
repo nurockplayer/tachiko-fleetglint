@@ -1256,13 +1256,42 @@ pre,
 }
 
 @media (max-width: 767px) {
+  /* The bar grows: source names move to a full second line and wrap. */
+  .topbar {
+    height: auto;
+  }
+
   .topbar-inner {
-    gap: var(--space-12);
-    padding: 0 var(--space-16);
+    flex-wrap: wrap;
+    gap: var(--space-4) var(--space-12);
+    min-height: var(--topbar-height);
+    padding: var(--space-8) var(--space-16);
+  }
+
+  .mark {
+    order: 1;
+  }
+
+  .topbar-meta {
+    order: 2;
+    margin-left: auto;
   }
 
   .source-strip {
-    gap: var(--space-12);
+    order: 3;
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    gap: var(--space-4) var(--space-12);
+    overflow: visible;
+  }
+
+  .source-chip {
+    white-space: normal;
+  }
+
+  .source-name {
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .screen {
@@ -1285,8 +1314,7 @@ pre,
     grid-template-columns: 20px minmax(0, 1fr) auto;
     grid-template-areas:
       "glyph title age"
-      "glyph role model"
-      "glyph check check";
+      "glyph role model";
     align-items: start;
     min-height: var(--row-height-two-line);
     padding-top: var(--space-4);
@@ -1310,17 +1338,8 @@ pre,
     grid-area: model;
   }
 
-  .running-row .row-check {
-    grid-area: check;
-  }
-
   .running-row .row-age {
     grid-area: age;
-  }
-
-  .waiting-row .row-main {
-    flex-direction: column;
-    gap: 0;
   }
 
   .history-row {

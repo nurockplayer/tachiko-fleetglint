@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { Overview } from "./Overview";
-import { board, boardEmpty, boardSessions } from "../test-fixtures";
+import { board, boardEmpty, boardRealShapes, boardSessions } from "../test-fixtures";
 
 function summary(): HTMLElement {
   const node = document.querySelector(".summary-line");
@@ -89,12 +89,12 @@ describe("Overview", () => {
     ]);
   });
 
-  it("lists what the viewer was notified about, with role, ref and age", () => {
+  it("lists what the viewer was notified about, with sender, key and age", () => {
     render(<Overview board={board} />);
     const items = document.querySelectorAll(".notified-item");
     expect(items).toHaveLength(2);
     expect(items[0]).toHaveTextContent("Should the board call the retry an exception?");
-    expect(items[0]).toHaveTextContent("owner · dot-1180 · 30m ago");
+    expect(items[0]).toHaveTextContent("some-lead · some-key · 30m ago");
     expect(items[1]).toHaveTextContent("Review finished: two blockers fixed in PR #43.");
     expect(items[1]).toHaveTextContent("1h ago");
   });
@@ -121,11 +121,51 @@ describe("Overview", () => {
       "edd 1",
     ]);
     expect(screen.getByText("pnpm test --run")).toBeInTheDocument();
-    expect(screen.getByText("checked 2m ago")).toBeInTheDocument();
+    expect(screen.getByText(/checked 2m ago/)).toBeInTheDocument();
     expect(within(running).getByText("worker")).toBeInTheDocument();
     expect(within(running).getByText("role")).toBeInTheDocument();
     expect(within(running).getByText("model")).toBeInTheDocument();
-    expect(within(running).getByText("checked")).toBeInTheDocument();
+    expect(within(running).getByText("running")).toBeInTheDocument();
+  });
+
+  it("titles two jobs with one command by their ids, never the command", () => {
+    render(<Overview board={boardRealShapes} />);
+    const first = document.querySelector('.running-row[data-record-id="job-701"]');
+    const second = document.querySelector('.running-row[data-record-id="job-702"]');
+    expect(first?.querySelector(".row-title")?.textContent).toBe("job-701");
+    expect(second?.querySelector(".row-title")?.textContent).toBe("job-702");
+    expect(first?.querySelector(".row-model-command")?.textContent).toBe(
+      "orb-test --heavy --host",
+    );
+    expect(second?.querySelector(".row-model-command")?.textContent).toBe(
+      "orb-test --heavy --host",
+    );
+  });
+
+  it("says what a wait row waits on and never a bare waiting word", () => {
+    render(<Overview board={boardRealShapes} />);
+    for (const row of Array.from(document.querySelectorAll(".work-row"))) {
+      expect(row.textContent ?? "").not.toMatch(/\bwaiting\b/i);
+    }
+    expect(screen.getByText("waits on review")).toBeInTheDocument();
+    expect(screen.getByText("waits on worker")).toBeInTheDocument();
+    expect(screen.getByText("waits on zsh /private/tmp/x/y.sh")).toBeInTheDocument();
+
+    const quiet = document.querySelector('.waiting-row[data-record-id="wait-t220"]');
+    expect(quiet).toHaveClass("is-single-line");
+    expect(quiet?.querySelector(".row-what")).toBeNull();
+    expect(quiet?.querySelector(".row-title")?.textContent).toBe("t220");
+  });
+
+  it("shows a notification's sender and key, never owner or a from: prefix", () => {
+    render(<Overview board={boardRealShapes} />);
+    const items = Array.from(document.querySelectorAll(".notified-item"));
+    for (const item of items) {
+      expect(item.textContent ?? "").not.toMatch(/\bowner\b/);
+      expect(item.textContent ?? "").not.toContain("from:");
+    }
+    expect(items[0]).toHaveTextContent("some-lead · some-key · 30m ago");
+    expect(items[1]).toHaveTextContent("delivery failed");
   });
 
   it("adds a small Queued group at the end only when something is queued", () => {
@@ -220,7 +260,7 @@ describe("Overview", () => {
       "Out of date 1",
       "Unverified 1",
     ]);
-    expect(screen.getByText("pnpm e2e")).toBeInTheDocument();
+    expect(screen.getByText("job-388")).toBeInTheDocument();
     expect(screen.getByText("Refresh the screenshots")).toBeInTheDocument();
   });
 

@@ -370,12 +370,17 @@ function inboxItem(
 }
 
 const notifiedDecision = inboxItem({
-  ref: { type: "inbox_item", id: "inbox-a", source_id: "claude-code@demo-host" },
+  ref: {
+    type: "inbox_item",
+    id: "owner-notify.some-key",
+    source_id: "claude-code@demo-host",
+  },
   role_id: "owner",
   kind: "decision",
-  subject: { type: "external", kind: "message", key: "dot-1180" },
+  subject: { type: "external", kind: "message", key: "from:some-lead" },
   created_at: "2026-11-07T09:30:00+09:00",
   age_s: 1800,
+  outcome: "sent",
   action_required: true,
   detail: "Should the board call the retry an exception?",
 });
@@ -387,6 +392,7 @@ const notifiedReview = inboxItem({
   subject: { type: "run", id: "run-909", source_id: "codex-cli@demo-host" },
   created_at: "2026-11-07T09:00:00+09:00",
   age_s: 3600,
+  outcome: "failed",
   action_required: true,
   detail: "Review finished: two blockers fixed in PR #43.",
 });
@@ -561,6 +567,84 @@ export const board: Board = {
     recent: false,
     lead_inbox: false,
   },
+};
+
+/* Real shapes seen on the live board: bare jobs (no title, kind or role) and
+ * lead wait jobs, which are stored running but read as waiting. */
+const sharedCommandJobA = job({
+  ref: { type: "job", id: "job-701", source_id: "codex-cli@demo-host" },
+  state: "running",
+  display_state: "running",
+  kind: null,
+  command_summary: "orb-test --heavy --host",
+  project: "fleetglint",
+  role_id: null,
+  started_at: "2026-11-07T09:00:00+09:00",
+  started_age_s: 3600,
+  section_reason: null,
+});
+
+const sharedCommandJobB = job({
+  ref: { type: "job", id: "job-702", source_id: "codex-cli@demo-host" },
+  state: "running",
+  display_state: "running",
+  kind: null,
+  command_summary: "orb-test --heavy --host",
+  project: "fleetglint",
+  role_id: null,
+  started_at: "2026-11-07T09:20:00+09:00",
+  started_age_s: 2400,
+  section_reason: null,
+});
+
+const waitPathJob = job({
+  ref: { type: "job", id: "wait-t218", source_id: "codex-cli@demo-host" },
+  state: "running",
+  display_state: "running",
+  kind: "wait",
+  command_summary: "zsh /private/tmp/x/y.sh",
+  title: "t218",
+  project: "fleetglint",
+  role_id: null,
+  started_at: "2026-11-07T08:00:00+09:00",
+  started_age_s: 7200,
+  section_reason: "lead_wait",
+});
+
+const waitWorkerJob = job({
+  ref: { type: "job", id: "wait-t219", source_id: "codex-cli@demo-host" },
+  state: "running",
+  display_state: "running",
+  kind: "wait-worker",
+  command_summary: "zsh /private/tmp/x/y.sh",
+  title: "t219",
+  project: "fleetglint",
+  role_id: null,
+  started_at: "2026-11-07T09:00:00+09:00",
+  started_age_s: 3600,
+  section_reason: "lead_wait",
+});
+
+const quietWaitJob = job({
+  ref: { type: "job", id: "wait-t220", source_id: "codex-cli@demo-host" },
+  state: "running",
+  display_state: "running",
+  kind: "wait",
+  command_summary: "  ",
+  title: "t220",
+  project: "fleetglint",
+  role_id: null,
+  started_at: "2026-11-07T09:50:00+09:00",
+  started_age_s: 600,
+  section_reason: "lead_wait",
+});
+
+/** A board carrying the live shapes the fixtures above mirror. */
+export const boardRealShapes: Board = {
+  ...board,
+  counts: { ...board.counts, waiting: 4, running: 4 },
+  waiting: [reviewJob, waitPathJob, waitWorkerJob, quietWaitJob],
+  running: [sharedCommandJobA, sharedCommandJobB, runningLeadRun, runningSpacingRun],
 };
 
 const zeroCounts: BoardCounts = {
