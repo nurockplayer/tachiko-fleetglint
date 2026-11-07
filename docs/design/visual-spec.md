@@ -101,9 +101,10 @@ No external font requests.
 
 All numbers use `font-variant-numeric: tabular-nums`. Avoid uppercase labels.
 
-Monospace only for identifiers, slugs, paths, command summaries, log output and raw fields.
+Monospace only for job ids in metadata, paths, command summaries, log output and raw fields.
+Row titles and the detail title use the UI font even when they are slugs: they are names to read.
 Project, role, model and agent names, durations, counts, messages and explanations use the UI
-font.
+font too.
 
 ## 4. Space and layout
 
@@ -140,21 +141,27 @@ Recent  3 failed · 17 done                                         [show]
 
 The content is illustrative. Rules for each part:
 
-- **Top bar.** 56 px, `surface-chrome`. Friendly source names from the adapter kind (Claude Code,
+- **Top bar.** 56 px, `surface-chrome`; under 768 px the source names move to a second line, in full.
+  Friendly source names from the adapter kind (Claude Code,
   Codex CLI, Tachiko Harness; an NDJSON source shows its own name). A dot plus words when not
   connected: Data gap, Unavailable, N quarantined. The machine id goes in a tooltip and on the
   source's detail, never in the bar.
 - **Summary line.** One line, not tiles. Each number links to its section. A count states its unit
   in words. Zero sections stay in the line. A missing capability shows `running: not observable`.
-- **You were notified.** The heading says it once; items do not repeat it. Message first, at most
-  two lines with the rest on hover and in detail. A line below or to the right: from-role, key, age.
+- **You were notified.** The heading says it once; items do not repeat it. Message first, regular
+  weight, at most two lines with the rest on hover and in detail. Sender, key and age in `text-meta`:
+  in a right-hand column at 1280 and wider, on a line below otherwise. Never print the viewer's own
+  role or a `from:` prefix.
   4 px amber leading edge, no fill. Never call them open or unacknowledged, and show no checkbox:
   the source has no acknowledged state. They leave after 24 hours. When empty, the section collapses
   to `Nothing notified you in the last 24 hours.` in `text-meta`.
 - **Waiting.** Title, role when recorded, what it waits on in words, how long. The section heading
-  carries the state, so a row shows the glyph without the word. Sort longest first.
-- **Running.** Grouped by project, group heading once with a count. Row: glyph, title (mono), role
-  when recorded, model or agent, `47m` right-aligned. Column headings once at the top of the list.
+  carries the state, so a row shows the glyph without the word, and never the bare word `waiting`:
+  when nothing says what it waits on, the row has one line. Sort longest first.
+- **Running.** Grouped by project, group heading once with a count. Row: glyph, title, role when
+  recorded, model or agent (a job: its command summary, mono), `47m` right-aligned. A job's title is
+  its `title`, else its id, never its command: many jobs share one command. Column headings once at
+  the top of the list.
   The heading carries `process checks 6s ago` once. A row shows its own check time only when it
   differs by more than 60 s. A row with no process evidence says `no process check`.
 - **Queued.** Work accepted but not started is never waiting. Only when non-zero: `N queued` in the
