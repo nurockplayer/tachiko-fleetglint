@@ -841,7 +841,7 @@ class HarnessAdapter:
             stats.unreadable += 1
             return []
         chosen = {}
-        for line in text.splitlines():
+        for number, line in enumerate(text.splitlines(), 1):
             if not line.strip():
                 continue
             fields = line.split("\t", 4)
@@ -854,9 +854,10 @@ class HarnessAdapter:
                 stats.malformed += 1
                 continue
             status = status.strip()
-            # owner-notify logs an absent --key as "-": each such row is its own notification.
+            # owner-notify logs an absent --key as "-": each such row is its own notification,
+            # even when two rows read the same. The log is append-only, so the line number holds.
             if key == "-":
-                key = "row." + hashlib.sha1(line.encode("utf-8", "replace")).hexdigest()[:12]
+                key = f"line.{number}"
             # A key's newest sent/failed row wins; a skipped-only key keeps its newest skip.
             priority = 0 if status in ("sent", "failed") else 1 if status == "skipped" else None
             if priority is None:

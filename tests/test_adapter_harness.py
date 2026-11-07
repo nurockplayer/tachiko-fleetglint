@@ -614,11 +614,12 @@ class HarnessAdapterTest(unittest.TestCase):
             (state / "owner-notify").mkdir()
             (state / "owner-notify" / "log.tsv").write_text(
                 "2026-11-07 07:08 JST\t-\tlead-alpha\tsent\tfirst\n"
+                "2026-11-07 07:09 JST\t-\tlead-beta\tsent\tsecond\n"
                 "2026-11-07 07:09 JST\t-\tlead-beta\tsent\tsecond\n")
             result = harness.HarnessAdapter(state, hostname="h").scan(NOW)
         items = [r for r in result.records if r.get("kind") == "owner-notify"]
-        self.assertEqual(sorted(r["detail"] for r in items), ["first", "second"])
-        self.assertEqual(len({r["id"] for r in items}), 2)
+        self.assertEqual(sorted(r["detail"] for r in items), ["first", "second", "second"])
+        self.assertEqual(len({r["id"] for r in items}), 3)
 
     def test_owner_notify_without_a_log_is_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
