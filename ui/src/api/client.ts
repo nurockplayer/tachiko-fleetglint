@@ -2,6 +2,10 @@ export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
 export const defaultFetcher: Fetcher = (input, init) => fetch(input, init);
 
+export function boardUrl(): string {
+  return "/api/board";
+}
+
 export function snapshotUrl(): string {
   return "/api/snapshot";
 }

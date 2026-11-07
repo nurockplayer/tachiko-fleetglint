@@ -1,13 +1,12 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { RunDetail } from "./RunDetail";
 import type { Fetcher } from "../api/client";
-import {
-  fileNotReadable,
-  fileReadable,
-  recordJob,
-  recordRun,
-} from "../test-fixtures";
+import type { JobSummary, RunSummary } from "../api/types";
+import { fileNotReadable, fileReadable, recordJob, recordRun } from "../test-fixtures";
 import { jsonResponse, routeFetcher } from "../test-fetcher";
+
+// jsdom is slow when the host is loaded; give the first render 3 s.
+const SLOW = { timeout: 3000 };
 
 const runParams = {
   source_id: "tachiko-harness@mbp",
@@ -40,7 +39,7 @@ async function flush() {
 }
 
 describe("RunDetail", () => {
-  it("shows both states, marks redacted spans, and shows unresolved refs", async () => {
+  it("follows the §6 order with words for the state, waits and evidence", async () => {
     const fetcher = routeFetcher({
       "/api/record": () => jsonResponse(recordRun),
       "/api/file": () => jsonResponse(fileReadable),
@@ -48,16 +47,38 @@ describe("RunDetail", () => {
     render(<RunDetail params={runParams} fetcher={fetcher} />);
 
     expect(
-      await screen.findByText("migration replay: checkpoint rebuild"),
+      await screen.findByRole("heading", { name: "migration replay: checkpoint rebuild" }, SLOW),
     ).toBeInTheDocument();
-    expect(document.querySelector(".transition-from")?.textContent).toBe("running");
-    expect(document.querySelector('.badge[data-state="stale"]')).toBeTruthy();
-    expect(screen.getByText("not seen")).toBeInTheDocument();
-    expect(screen.getByText(/token basis: measured/)).toBeInTheDocument();
-    expect(screen.getByText(/cost basis: api_equivalent/)).toBeInTheDocument();
+    expect(document.querySelector('.detail-head .state-badge[data-state="stale"]')).toBeTruthy();
+    expect(screen.getByText("out of date")).toBeInTheDocument();
+    expect(screen.getByText(/Out of date: the last update was 42m/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/No recent process check; the last check was 42m/),
+    ).toBeInTheDocument();
+
+    const headings = screen
+      .getAllByRole("heading", { level: 2 })
+      .map((node) => node.textContent);
+    expect(headings).toEqual(["What is happening", "Relationships", "Evidence", "Log"]);
+
+    for (const summary of ["Usage", "Version history", "Links", "Raw fields (redacted)"]) {
+      expect(screen.getByText(summary)).toBeInTheDocument();
+    }
+    expect(document.querySelectorAll("details[open]")).toHaveLength(0);
+  });
+
+  it("shows unresolved refs as not found and redacts log spans", async () => {
+    const fetcher = routeFetcher({
+      "/api/record": () => jsonResponse(recordRun),
+      "/api/file": () => jsonResponse(fileReadable),
+    });
+    render(<RunDetail params={runParams} fetcher={fetcher} />);
+
+    await screen.findByRole("heading", { name: "migration replay: checkpoint rebuild" }, SLOW);
+    expect(screen.getByText("not found")).toBeInTheDocument();
 
     await waitFor(() => expect(document.querySelectorAll(".redacted")).toHaveLength(2));
-    expect(document.querySelectorAll('.redacted')[0].textContent).toBe("[redacted]");
+    expect(document.querySelectorAll(".redacted")[0].textContent).toBe("[redacted]");
 
     const pr = screen.getByText(
       "https://github.com/nurockplayer/tachiko-harness/pull/412",
@@ -67,16 +88,89 @@ describe("RunDetail", () => {
     expect(document.querySelector('a[href^="file:"]')).toBeNull();
   });
 
-  it("shows the not readable variant with its reason", async () => {
+  it("says a waiting run's job status was not found", async () => {
+    const waiting = structuredClone(recordRun);
+    const waitingRecord = waiting.record as RunSummary;
+    waitingRecord.state = "waiting";
+    waitingRecord.display_state = "waiting";
+    waitingRecord.waits_on = [
+      {
+        type: "job",
+        id: "job-x",
+        source_id: "tachiko-harness@mbp",
+        resolved: false,
+      },
+    ];
+    const fetcher = routeFetcher({
+      "/api/record": () => jsonResponse(waiting),
+      "/api/file": () => jsonResponse(fileReadable),
+    });
+    render(<RunDetail params={runParams} fetcher={fetcher} />);
+
+    expect(await screen.findByText(/Waiting on job job-x\./, undefined, SLOW)).toBeInTheDocument();
+    expect(screen.getByText(/Job status not found\./)).toBeInTheDocument();
+  });
+
+  it("explains that a running job resumes the waiting worker", async () => {
+    const waiting = structuredClone(recordRun);
+    const waitingRecord = waiting.record as RunSummary;
+    waitingRecord.state = "waiting";
+    waitingRecord.display_state = "waiting";
+    waitingRecord.waits_on = [
+      {
+        type: "job",
+        id: "scan-1",
+        source_id: "tachiko-harness@mbp",
+        resolved: true,
+        display_state: "running",
+        title: "pnpm test",
+      },
+    ];
+    const fetcher = routeFetcher({
+      "/api/record": () => jsonResponse(waiting),
+      "/api/file": () => jsonResponse(fileReadable),
+    });
+    render(<RunDetail params={runParams} fetcher={fetcher} />);
+
+    expect(
+      await screen.findByText(/The worker has handed off and resumes when the job ends\./, undefined, SLOW),
+    ).toBeInTheDocument();
+  });
+
+  it("reads a lead wait job as waiting, with the command it waits on", async () => {
+    const waitJob = structuredClone(recordJob);
+    const job = waitJob.record as JobSummary;
+    job.state = "running";
+    job.display_state = "running";
+    job.kind = "wait";
+    job.title = "t218";
+    job.command_summary = "zsh /private/tmp/x/y.sh";
+    const fetcher = routeFetcher({
+      "/api/record": () => jsonResponse(waitJob),
+      "/api/file": () => jsonResponse(fileReadable),
+    });
+    render(<RunDetail params={jobParams} fetcher={fetcher} />);
+
+    expect(await screen.findByRole("heading", { name: "t218" }, SLOW)).toBeInTheDocument();
+    expect(document.querySelector('.detail-head .state-badge[data-state="waiting"]')).toBeTruthy();
+    expect(
+      screen.getByText(
+        "A lead is waiting on zsh /private/tmp/x/y.sh. It resumes when that ends.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the not readable log variant with its reason", async () => {
     const fetcher = routeFetcher({
       "/api/record": () => jsonResponse(recordJob),
       "/api/file": () => jsonResponse(fileNotReadable),
     });
     render(<RunDetail params={jobParams} fetcher={fetcher} />);
 
-    expect(await screen.findByText("pnpm build --filter web")).toBeInTheDocument();
-    expect(await screen.findByText("not readable")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "web build" }, SLOW)).toBeInTheDocument();
+    expect(await screen.findByText("Log unavailable", undefined, SLOW)).toBeInTheDocument();
     expect(screen.getByText("outside the allowed roots")).toBeInTheDocument();
+    expect(screen.getByText(/Failed with exit 1\./)).toBeInTheDocument();
   });
 
   it("shows done when the record changes between polls", async () => {
@@ -95,12 +189,10 @@ describe("RunDetail", () => {
     render(<RunDetail params={runParams} fetcher={fetcher} pollMs={100} />);
 
     expect(
-      await screen.findByText("migration replay: checkpoint rebuild"),
+      await screen.findByRole("heading", { name: "migration replay: checkpoint rebuild" }, SLOW),
     ).toBeInTheDocument();
     await waitFor(() =>
-      expect(
-        document.querySelector('header.detail-head .badge[data-state="done"]'),
-      ).toBeTruthy(),
+      expect(document.querySelector('.detail-head .state-badge[data-state="done"]')).toBeTruthy(),
     );
   });
 
@@ -161,12 +253,14 @@ describe("RunDetail", () => {
     });
     render(<RunDetail params={runParams} fetcher={fetcher} pollMs={50} />);
 
-    expect(await screen.findByText(/worker started/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/worker started/, undefined, SLOW),
+    ).toBeInTheDocument();
     await until(() => screen.queryByText(/still running/) !== null);
     expect(fileCalls).toBeGreaterThan(1);
   });
 
-  it("keeps refreshing the log of a running record that shows stale", async () => {
+  it("keeps refreshing the log of a running record that shows out of date", async () => {
     const stale = structuredClone(recordRun);
     stale.record.state = "running";
     stale.record.display_state = "stale";
@@ -209,7 +303,7 @@ describe("RunDetail", () => {
     await act(async () => {
       release(jsonResponse(fileReadable));
     });
-    expect(await screen.findByText(/worker started/)).toBeInTheDocument();
+    expect(await screen.findByText(/worker started/, undefined, SLOW)).toBeInTheDocument();
   });
 
   it("fetches the final log when the record ends during a slow request", async () => {
@@ -238,8 +332,8 @@ describe("RunDetail", () => {
     render(<RunDetail params={runParams} fetcher={fetcher} pollMs={20} />);
     await until(() => fileCalls === 1);
     ended = true;
-    await until(() =>
-      document.querySelector('header.detail-head .badge[data-state="done"]') !== null,
+    await until(
+      () => document.querySelector('.detail-head .state-badge[data-state="done"]') !== null,
     );
     await act(async () => {
       release(jsonResponse(fileReadable));
@@ -262,7 +356,7 @@ describe("RunDetail", () => {
     });
     render(<RunDetail params={runParams} fetcher={fetcher} pollMs={20} />);
 
-    expect(await screen.findByText(/worker started/)).toBeInTheDocument();
+    expect(await screen.findByText(/worker started/, undefined, SLOW)).toBeInTheDocument();
     await until(() => fileCalls > 0);
     const afterFirst = fileCalls;
     await act(async () => {
@@ -271,20 +365,19 @@ describe("RunDetail", () => {
     expect(fileCalls).toBe(afterFirst);
   });
 
-  it("hides sections that do not apply to a job", async () => {
+  it("hides the sections that do not apply to a job", async () => {
     const fetcher = routeFetcher({
       "/api/record": () => jsonResponse(recordJob),
       "/api/file": () => jsonResponse(fileReadable),
     });
     render(<RunDetail params={jobParams} fetcher={fetcher} />);
 
-    expect(await screen.findByText("pnpm build --filter web")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "web build" }, SLOW)).toBeInTheDocument();
     expect(screen.queryByText("Usage")).toBeNull();
-    expect(screen.queryByText("Owned jobs")).toBeNull();
     expect(screen.queryByText("parent")).toBeNull();
     expect(screen.queryByText("spawned")).toBeNull();
     expect(screen.queryByText("continues")).toBeNull();
-    expect(screen.getByText("inbox")).toBeInTheDocument();
+    expect(screen.getByText("inbox item")).toBeInTheDocument();
     expect(screen.getByText("Version history")).toBeInTheDocument();
   });
 });

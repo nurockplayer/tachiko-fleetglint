@@ -1,8 +1,12 @@
 import type { DisplayState } from "./api/types";
 
-/** Every badge variant: the API display states plus the inbox attention tone. */
-export type BadgeState = DisplayState | "attention";
+/**
+ * Every badge the UI can draw: the API display states plus the notification
+ * tone (the board's `needs_you` list is not a record display state).
+ */
+export type BadgeState = DisplayState | "needs";
 
+/** Words from visual spec §7; never the API's `lost`, `stale` or `unknown`. */
 export const STATE_LABEL: Record<BadgeState, string> = {
   queued: "queued",
   running: "running",
@@ -10,34 +14,34 @@ export const STATE_LABEL: Record<BadgeState, string> = {
   done: "done",
   failed: "failed",
   cancelled: "cancelled",
-  stale: "stale",
-  lost: "lost",
-  unknown: "unknown",
-  attention: "action",
-  open: "open",
-  acked: "acked",
+  stale: "out of date",
+  lost: "process gone",
+  unknown: "unverified",
+  open: "notified",
+  acked: "seen",
   recent: "recent",
   idle: "idle",
   ended: "ended",
+  needs: "notified",
 };
 
-/** Glyph kind per badge state (brief §3; Figma token `kind`). */
+/** Glyphs from visual spec §2. */
 export const STATE_GLYPH: Record<BadgeState, string> = {
   queued: "ring",
   running: "dot",
-  waiting: "arrow",
+  waiting: "hourglass",
   done: "check",
   failed: "cross",
   cancelled: "slash",
-  stale: "dashed-ring",
+  stale: "dashed-circle",
   lost: "broken-link",
   unknown: "question",
-  attention: "bang",
   open: "open-dot",
   acked: "acked-dot",
   recent: "clock",
   idle: "crescent",
   ended: "square",
+  needs: "bang",
 };
 
 export const TERMINAL_DISPLAY: ReadonlySet<DisplayState> = new Set([

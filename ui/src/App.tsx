@@ -1,12 +1,13 @@
-import type { ReactNode } from "react";
-import type { Snapshot } from "./api/types";
+import { useEffect, type ReactNode } from "react";
 import { defaultFetcher, type Fetcher } from "./api/client";
-import { useSnapshot } from "./api/useSnapshot";
-import { useRoute, type Route } from "./router";
-import { formatClock } from "./format";
-import { Banner, TopBar } from "./components/Panels";
+import { useBoard } from "./api/useSnapshot";
+import { useRoute } from "./router";
+import { formatTimeOfDay } from "./format";
+import { TopBar } from "./components/TopBar";
+import { Banner } from "./components/Banner";
+import { OverviewSkeleton } from "./components/Skeleton";
 import { Overview } from "./screens/Overview";
-import { Attention } from "./screens/Attention";
+import { History } from "./screens/History";
 import { RunDetail } from "./screens/RunDetail";
 
 export interface AppProps {
@@ -14,92 +15,66 @@ export interface AppProps {
   pollMs?: number;
 }
 
-function routeView(route: Route, snapshot: Snapshot, fetcher: Fetcher) {
-  if (route.kind === "attention") return <Attention snapshot={snapshot} />;
-  if (route.kind === "detail") {
-    return <RunDetail params={route.params} fetcher={fetcher} />;
-  }
-  return <Overview snapshot={snapshot} />;
-}
-
-function sourceBanners(snapshot: Snapshot) {
-  return (
-    <>
-      {snapshot.sources
-        .filter((source) => source.status === "discontinuity")
-        .map((source) => (
-          <Banner kind="discontinuity" key={`disc-${source.source_id}`}>
-            {source.source_id}: {source.detail ?? "the source has a discontinuity"}
-          </Banner>
-        ))}
-      {snapshot.sources
-        .filter((source) => source.status === "unavailable")
-        .map((source) => (
-          <Banner kind="unavailable" key={`unavail-${source.source_id}`}>
-            {source.source_id}: {source.detail ?? "the source cannot be read"}
-          </Banner>
-        ))}
-      {snapshot.sources
-        .filter((source) => source.quarantine_count > 0)
-        .map((source) => (
-          <Banner kind="quarantine" key={`quar-${source.source_id}`}>
-            {source.source_id}: {source.quarantine_count} bad line
-            {source.quarantine_count === 1 ? "" : "s"} quarantined and not shown
-          </Banner>
-        ))}
-    </>
-  );
-}
-
-export function App({ fetcher = defaultFetcher, pollMs = 3000 }: AppProps) {
-  const state = useSnapshot(fetcher, pollMs);
+export function App({ fetcher = defaultFetcher, pollMs = 15000 }: AppProps) {
   const route = useRoute();
-  const snapshot = state.snapshot;
+  const state = useBoard(fetcher, pollMs);
+  const board = state.data;
   const unavailable = state.status === "unavailable";
-  const lastGoodClock =
-    state.receivedAt != null
-      ? formatClock(new Date(state.receivedAt).toISOString())
-      : null;
+  const firstLoad = state.status === "loading";
 
-  let content: ReactNode = null;
-  if (state.status === "loading") {
+  // `/attention` is retired; keep old bookmarks working without a page load.
+  useEffect(() => {
+    if (window.location.pathname === "/attention") {
+      window.history.replaceState(null, "", "/");
+    }
+  }, []);
+
+  const lastSuccess =
+    state.receivedAt != null
+      ? formatTimeOfDay(new Date(state.receivedAt).toISOString())
+      : "";
+
+  let content: ReactNode;
+  if (route.kind === "history") {
+    content = <History fetcher={fetcher} pollMs={pollMs} />;
+  } else if (route.kind === "detail") {
+    content = <RunDetail params={route.params} fetcher={fetcher} pollMs={pollMs} />;
+  } else if (firstLoad && !board) {
     content = (
       <main className="screen">
-        <p className="muted">connecting to fleetglint…</p>
+        <OverviewSkeleton />
       </main>
     );
-  } else if (snapshot) {
-    // The board keeps the same tree in both states, so a failed poll greys the
-    // rows in place instead of remounting them (scroll and DOM identity stay).
+  } else if (board) {
     content = (
-      <>
-        <p className="stale-note" hidden={!unavailable}>
-          Showing last good data from {lastGoodClock ?? "an earlier poll"} — not
-          current.
+      <div className={`stale-data${unavailable ? " is-stale" : ""}`}>
+        <Overview board={board} />
+      </div>
+    );
+  } else {
+    content = (
+      <main className="screen">
+        <p className="quiet">
+          No data available. Fleetglint cannot reach the local API.
         </p>
-        <div className="stale-data" data-stale={unavailable ? "true" : undefined}>
-          {routeView(route, snapshot, fetcher)}
-        </div>
-      </>
+      </main>
     );
   }
 
   return (
     <div className="app">
-      <TopBar snapshot={snapshot} lastRefreshAt={state.receivedAt} />
+      <TopBar board={board} receivedAt={state.receivedAt} />
       <div className="banner-stack">
         {unavailable ? (
           <Banner kind="unavailable">
-            {state.error}
-            {lastGoodClock
-              ? ` — last good data from ${lastGoodClock}`
-              : " — no data available"}
+            {state.error ?? "the API could not be read"}
+            {lastSuccess ? ` · last successful refresh ${lastSuccess}` : ""} · current
+            state cannot be verified
           </Banner>
         ) : null}
-        {snapshot?.demo ? (
-          <Banner kind="demo">sample records from fleetglint demo — not real work</Banner>
+        {board?.demo && !unavailable ? (
+          <Banner kind="demo">Sample records from fleetglint demo · not real work</Banner>
         ) : null}
-        {!unavailable && snapshot ? sourceBanners(snapshot) : null}
       </div>
       {content}
     </div>

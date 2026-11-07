@@ -1,207 +1,127 @@
-import type {
-  InboxSummary,
-  JobSummary,
-  RunSummary,
-  SessionSummary,
-} from "../api/types";
+import type { ReactNode } from "react";
+import type { BoardWork, JobSummary, RunSummary } from "../api/types";
+import { ageSince, formatAge, formatAgo } from "../format";
 import { detailHref } from "../router";
-import { ageSince, formatAbsolute, formatAge } from "../format";
-import type { BadgeState } from "../states";
-import { StateBadge } from "./StateBadge";
-import { EvidenceLabel, refText } from "./Refs";
 
-const AGE_SUFFIX_STATES: ReadonlySet<string> = new Set(["stale", "lost", "unknown"]);
+type Work = BoardWork | RunSummary | JobSummary;
 
-function rowAge(updatedAt: string, evidenceAge: number | null): string {
-  return formatAge(evidenceAge ?? ageSince(updatedAt));
+export interface TitledRecord {
+  title: string | null;
+  ref: { id: string };
 }
 
-export function RunRow({ run }: { run: RunSummary }) {
-  const age = rowAge(run.updated_at, run.evidence.age_s);
-  const badgeAge = AGE_SUFFIX_STATES.has(run.display_state) ? age : null;
-  const firstWait = run.waits_on[0];
-  return (
-    <a
-      className="row run-row"
-      href={detailHref(run.ref)}
-      data-state={run.display_state}
-      data-record-id={run.ref.id}
-    >
-      <span className="cell-badge">
-        <StateBadge state={run.display_state} age={badgeAge} />
-      </span>
-      <span className="cell-title">{run.title ?? run.ref.id}</span>
-      <span className="cell-model">
-        {run.agent}
-        {run.model ? ` · ${run.model}` : ""}
-      </span>
-      <span className="cell-role">{run.role_id ?? "—"}</span>
-      <span className="cell-project">{run.project ?? "—"}</span>
-      <span className="cell-age" title={formatAbsolute(run.updated_at)}>
-        {age}
-      </span>
-      <span className="cell-note">
-        {run.display_state === "waiting" && firstWait ? (
-          <span className="waits-on">waits on → {refText(firstWait)}</span>
-        ) : (
-          <EvidenceLabel evidence={run.evidence} />
-        )}
-      </span>
-    </a>
-  );
+/**
+ * The one work title: the record's title, else its id (visual spec §3, §5).
+ * Never a command summary: many jobs share one command.
+ */
+export function workTitle(work: TitledRecord): string {
+  return work.title ?? work.ref.id;
 }
 
-export function exitText(job: JobSummary): string {
-  if (job.exit_code != null) return `exit ${job.exit_code}`;
-  if (job.signal) return `signal ${job.signal}`;
-  return "—";
+/** A job's command summary, shown in the row's model column or under a queued title. */
+export function workCommand(work: Work): string | null {
+  if (work.ref.type !== "job") return null;
+  const command = (work as JobSummary).command_summary;
+  return command.trim() ? command : null;
 }
 
-export function JobRow({ job }: { job: JobSummary }) {
-  const age = rowAge(job.updated_at, job.evidence.age_s);
-  return (
-    <a
-      className="row job-row"
-      href={detailHref(job.ref)}
-      data-state={job.display_state}
-      data-record-id={job.ref.id}
-    >
-      <span className="cell-badge">
-        <StateBadge
-          state={job.display_state}
-          age={AGE_SUFFIX_STATES.has(job.display_state) ? age : null}
-        />
-      </span>
-      <span className="cell-title mono">{job.command_summary}</span>
-      <span className="cell-kind">{job.kind ?? "—"}</span>
-      <span className="cell-run">
-        {job.run ? `run · ${job.run.title ?? job.run.id}` : "—"}
-      </span>
-      <span className="cell-exit">{exitText(job)}</span>
-    </a>
-  );
+export function workRole(work: Work): string | null {
+  if (work.ref.type === "run") return (work as RunSummary).role_id;
+  if (work.ref.type === "job") return (work as JobSummary).role_id;
+  return null;
 }
 
-export function inboxTone(item: InboxSummary): "action" | "normal" | "acked" {
-  if (item.state === "acked") return "acked";
-  return item.action_required ? "action" : "normal";
+/** The model a run records, otherwise its agent; jobs carry neither. */
+export function workModel(work: Work): string | null {
+  if (work.ref.type !== "run") return null;
+  const run = work as RunSummary;
+  return run.model ?? run.agent ?? null;
 }
 
-export function inboxBadgeState(item: InboxSummary): BadgeState {
-  const tone = inboxTone(item);
-  if (tone === "action") return "attention";
-  if (tone === "acked") return "acked";
-  return "open";
+export interface WaitWords {
+  text: string;
+  /** The full text when the row clips it, for the title attribute. */
+  title?: string;
 }
 
-export function InboxItem({ item }: { item: InboxSummary }) {
-  const tone = inboxTone(item);
-  const subject = item.subject;
-  const title = (
-    <span className="inbox-subject">{refText(subject)}</span>
-  );
-
-  const body = (
-    <>
-      <span className="cell-badge">
-        <StateBadge state={inboxBadgeState(item)} />
-      </span>
-      <span className="inbox-main">
-        <span className="inbox-line">
-          <span className="inbox-role">{item.role_id}</span>
-          <span className="inbox-kind">
-            {item.kind}
-            {item.outcome ? ` · ${item.outcome}` : ""}
-          </span>
-          {title}
-        </span>
-        {item.detail ? <span className="inbox-detail">{item.detail}</span> : null}
-      </span>
-      <span className="inbox-age" title={formatAbsolute(item.created_at)}>
-        {formatAge(ageSince(item.created_at))}
-      </span>
-    </>
-  );
-
-  const className = `inbox-item tone-${tone}`;
-
-  if (subject.type === "external") {
-    if (subject.url) {
-      return (
-        <a
-          className={className}
-          href={subject.url}
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          {body}
-        </a>
-      );
+/**
+ * What a waiting row says it waits on, in words (visual spec §5, §7). A row
+ * never says a bare `waiting`: when nothing is recorded there is no second line.
+ */
+export function waitWords(work: BoardWork): WaitWords | null {
+  if (work.section_reason === "lead_wait") {
+    if (work.ref.type !== "job") return null;
+    const job = work as JobSummary;
+    if ((work.title ?? "").startsWith("PR #")) {
+      return { text: "waits on review" };
     }
-    return <div className={className}>{body}</div>;
+    if (job.kind === "wait-worker") {
+      return { text: "waits on worker" };
+    }
+    const command = job.command_summary.trim();
+    return command ? { text: `waits on ${command}`, title: `waits on ${command}` } : null;
   }
-
-  return (
-    <a className={className} href={detailHref(subject)}>
-      {body}
-    </a>
-  );
+  if (work.ref.type === "run") {
+    const waits = (work as RunSummary).waits_on[0];
+    if (waits) {
+      if (waits.type === "external") return { text: `waits on ${waits.key ?? waits.kind}` };
+      return { text: `waits on ${waits.type} ${waits.id}` };
+    }
+  }
+  return null;
 }
 
-function sessionActivity(session: SessionSummary): string {
-  const age = formatAge(session.evidence.age_s ?? ageSince(session.last_activity_at));
-  switch (session.display_state) {
-    case "recent":
-      return `recent ${age}`;
-    case "idle":
-      return `idle ${age}`;
-    case "ended":
-      return "ended";
-    default:
-      return session.display_state;
-  }
+export function workDuration(work: BoardWork): string | null {
+  return formatAge(work.started_age_s) || null;
 }
 
-export function SessionRow({ session }: { session: SessionSummary }) {
+/** Latest process-check age across the running rows, for the section heading. */
+export function freshestProcessCheck(rows: BoardWork[]): number | null {
+  let freshest: number | null = null;
+  for (const row of rows) {
+    if (row.evidence.kind !== "process" || row.evidence.age_s == null) continue;
+    freshest = freshest == null ? row.evidence.age_s : Math.min(freshest, row.evidence.age_s);
+  }
+  return freshest;
+}
+
+/**
+ * A row's own check time: shown only when it differs from the section heading
+ * by more than 60 s. A row with no process evidence says `no process check`.
+ */
+export function checkText(work: Work, referenceAge: number | null): string | null {
+  const evidence = work.evidence;
+  if (evidence.kind === "process" && evidence.age_s != null) {
+    if (referenceAge != null && Math.abs(evidence.age_s - referenceAge) <= 60) return null;
+    return `checked ${formatAgo(evidence.age_s)}`;
+  }
+  if (evidence.kind === "process_gone") return null;
+  return "no process check";
+}
+
+/** Age since the record last changed, preferring the evidence's own age. */
+export function updatedAgo(work: Work, now: number): string {
+  return formatAgo(work.evidence.age_s ?? ageSince(work.updated_at, now));
+}
+
+export interface WorkRowProps {
+  work: Work;
+  className: string;
+  children: ReactNode;
+  glyph?: ReactNode;
+}
+
+/** One linked work row; identity is the record ref, so a refresh keeps the DOM node. */
+export function WorkRow({ work, className, children, glyph }: WorkRowProps) {
   return (
     <a
-      className="session-row"
-      href={detailHref(session.ref)}
-      data-state={session.display_state}
+      className={`work-row ${className}`}
+      href={detailHref(work.ref)}
+      data-state={work.display_state}
+      data-record-id={work.ref.id}
     >
-      <StateBadge state={session.display_state} />
-      <span className="session-meta">
-        <span>{session.agent}</span>
-        <span>· {session.model ?? "—"}</span>
-        <span>· {session.project ?? "—"}</span>
-        {session.title ? <span className="session-title">{session.title}</span> : null}
-      </span>
-      <span className="session-activity" title={formatAbsolute(session.last_activity_at)}>
-        {sessionActivity(session)}
-      </span>
-    </a>
-  );
-}
-
-export interface CountTileProps {
-  label: string;
-  value: number;
-  states: BadgeState[];
-  href: string;
-  note?: string;
-}
-
-export function CountTile({ label, value, states, href, note }: CountTileProps) {
-  return (
-    <a className="tile" href={href} data-tile={label}>
-      <span className="tile-number mono">{value}</span>
-      <span className="tile-label">{label}</span>
-      {note ? <span className="tile-note">{note}</span> : null}
-      <span className="tile-badges">
-        {states.map((state) => (
-          <StateBadge key={state} state={state} />
-        ))}
-      </span>
+      {glyph ? <span className="row-glyph">{glyph}</span> : null}
+      {children}
     </a>
   );
 }

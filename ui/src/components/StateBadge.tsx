@@ -1,5 +1,4 @@
 import type { ReactElement } from "react";
-import type { DisplayState } from "../api/types";
 import { STATE_GLYPH, STATE_LABEL, type BadgeState } from "../states";
 
 const svgProps = {
@@ -20,18 +19,17 @@ function glyphFor(state: BadgeState): ReactElement {
     case "dot":
       return (
         <svg {...svgProps}>
-          <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-          <circle cx="8" cy="8" r="2.6" fill="currentColor" />
+          <circle cx="8" cy="8" r="5" fill="currentColor" />
         </svg>
       );
-    case "arrow":
+    case "hourglass":
       return (
         <svg {...svgProps}>
           <path
-            d="M2 8h9M8 4.5 11.5 8 8 11.5"
+            d="M4 2.5h8M4 13.5h8M5 2.5v3l3 2.5-3 2.5v3M11 2.5v3L8 8l3 2.5v3"
             fill="none"
             stroke="currentColor"
-            strokeWidth="1.5"
+            strokeWidth="1.4"
             strokeLinecap="round"
             strokeLinejoin="round"
           />
@@ -74,7 +72,7 @@ function glyphFor(state: BadgeState): ReactElement {
           />
         </svg>
       );
-    case "dashed-ring":
+    case "dashed-circle":
       return (
         <svg {...svgProps}>
           <circle
@@ -118,17 +116,8 @@ function glyphFor(state: BadgeState): ReactElement {
     case "bang":
       return (
         <svg {...svgProps}>
-          <rect x="2" y="3" width="2" height="10" fill="currentColor" />
-          <text
-            x="9.5"
-            y="12"
-            textAnchor="middle"
-            fontSize="12"
-            fontFamily="var(--font-mono)"
-            fill="currentColor"
-          >
-            !
-          </text>
+          <rect x="7" y="2.5" width="2" height="8" fill="currentColor" />
+          <circle cx="8" cy="13" r="1.1" fill="currentColor" />
         </svg>
       );
     case "open-dot":
@@ -179,53 +168,43 @@ function glyphFor(state: BadgeState): ReactElement {
 
 export interface StateBadgeProps {
   state: BadgeState;
-  size?: "sm" | "md";
+  /** Glyph only, for a section heading that already states the state. */
+  variant?: "words" | "glyph";
   age?: string | null;
   title?: string;
 }
 
 /**
- * Every display state, encoded by glyph + text label + color. Color is never
- * the only signal: `stale` is also dashed, `unknown` is hatched, `attention`
- * has a leading bar.
+ * A display state encoded by glyph + words + colour, never colour alone. The
+ * glyph-only variant exists for rows under a section heading that names the
+ * state; it keeps the words in `aria-label`.
  */
-export function StateBadge({ state, size = "sm", age, title }: StateBadgeProps) {
+export function StateBadge({ state, variant = "words", age, title }: StateBadgeProps) {
+  const label = STATE_LABEL[state];
   const kind = STATE_GLYPH[state];
-  return (
-    <span className={`badge badge-${size}`} data-state={state} title={title}>
-      <span className="badge-glyph" data-glyph={kind} aria-hidden="true">
+
+  if (variant === "glyph") {
+    return (
+      <span
+        className="state-badge is-glyph"
+        data-state={state}
+        data-glyph={kind}
+        role="img"
+        aria-label={label}
+        title={title ?? label}
+      >
         {glyphFor(state)}
       </span>
-      <span className="badge-label">{STATE_LABEL[state]}</span>
-      {age ? <span className="badge-age">{age}</span> : null}
-    </span>
-  );
-}
-
-export interface StateTransitionProps {
-  writerState: string;
-  displayState: DisplayState;
-  age?: string | null;
-  size?: "sm" | "md";
-}
-
-/** Shows both states when liveness differs from the writer's claim. */
-export function StateTransition({
-  writerState,
-  displayState,
-  age,
-  size = "md",
-}: StateTransitionProps) {
-  if (writerState === displayState) {
-    return <StateBadge state={displayState} size={size} age={age} />;
+    );
   }
+
   return (
-    <span className="transition" data-writer-state={writerState}>
-      <span className="transition-from mono">{writerState}</span>
-      <span className="transition-arrow" aria-hidden="true">
-        →
+    <span className="state-badge" data-state={state} data-glyph={kind} title={title}>
+      <span className="state-glyph" aria-hidden="true">
+        {glyphFor(state)}
       </span>
-      <StateBadge state={displayState} size={size} age={age} />
+      <span className="state-words">{label}</span>
+      {age ? <span className="state-age">{age}</span> : null}
     </span>
   );
 }
