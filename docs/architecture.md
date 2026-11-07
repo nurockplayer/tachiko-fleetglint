@@ -192,7 +192,7 @@ zeros. `[ui]` settings: `viewer_roles` (default `["owner"]`),
   "api": 1, "generated_at": "…", "server": {…}, "window_hours": 24, "inbox_old_after_s": 14400,
   "demo": false, "sources": [Source, …],
   "capabilities": {"execution": true, "requests": true},
-  "counts": {"needs_you": 1, "waiting": 2, "running": 3, "lead_inbox_open": 4,
+  "counts": {"needs_you": 1, "queued": 0, "waiting": 2, "running": 3, "lead_inbox_open": 4,
              "lead_inbox_old": 1, "process_gone": 0, "out_of_date": 1,
              "unverified_recent": 0, "failed_recent": 1, "older_unverified": 2,
              "sessions_recent": 3},
@@ -200,12 +200,12 @@ zeros. `[ui]` settings: `viewer_roles` (default `["owner"]`),
   "lead_inbox": [{"role_id": "fleetglint-lead", "open": 3, "old": 1,
                   "oldest_age_s": 9000, "action_required": 2,
                   "items": [InboxSummary + "age_s", … newest 5]}],
-  "waiting": [WorkSummary, …], "running": [WorkSummary, …],
+  "queued": [WorkSummary, …], "waiting": [WorkSummary, …], "running": [WorkSummary, …],
   "exceptions": {"process_gone": [WorkSummary, …], "out_of_date": [WorkSummary, …],
                  "unverified_recent": [WorkSummary, …]},
   "recent": [WorkSummary, …],
   "sessions": [SessionSummary, …], "sessions_total": 12,
-  "truncated": {"waiting": false, "running": false, "exceptions": false,
+  "truncated": {"queued": false, "waiting": false, "running": false, "exceptions": false,
                 "recent": false, "lead_inbox": false}
 }
 ```
@@ -227,7 +227,8 @@ Each run or job lands in exactly one place, in this order; `older` means
 2. Other open inbox items group by `role_id` in `lead_inbox`; `old` counts
    items older than `inbox_old_after_s`. Roles sort by `action_required`
    count, then oldest first.
-3. Display `waiting`: `waiting`, `section_reason: "waits_on"`.
+3. Display `queued` (accepted, not started): `queued`. Display `waiting`:
+   `waiting`, `section_reason: "waits_on"`.
 4. A job in display `running` with kind `wait`: `waiting`,
    `section_reason: "lead_wait"`.
 5. A job in display `running` with kind `wait-worker` is hidden (no list, no

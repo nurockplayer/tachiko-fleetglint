@@ -34,12 +34,12 @@ RECORD_KEYS = {"api", "generated_at", "record", "full", "relations", "history", 
 RELATION_KEYS = {"parent", "resume_of", "children", "resumed_by", "jobs", "inbox",
                  "waited_on_by"}
 BOARD_KEYS = {"api", "generated_at", "server", "window_hours", "inbox_old_after_s", "demo", "sources",
-              "capabilities", "counts", "needs_you", "lead_inbox", "waiting", "running",
+              "capabilities", "counts", "needs_you", "lead_inbox", "queued", "waiting", "running",
               "exceptions", "recent", "sessions", "sessions_total", "truncated"}
-BOARD_COUNT_KEYS = {"needs_you", "waiting", "running", "lead_inbox_open", "lead_inbox_old",
+BOARD_COUNT_KEYS = {"needs_you", "queued", "waiting", "running", "lead_inbox_open", "lead_inbox_old",
                     "process_gone", "out_of_date", "unverified_recent", "failed_recent",
                     "older_unverified", "sessions_recent"}
-BOARD_TRUNCATED_KEYS = {"waiting", "running", "exceptions", "recent", "lead_inbox"}
+BOARD_TRUNCATED_KEYS = {"queued", "waiting", "running", "exceptions", "recent", "lead_inbox"}
 LEAD_INBOX_KEYS = {"role_id", "open", "old", "oldest_age_s", "action_required", "items"}
 WORK_BOARD_KEYS = RUN_KEYS | {"started_age_s", "section_reason"}
 JOB_BOARD_KEYS = JOB_KEYS | {"started_age_s", "section_reason"}
@@ -760,6 +760,14 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(board["counts"]["waiting"], 1)
         self.assertEqual(board["running"], [])
 
+    def test_queued_work_is_not_waiting(self):
+        self.write([run("queued-run", state="queued"), job("queued-job", state="queued")])
+        board = self.board()
+        self.assertEqual(sorted(self.by_id(board["queued"])), ["queued-job", "queued-run"])
+        self.assertEqual(board["counts"]["queued"], 2)
+        self.assertEqual((board["waiting"], board["counts"]["waiting"]), ([], 0))
+        self.assertEqual(board["running"], [])
+
     def test_rule4_lead_wait_job(self):
         self.write([job("wait-job", kind="wait", started_at=stamp(minutes=-2))])
         board = self.board()
@@ -900,7 +908,7 @@ class BoardTest(unittest.TestCase):
         self.assertEqual((len(board["sessions"]), board["sessions_total"]), (1, 2))
         self.assertEqual(len(board["lead_inbox"][0]["items"]), 1)
         self.assertEqual(board["truncated"],
-                         {"waiting": False, "running": True, "exceptions": True,
+                         {"queued": False, "waiting": False, "running": True, "exceptions": True,
                           "recent": True, "lead_inbox": True})
         self.assertEqual((board["counts"]["running"], board["counts"]["out_of_date"],
                           board["counts"]["failed_recent"],

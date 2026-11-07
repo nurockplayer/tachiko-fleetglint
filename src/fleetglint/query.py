@@ -446,19 +446,20 @@ class QueryBackend:
             "demo": False,
             "sources": [],
             "capabilities": {"execution": False, "requests": False},
-            "counts": {"needs_you": 0, "waiting": 0, "running": 0, "lead_inbox_open": 0,
+            "counts": {"needs_you": 0, "queued": 0, "waiting": 0, "running": 0, "lead_inbox_open": 0,
                        "lead_inbox_old": 0, "process_gone": 0, "out_of_date": 0,
                        "unverified_recent": 0, "failed_recent": 0, "older_unverified": 0,
                        "sessions_recent": 0},
             "needs_you": [],
             "lead_inbox": [],
+            "queued": [],
             "waiting": [],
             "running": [],
             "exceptions": {"process_gone": [], "out_of_date": [], "unverified_recent": []},
             "recent": [],
             "sessions": [],
             "sessions_total": 0,
-            "truncated": {"waiting": False, "running": False, "exceptions": False,
+            "truncated": {"queued": False, "waiting": False, "running": False, "exceptions": False,
                           "recent": False, "lead_inbox": False},
         }
 
@@ -768,14 +769,15 @@ def _board_inbox(view, rows, cfg, now, viewer_roles, counts):
 
 def _board_work(view, rows, now, window_start, counts):
     """Rules 3-9: one place per run or job, in this order."""
-    waiting, running, recent = [], [], []
+    queued, waiting, running, recent = [], [], [], []
     exceptions = {"process_gone": [], "out_of_date": [], "unverified_recent": []}
     live_runs = []  # (role_id, started_ts) of runs in display running or waiting
 
     def place(row, dstate, older, kind=None):
-        if dstate in ("waiting", "queued"):
-            reason = "waits_on" if dstate == "waiting" else None
-            waiting.append((row, _work_item(view, row, reason, now)))
+        if dstate == "queued":
+            queued.append((row, _work_item(view, row, None, now)))
+        elif dstate == "waiting":
+            waiting.append((row, _work_item(view, row, "waits_on", now)))
         elif dstate == "running":
             if row["type"] == "job" and kind == "wait":
                 waiting.append((row, _work_item(view, row, "lead_wait", now)))
@@ -825,12 +827,14 @@ def _board_work(view, rows, now, window_start, counts):
         record = view.record(row)
         place(row, view.display(record, row["source_id"]).state, older, record.get("kind"))
 
+    queued.sort(key=_newest, reverse=True)
     waiting.sort(key=_newest, reverse=True)
     running.sort(key=_started_order, reverse=True)
     for items in exceptions.values():
         items.sort(key=_newest, reverse=True)
     recent.sort(key=_newest, reverse=True)
-    return ([item for _, item in waiting], [item for _, item in running],
+    return ([item for _, item in queued],
+            [item for _, item in waiting], [item for _, item in running],
             {key: [item for _, item in items] for key, items in exceptions.items()},
             [item for _, item in recent])
 
@@ -845,14 +849,16 @@ def _board_data(view, cfg, now, server):
         else:
             rows[row["type"]].append(row)
 
-    counts = {"needs_you": 0, "waiting": 0, "running": 0, "lead_inbox_open": 0,
+    counts = {"needs_you": 0, "queued": 0, "waiting": 0, "running": 0, "lead_inbox_open": 0,
               "lead_inbox_old": 0, "process_gone": 0, "out_of_date": 0,
               "unverified_recent": 0, "failed_recent": 0, "older_unverified": 0,
               "sessions_recent": 0}
     needs_you, lead_inbox = _board_inbox(view, rows["inbox_item"], cfg, now,
                                          set(cfg.viewer_roles), counts)
-    waiting, running, exceptions, recent = _board_work(view, rows, now, window_start, counts)
+    queued, waiting, running, exceptions, recent = _board_work(view, rows, now, window_start,
+                                                               counts)
     sessions, counts["sessions_recent"] = _board_sessions(view, rows["session"])
+    counts["queued"] = len(queued)
     counts["waiting"] = len(waiting)
     counts["running"] = len(running)
     counts["process_gone"] = len(exceptions["process_gone"])
@@ -872,6 +878,7 @@ def _board_data(view, cfg, now, server):
         "counts": counts,
         "needs_you": needs_you[:BOARD_LIST_LIMIT],
         "lead_inbox": lead_inbox[:BOARD_LIST_LIMIT],
+        "queued": queued[:BOARD_LIST_LIMIT],
         "waiting": waiting[:BOARD_LIST_LIMIT],
         "running": running[:BOARD_LIST_LIMIT],
         "exceptions": {key: items[:BOARD_EXCEPTION_LIMIT]
@@ -880,6 +887,7 @@ def _board_data(view, cfg, now, server):
         "sessions": sessions,
         "sessions_total": len(rows["session"]),
         "truncated": {
+            "queued": len(queued) > BOARD_LIST_LIMIT,
             "waiting": len(waiting) > BOARD_LIST_LIMIT,
             "running": len(running) > BOARD_LIST_LIMIT,
             "exceptions": any(len(items) > BOARD_EXCEPTION_LIMIT
