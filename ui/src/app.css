@@ -450,7 +450,7 @@ pre,
 .waiting-row .row-glyph {
   grid-area: glyph;
   align-self: start;
-  padding-top: 2px;
+  height: 20px;
 }
 
 .waiting-row .row-main {
@@ -519,7 +519,7 @@ pre,
 
 .column-head {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) 72px;
   gap: var(--space-8);
   margin: 0 calc(-1 * var(--space-8));
   padding: 0 var(--space-8) var(--space-4);
@@ -535,14 +535,13 @@ pre,
 }
 
 .running-row {
-  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1.9fr) minmax(0, 0.8fr) minmax(0, 1fr) 72px;
   column-gap: var(--space-8);
 }
 
 .running-row .row-glyph {
   grid-column: 1;
-  align-self: start;
-  padding-top: 2px;
+  align-self: center;
 }
 
 .running-row .row-title {

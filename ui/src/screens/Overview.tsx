@@ -63,6 +63,9 @@ export function Overview({ board }: { board: Board }) {
       <main className="screen">
         <SummaryLine board={board} onOpenSection={openSection} />
         {board.needs_you.length > 0 ? <Notified board={board} /> : null}
+        {board.capabilities.requests ? (
+          <LeadInbox board={board} open={open.lead_inbox} onToggle={toggle("lead_inbox")} />
+        ) : null}
         <SessionsOnly board={board} />
       </main>
     );
