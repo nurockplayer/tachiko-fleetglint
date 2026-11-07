@@ -211,6 +211,77 @@ export interface Snapshot {
   demo: boolean;
 }
 
+export type SectionReason = "waits_on" | "lead_wait";
+
+/** A run or job on the board, with the per-section fields of architecture §4.1b. */
+export type BoardWork = (RunSummary | JobSummary) & {
+  started_age_s: number | null;
+  section_reason: SectionReason | null;
+};
+
+export interface BoardInboxItem extends InboxSummary {
+  age_s: number | null;
+}
+
+export interface BoardInboxRole {
+  role_id: string;
+  open: number;
+  old: number;
+  oldest_age_s: number | null;
+  action_required: number;
+  items: BoardInboxItem[];
+}
+
+export interface BoardCounts {
+  needs_you: number;
+  queued: number;
+  waiting: number;
+  running: number;
+  lead_inbox_open: number;
+  lead_inbox_old: number;
+  process_gone: number;
+  out_of_date: number;
+  unverified_recent: number;
+  failed_recent: number;
+  older_unverified: number;
+  sessions_recent: number;
+}
+
+export interface BoardExceptions {
+  process_gone: BoardWork[];
+  out_of_date: BoardWork[];
+  unverified_recent: BoardWork[];
+}
+
+export interface Board {
+  api: 1;
+  generated_at: string;
+  server: { version: string; host: string; read_only: boolean };
+  window_hours: number;
+  inbox_old_after_s: number;
+  demo: boolean;
+  sources: Source[];
+  capabilities: { execution: boolean; requests: boolean };
+  counts: BoardCounts;
+  needs_you: BoardInboxItem[];
+  lead_inbox: BoardInboxRole[];
+  queued: BoardWork[];
+  waiting: BoardWork[];
+  running: BoardWork[];
+  exceptions: BoardExceptions;
+  recent: BoardWork[];
+  sessions: SessionSummary[];
+  sessions_total: number;
+  truncated: {
+    queued: boolean;
+    waiting: boolean;
+    running: boolean;
+    exceptions: boolean;
+    recent: boolean;
+    lead_inbox: boolean;
+  };
+}
+
 export interface Relations {
   parent: ExtendedRef | null;
   resume_of: ExtendedRef | null;

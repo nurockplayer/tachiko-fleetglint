@@ -1,12 +1,17 @@
 import { act, render } from "@testing-library/react";
-import { useSnapshot } from "./useSnapshot";
+import { useBoard } from "./useSnapshot";
 import type { Fetcher } from "./client";
-import { snapshot } from "../test-fixtures";
+import { board } from "../test-fixtures";
 import { jsonResponse, notModified, sequenceFetcher } from "../test-fetcher";
 
 function Probe({ fetcher, pollMs }: { fetcher: Fetcher; pollMs: number }) {
-  const state = useSnapshot(fetcher, pollMs);
-  return <span data-testid="received-at">{state.receivedAt ?? "null"}</span>;
+  const state = useBoard(fetcher, pollMs);
+  return (
+    <>
+      <span data-testid="received-at">{state.receivedAt ?? "null"}</span>
+      <span data-testid="running">{state.data?.counts.running ?? "none"}</span>
+    </>
+  );
 }
 
 async function until(predicate: () => boolean) {
@@ -19,11 +24,11 @@ async function until(predicate: () => boolean) {
   throw new Error("condition not reached");
 }
 
-describe("useSnapshot", () => {
-  it("moves the refresh time to the time of a 304", async () => {
+describe("useBoard", () => {
+  it("reads /api/board and moves the refresh time to the time of a 304", async () => {
     const tag = 'W/"9-1"';
-    const { fetcher } = sequenceFetcher([
-      () => jsonResponse(snapshot, 200, { ETag: tag }),
+    const { fetcher, calls } = sequenceFetcher([
+      () => jsonResponse(board, 200, { ETag: tag }),
       () => notModified(tag),
     ]);
     const { getByTestId } = render(<Probe fetcher={fetcher} pollMs={60} />);
@@ -31,8 +36,24 @@ describe("useSnapshot", () => {
 
     await until(() => probe.textContent !== "null");
     const first = Number(probe.textContent);
+    expect(calls[0].url).toBe("/api/board");
+    expect(getByTestId("running").textContent).toBe("4");
 
     // A 304 later on is a successful validation: receivedAt moves forward.
     await until(() => Number(probe.textContent) > first + 40);
+    expect(getByTestId("running").textContent).toBe("4");
+  });
+
+  it("sends If-None-Match once an ETag is known", async () => {
+    const tag = 'W/"3-abc"';
+    const { fetcher, calls } = sequenceFetcher([
+      () => jsonResponse(board, 200, { ETag: tag }),
+      () => notModified(tag),
+    ]);
+    render(<Probe fetcher={fetcher} pollMs={20} />);
+
+    await until(() => calls.length >= 2);
+    const headers = calls[1].init?.headers as unknown as Record<string, string>;
+    expect(headers["If-None-Match"]).toBe(tag);
   });
 });

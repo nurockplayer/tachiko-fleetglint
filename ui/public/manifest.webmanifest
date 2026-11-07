@@ -4,8 +4,8 @@
   "description": "Local read-only board for runs, jobs and sessions of AI agents",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#080C11",
-  "theme_color": "#080C11",
+  "background_color": "#F5F7F5",
+  "theme_color": "#F5F7F5",
   "icons": [
     {
       "src": "/icon.svg",

@@ -1,53 +1,16 @@
-import type { Evidence, ExtendedRef, Ref, Source } from "../api/types";
+import type { ExtendedRef, Ref } from "../api/types";
 import { detailHref } from "../router";
-import { formatAge } from "../format";
 
-export function SourceChip({ source }: { source: Source }) {
-  const status = source.quarantine_count > 0 && source.status === "ok" ? "quarantine" : source.status;
-  return (
-    <span
-      className="source-chip"
-      data-status={status}
-      data-source-id={source.source_id}
-      title={source.detail ?? `${source.records} records from this source`}
-    >
-      <span className="dot" aria-hidden="true" />
-      {source.source_id}
-      {status !== "ok" ? <span className="chip-status">{status}</span> : null}
-      {source.quarantine_count > 0 ? (
-        <span className="chip-status">q{source.quarantine_count}</span>
-      ) : null}
-    </span>
-  );
+/** The short key of a ref: an external ref's key, or a record's id. */
+export function refKey(ref: Ref): string {
+  if (ref.type === "external") return ref.key ?? ref.url ?? ref.kind;
+  return ref.id;
 }
 
-const EVIDENCE_LABEL: Record<Evidence["kind"], string> = {
-  process: "pid ok",
-  process_gone: "pid gone",
-  observed: "refresh",
-  expired: "no evidence",
-  terminal: "terminal",
-  writer_unknown: "writer unknown",
-  source_problem: "source problem",
-  activity: "activity",
-};
-
-/** How old the evidence is and what kind it is: `pid ok 12s`, `no evidence 42m`. */
-export function EvidenceLabel({ evidence }: { evidence: Evidence }) {
-  const age = evidence.age_s == null ? null : formatAge(evidence.age_s);
-  const label = EVIDENCE_LABEL[evidence.kind] ?? evidence.kind;
-  return (
-    <span className="evidence-label mono" data-evidence-kind={evidence.kind}>
-      {label}
-      {age ? ` ${age}` : ""}
-      {evidence.detail ? ` · ${evidence.detail}` : ""}
-    </span>
-  );
-}
-
-export function refText(ref: Ref): string {
-  if (ref.type === "external") return `${ref.kind} · ${ref.key ?? ref.url ?? "—"}`;
-  return `${ref.type} · ${ref.id}`;
+/** Words for an external ref: `job scan-3`, `github_pr owner/repo#3`. */
+export function externalRefWords(ref: Ref): string {
+  if (ref.type !== "external") return `${ref.type} ${ref.id}`;
+  return `${ref.kind} ${ref.key ?? ref.url ?? ""}`.trim();
 }
 
 export interface RefLinkProps {
@@ -56,27 +19,23 @@ export interface RefLinkProps {
 }
 
 /**
- * A record ref links to its detail route. An unresolved ref is shown with a
- * dashed underline and "not seen"; an external ref opens its url in a new tab.
+ * A record ref links to its detail route. An unresolved ref is shown with the
+ * unresolved line treatment and "not found"; an external ref opens its url in
+ * a new tab.
  */
 export function RefLink({ ref, unresolved }: RefLinkProps) {
   if (ref.type === "external") {
     const label = (
       <>
         <span className="ref-kind">{ref.kind}</span>
-        <span className="ref-id">{ref.key ?? ref.url ?? "—"}</span>
+        <span className="ref-id">{ref.key ?? ref.url ?? ""}</span>
       </>
     );
     if (!ref.url) {
       return <span className="ref-link external">{label}</span>;
     }
     return (
-      <a
-        className="ref-link external"
-        href={ref.url}
-        target="_blank"
-        rel="noreferrer noopener"
-      >
+      <a className="ref-link external" href={ref.url} target="_blank" rel="noreferrer noopener">
         {label}
       </a>
     );
@@ -93,9 +52,9 @@ export function RefLink({ ref, unresolved }: RefLinkProps) {
 
   if (isUnresolved) {
     return (
-      <span className="ref-link unresolved" title="referenced record has not been seen">
+      <span className="ref-link is-unresolved" title="the referenced record has not been seen">
         {label}
-        <span className="ref-notseen">not seen</span>
+        <span className="ref-not-found">not found</span>
       </span>
     );
   }

@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
+  ExtendedRef,
   FileResponse,
   InboxSummary,
   JobSummary,
   RecordResponse,
+  Ref,
   RunSummary,
   SessionSummary,
   Summary,
@@ -14,14 +16,15 @@ import type { DetailParams } from "../router";
 import {
   ageSince,
   formatAbsolute,
-  formatAge,
-  formatClock,
+  formatAgo,
   formatCost,
   formatNumber,
 } from "../format";
-import { StateBadge, StateTransition } from "../components/StateBadge";
-import { EvidenceLabel, RefLink } from "../components/Refs";
-import { Banner, LogTail, RelationshipTree } from "../components/Panels";
+import { STATE_LABEL, type BadgeState } from "../states";
+import { StateBadge } from "../components/StateBadge";
+import { RefLink } from "../components/Refs";
+import { Banner } from "../components/Banner";
+import { LogTail } from "../components/LogTail";
 
 interface LogTarget {
   source_id: string;
@@ -56,117 +59,203 @@ function roleOf(record: Summary): string | null {
   return (record as RunSummary).role_id;
 }
 
-function transitionAge(record: Summary): string | null {
-  const showsAge = ["stale", "lost", "unknown", "recent", "idle"].includes(
-    record.display_state,
-  );
-  if (!showsAge) return null;
-  return formatAge(record.evidence.age_s ?? ageSince(record.updated_at));
+function titleOf(record: Summary): string {
+  if (record.ref.type === "inbox_item") return record.title ?? record.ref.id;
+  if (record.ref.type === "job") {
+    const job = record as JobSummary;
+    return job.title ?? job.command_summary;
+  }
+  return record.title ?? record.ref.id;
 }
 
-function Header({ record }: { record: Summary }) {
-  let title: ReactNode = record.title ?? record.ref.id;
-  let titleMono = false;
-  let primary: ReactNode = null;
+function looksLikeSlug(text: string): boolean {
+  return !text.includes(" ") && /^[A-Za-z0-9._/#:-]+$/.test(text);
+}
 
+function modelAndAgent(record: Summary): string[] {
   if (record.ref.type === "run") {
     const run = record as RunSummary;
-    title = run.title ?? run.ref.id;
-    primary = (
-      <span className="mono">
-        {run.agent}
-        {run.model ? ` · ${run.model}` : ""}
-        {run.effort ? ` · effort ${run.effort}` : ""}
-      </span>
-    );
-  } else if (record.ref.type === "job") {
-    const job = record as JobSummary;
-    title = job.command_summary;
-    titleMono = true;
-    primary = (
-      <span className="mono">
-        {job.kind ?? "job"}
-        {job.exit_code != null ? ` · exit ${job.exit_code}` : ""}
-        {job.signal ? ` · signal ${job.signal}` : ""}
-      </span>
-    );
-  } else if (record.ref.type === "inbox_item") {
-    const item = record as InboxSummary;
-    title = `${item.kind}${item.outcome ? ` · ${item.outcome}` : ""}`;
-    titleMono = true;
-    primary = (
-      <span className="detail-line">
-        <span>
-          subject <RefLink ref={item.subject} />
-        </span>
-        {item.action_required ? <StateBadge state="attention" /> : null}
-        <span className="muted">{formatAge(ageSince(item.created_at))} old</span>
-      </span>
-    );
-  } else {
+    return [run.model, run.agent].filter((value): value is string => Boolean(value));
+  }
+  if (record.ref.type === "session") {
     const session = record as SessionSummary;
-    title = session.title ?? session.ref.id;
-    primary = (
-      <span className="mono">
-        {session.agent}
-        {session.model ? ` · ${session.model}` : ""}
-        {session.project ? ` · ${session.project}` : ""}
-        {session.entries != null ? ` · ${session.entries} entries` : ""}
-      </span>
+    return [session.model, session.agent].filter((value): value is string => Boolean(value));
+  }
+  if (record.ref.type === "job") {
+    const job = record as JobSummary;
+    return job.kind ? [job.kind] : [];
+  }
+  return [];
+}
+
+function wordsFor(state: string): string {
+  const known = STATE_LABEL[state as BadgeState];
+  return known ?? state;
+}
+
+/** One sentence about the process evidence, never a fabricated check time. */
+function evidenceSentence(record: Summary): string | null {
+  const evidence = record.evidence;
+  if (evidence.kind === "process") {
+    return evidence.age_s != null
+      ? `The wrapper process is alive, checked ${formatAgo(evidence.age_s)}.`
+      : "The wrapper process is alive.";
+  }
+  if (evidence.kind === "process_gone") {
+    return "The wrapper process is gone; no result was recorded.";
+  }
+  if (evidence.kind === "expired") {
+    return evidence.age_s != null
+      ? `No recent process check; the last check was ${formatAgo(evidence.age_s)}.`
+      : "No recent process check.";
+  }
+  if (evidence.kind === "activity") {
+    return evidence.age_s != null
+      ? `Last activity was ${formatAgo(evidence.age_s)}; activity is not proof of execution.`
+      : "Activity is not proof of execution.";
+  }
+  return null;
+}
+
+function resolvedWaitSentence(ref: Ref): string | null {
+  if (ref.type === "external") return null;
+  const extended = ref as ExtendedRef;
+  if (extended.resolved === false || !extended.display_state) {
+    return ref.type === "job" ? "Job status not found." : "Record status not found.";
+  }
+  if (ref.type !== "job") return null;
+  if (extended.display_state === "running") {
+    return "The worker has handed off and resumes when the job ends.";
+  }
+  return `The job is ${STATE_LABEL[extended.display_state]}.`;
+}
+
+/** What is happening, in words, from display state, waits, evidence and the resolved ref. */
+function happeningText(record: Summary, now: number): string {
+  const parts: string[] = [];
+  const state = record.display_state;
+
+  if (record.ref.type === "run" && state === "waiting") {
+    const waits = (record as RunSummary).waits_on[0];
+    if (waits) {
+      if (waits.type === "external") {
+        parts.push(`Waiting on ${waits.key ?? waits.kind}.`);
+      } else {
+        parts.push(`Waiting on ${waits.type} ${waits.id}.`);
+        const resolved = resolvedWaitSentence(waits);
+        if (resolved) parts.push(resolved);
+      }
+    } else {
+      parts.push("Waiting; no wait is recorded.");
+    }
+  } else if (record.ref.type === "job" && (record as JobSummary).kind === "wait") {
+    const job = record as JobSummary;
+    parts.push(
+      (job.title ?? "").startsWith("PR #")
+        ? "Waiting on review. The lead resumes when the review ends."
+        : "This is a lead's wait; the lead resumes when the job ends.",
     );
+  } else if (state === "queued") {
+    parts.push("Queued; accepted but not started.");
+  } else if (state === "running") {
+    parts.push("Running.");
+  } else if (state === "done") {
+    parts.push("Done.");
+  } else if (state === "failed") {
+    const exit = record.ref.type === "job" ? (record as JobSummary).exit_code : null;
+    parts.push(exit != null ? `Failed with exit ${exit}.` : "Failed.");
+  } else if (state === "cancelled") {
+    parts.push("Cancelled.");
+  } else if (state === "stale") {
+    const age = record.evidence.age_s ?? ageSince(record.updated_at, now);
+    parts.push(
+      age != null
+        ? `Out of date: the last update was ${formatAgo(age)}; current state cannot be verified.`
+        : "Out of date; current state cannot be verified.",
+    );
+  } else if (state === "lost") {
+    parts.push("Process gone, no result recorded.");
+  } else if (state === "unknown") {
+    parts.push("Unverified: the writer's state could not be determined.");
+  } else if (record.ref.type === "session") {
+    parts.push("Session activity is not proof of execution.");
+  } else if (record.ref.type === "inbox_item") {
+    parts.push(`From ${roleOf(record) ?? "an unknown role"}.`);
+  } else {
+    parts.push(`State: ${wordsFor(state)}.`);
   }
 
-  const startedLike =
-    record.ref.type === "run"
-      ? (record as RunSummary).started_at
-      : record.ref.type === "job"
-        ? (record as JobSummary).started_at
-        : record.ref.type === "session"
-          ? (record as SessionSummary).last_activity_at
-          : null;
+  const evidence = evidenceSentence(record);
+  if (evidence) parts.push(evidence);
+  return parts.join(" ");
+}
 
+interface Edge {
+  words: string;
+  ref: Ref;
+}
+
+function relationshipEdges(
+  record: Summary,
+  relations: RecordResponse["relations"],
+): Edge[] {
+  const edges: Edge[] = [];
+  const add = (words: string, ref: Ref | null) => {
+    if (ref) edges.push({ words, ref });
+  };
+  add("parent", relations.parent);
+  add("continues", relations.resume_of);
+  for (const ref of relations.children) add("spawned", ref);
+  for (const ref of relations.resumed_by) add("resumed by", ref);
+  for (const ref of relations.jobs) add("job", ref);
+  for (const ref of relations.inbox) add("inbox item", ref);
+  for (const ref of relations.waited_on_by) add("waited on by", ref);
+  if (record.ref.type === "run") {
+    for (const ref of (record as RunSummary).waits_on) add("waits on", ref);
+  }
+  return edges;
+}
+
+function isUnresolved(ref: Ref): boolean {
+  return ref.type !== "external" && (ref as ExtendedRef).resolved === false;
+}
+
+function EvidenceLine({ record, now }: { record: Summary; now: number }) {
+  const evidence = record.evidence;
+  const observed = formatAgo(ageSince(record.observed_at, now));
+  let process: string;
+  if (evidence.kind === "process") {
+    process =
+      evidence.age_s != null
+        ? `process check: checked ${formatAgo(evidence.age_s)}`
+        : "process check: alive, no age recorded";
+  } else if (evidence.kind === "process_gone") {
+    process = "process check: the process is gone";
+  } else if (evidence.kind === "expired") {
+    process =
+      evidence.age_s != null
+        ? `process check: none recent; last check ${formatAgo(evidence.age_s)}`
+        : "process check: none recent";
+  } else {
+    process = "process check: not observable";
+  }
   return (
-    <header className="detail-head">
-      <div className="breadcrumb">
-        Overview / {record.project ?? "—"} / {record.ref.type} · {record.ref.id}
-      </div>
-      <h1 className={`detail-title${titleMono ? " is-mono" : ""}`}>{title}</h1>
-      <div className="detail-line">
-        <StateTransition
-          writerState={record.state}
-          displayState={record.display_state}
-          age={transitionAge(record)}
-        />
-        {primary}
-      </div>
-      <div className="detail-line">
-        <span>
-          role <span className="mono">{roleOf(record) ?? "—"}</span>
-        </span>
-        <span>
-          source <span className="mono">{record.ref.source_id}</span>
-        </span>
-        {startedLike ? (
-          <span>
-            started{" "}
-            <span className="mono" title={formatAbsolute(startedLike)}>
-              {formatAbsolute(startedLike)}
-            </span>
-          </span>
-        ) : null}
-        <EvidenceLabel evidence={record.evidence} />
-      </div>
-      {record.ref.type === "inbox_item" && (record as InboxSummary).detail ? (
-        <p className="inbox-detail">{(record as InboxSummary).detail}</p>
-      ) : null}
-    </header>
+    <ul className="evidence-list">
+      <li>{process}</li>
+      <li>writer state: {wordsFor(record.state)}</li>
+      <li>
+        source: <span className="mono">{record.ref.source_id}</span>
+        {observed ? ` · observed ${observed}` : ""}
+      </li>
+      {evidence.detail ? <li>evidence: {evidence.detail}</li> : null}
+    </ul>
   );
 }
 
-function UsagePanel({ usage }: { usage: Usage }) {
+function UsageDetails({ usage }: { usage: Usage }) {
   return (
-    <section className="panel" aria-label="Usage">
-      <h2>Usage</h2>
+    <details className="detail-details">
+      <summary>Usage</summary>
       <dl className="usage-grid">
         {usage.input_tokens != null ? (
           <div>
@@ -194,38 +283,12 @@ function UsagePanel({ usage }: { usage: Usage }) {
           </div>
         ) : null}
       </dl>
-      <p className="basis-note">
+      <p className="quiet">
         token basis: {usage.basis}
         {usage.cost ? ` · cost basis: ${usage.cost.basis}` : ""} · cost bases are never
         added together
       </p>
-    </section>
-  );
-}
-
-function LinksPanel({ record }: { record: Summary }) {
-  if (record.links.length === 0) return null;
-  return (
-    <section className="panel" aria-label="Links">
-      <h2>Links</h2>
-      <ul className="link-list">
-        {record.links.map((link, index) => (
-          <li key={`${link.label}/${index}`}>
-            <span className="label">{link.label}</span>
-            {link.url ? (
-              <a href={link.url} target="_blank" rel="noreferrer noopener">
-                {link.url}
-              </a>
-            ) : (
-              <span className="path">{link.path}</span>
-            )}
-            {link.path && link.readable === false ? (
-              <span className="not-readable">not readable</span>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    </section>
+    </details>
   );
 }
 
@@ -245,7 +308,7 @@ interface FileState {
 export function RunDetail({
   params,
   fetcher,
-  pollMs = 3000,
+  pollMs = 15000,
 }: {
   params: DetailParams;
   fetcher: Fetcher;
@@ -417,104 +480,164 @@ export function RunDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher, fileKey, fileRetry]);
 
-  const receivedClock =
-    detail.receivedAt != null
-      ? formatClock(new Date(detail.receivedAt).toISOString())
-      : null;
-
   if (detail.loading && !detail.data) {
     return (
-      <main className="screen detail">
-        <p className="muted">loading record…</p>
+      <main className="screen detail-screen">
+        <p className="quiet">Loading record…</p>
       </main>
     );
   }
 
   if (!detail.data) {
     return (
-      <main className="screen detail">
-        <Banner kind="unavailable">{detail.error ?? "the record could not be read"}</Banner>
-        <p className="muted" style={{ marginTop: "16px" }}>
-          The record could not be read. Reload to try again.
-        </p>
+      <main className="screen detail-screen">
+        <Banner kind="unavailable">
+          {detail.error ?? "the record could not be read"} · current state cannot be
+          verified
+        </Banner>
       </main>
     );
   }
 
   const data = detail.data;
   const current = data.record;
-  const usage = data.usage ?? (current.ref.type === "session" ? (current as SessionSummary).usage : null);
-  const ownedJobs = current.ref.type === "run" ? data.relations.jobs : [];
-  const waitsOn = current.ref.type === "run" ? (current as RunSummary).waits_on : [];
+  const now = Date.parse(data.generated_at);
+  const usage =
+    data.usage ?? (current.ref.type === "session" ? (current as SessionSummary).usage : null);
+  const edges = relationshipEdges(current, data.relations);
+  const title = titleOf(current);
+  const role = roleOf(current);
+  const meta = modelAndAgent(current);
 
   return (
-    <main className="screen detail">
+    <main className="screen detail-screen">
       {detail.error ? (
-        <>
-          <Banner kind="unavailable">
-            {detail.error}
-            {receivedClock
-              ? ` — last good data from ${receivedClock}`
-              : " — no data available"}
-          </Banner>
-          <p className="stale-note">
-            Showing last good data from {receivedClock ?? "an earlier poll"} — not
-            current.
+        <Banner kind="unavailable">
+          {detail.error} · last successful refresh{" "}
+          {detail.receivedAt != null
+            ? formatAgo((Date.now() - detail.receivedAt) / 1000)
+            : "unknown"}{" "}
+          · current state cannot be verified
+        </Banner>
+      ) : null}
+
+      <div className={`detail-body${detail.error ? " is-stale" : ""}`}>
+        <nav className="breadcrumb" aria-label="Breadcrumb">
+          <a href="/">Overview</a>
+          <span className="breadcrumb-sep"> / </span>
+          <span>{current.project ?? "no project"}</span>
+          <span className="breadcrumb-sep"> / </span>
+          <span>{title}</span>
+        </nav>
+
+        <header className="detail-head">
+          <StateBadge state={current.display_state} />
+          <h1 className={`detail-title${looksLikeSlug(title) ? " mono" : ""}`}>{title}</h1>
+          <p className="detail-meta">
+            {meta.length > 0 ? <span>{meta.join(" · ")}</span> : null}
+            {role ? (
+              <>
+                {meta.length > 0 ? <span className="detail-sep"> · </span> : null}
+                <span>role {role}</span>
+              </>
+            ) : null}
           </p>
-        </>
-      ) : null}
+        </header>
 
-      <div className="stale-data" data-stale={detail.error ? "true" : undefined}>
-      <Header record={current} />
-
-      {ownedJobs.length > 0 ? (
-        <section className="panel" aria-label="Owned jobs">
-          <h2>Owned jobs</h2>
-          {ownedJobs.map((ref) => (
-            <div className="rel-item" key={`${ref.source_id}/${ref.id}`}>
-              <RefLink ref={ref} />
-              {ref.display_state ? <StateBadge state={ref.display_state} /> : null}
-              {ref.title ? <span className="muted">{ref.title}</span> : null}
-            </div>
-          ))}
+        <section className="panel" aria-label="What is happening">
+          <h2>What is happening</h2>
+          <p>{happeningText(current, now)}</p>
         </section>
-      ) : null}
 
-      <RelationshipTree relations={data.relations} waitsOn={waitsOn} />
+        <section className="panel" aria-label="Relationships">
+          <h2>Relationships</h2>
+          {edges.length === 0 ? (
+            <p className="quiet">No relationships recorded.</p>
+          ) : (
+            <ol className="relationship-chain">
+              {edges.map((edge, index) => (
+                <li
+                  className={`relationship-edge${isUnresolved(edge.ref) ? " is-unresolved" : ""}`}
+                  key={`${edge.words}/${edge.ref.type === "external" ? edge.ref.kind : edge.ref.id}/${index}`}
+                >
+                  <span className="edge-words">{edge.words}</span>
+                  <RefLink ref={edge.ref} />
+                  {edge.ref.type !== "external" && (edge.ref as ExtendedRef).display_state ? (
+                    <StateBadge
+                      state={(edge.ref as ExtendedRef).display_state as BadgeState}
+                      variant="glyph"
+                    />
+                  ) : null}
+                  {edge.ref.type !== "external" && (edge.ref as ExtendedRef).title ? (
+                    <span className="edge-title">{(edge.ref as ExtendedRef).title}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
 
-      {data.history.length > 0 ? (
-        <section className="panel" aria-label="Version history">
-          <h2>Version history</h2>
+        <section className="panel" aria-label="Evidence">
+          <h2>Evidence</h2>
+          <EvidenceLine record={current} now={now} />
+        </section>
+
+        {current.ref.type === "run" || current.ref.type === "job" ? (
+          <section className="panel log-panel" aria-label="Log">
+            <h2>Log</h2>
+            {target ? (
+              <LogTail file={file.data} loading={file.loading} error={file.error} />
+            ) : (
+              <p className="quiet">No log attached to this record.</p>
+            )}
+          </section>
+        ) : null}
+
+        {usage ? <UsageDetails usage={usage} /> : null}
+
+        <details className="detail-details">
+          <summary>Version history</summary>
           <ul className="history-list">
             {data.history.map((entry) => (
               <li key={`${entry.seq}/${entry.byte_offset}`}>
-                <span>#{entry.seq}</span>
+                <span className="mono">#{entry.seq}</span>
                 <span title={formatAbsolute(entry.updated_at)}>
                   {formatAbsolute(entry.updated_at)}
                 </span>
-                <span>{entry.state}</span>
-                <span className="muted">position {entry.byte_offset}</span>
+                <span>{wordsFor(entry.state)}</span>
+                <span className="quiet">position {entry.byte_offset}</span>
               </li>
             ))}
           </ul>
-        </section>
-      ) : null}
+        </details>
 
-      {usage ? <UsagePanel usage={usage} /> : null}
+        {current.links.length > 0 ? (
+          <details className="detail-details">
+            <summary>Links</summary>
+            <ul className="link-list">
+              {current.links.map((link, index) => (
+                <li key={`${link.label}/${index}`}>
+                  <span className="link-label">{link.label}</span>
+                  {link.url ? (
+                    <a href={link.url} target="_blank" rel="noreferrer noopener">
+                      {link.url}
+                    </a>
+                  ) : (
+                    <span className="mono">{link.path}</span>
+                  )}
+                  {link.path && link.readable === false ? (
+                    <span className="quiet">not readable</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
 
-      <LinksPanel record={current} />
-
-      {target ? (
-        <section className="panel" aria-label="Log">
-          <h2>Log</h2>
-          <LogTail file={file.data} loading={file.loading} error={file.error} />
-        </section>
-      ) : null}
-
-      <details className="raw">
-        <summary>Raw fields (redacted)</summary>
-        <pre>{JSON.stringify(data.full, null, 2)}</pre>
-      </details>
+        <details className="detail-details">
+          <summary>Raw fields (redacted)</summary>
+          <pre>{JSON.stringify(data.full, null, 2)}</pre>
+        </details>
       </div>
     </main>
   );

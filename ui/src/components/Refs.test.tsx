@@ -8,19 +8,19 @@ describe("RefLink", () => {
         ref={{
           type: "external",
           kind: "github_pr",
-          key: "nurockplayer/eddington-1919#176",
-          url: "https://github.com/nurockplayer/eddington-1919/pull/176",
+          key: "example/repo#176",
+          url: "https://example.invalid/example/repo/pull/176",
         }}
       />,
     );
     const link = screen.getByRole("link");
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noreferrer noopener");
-    expect(link).toHaveTextContent("github_pr");
-    expect(link).toHaveTextContent("nurockplayer/eddington-1919#176");
+    expect(screen.getByText("github_pr")).toBeInTheDocument();
+    expect(screen.getByText("example/repo#176")).toBeInTheDocument();
   });
 
-  it("shows an unresolved record ref as not seen", () => {
+  it("shows an unresolved record ref as not found", () => {
     render(
       <RefLink
         ref={{
@@ -31,7 +31,7 @@ describe("RefLink", () => {
         }}
       />,
     );
-    expect(screen.getByText("not seen")).toBeInTheDocument();
+    expect(screen.getByText("not found")).toBeInTheDocument();
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.getByText("old-worker-88-retry")).toBeInTheDocument();
   });

@@ -1,38 +1,46 @@
-import { useState } from "react";
-import type { RunSummary, Snapshot } from "../api/types";
-import { isTerminal } from "../states";
-import { countNoun } from "../format";
-import { CountTile, JobRow, RunRow, SessionRow } from "../components/Rows";
-import { EmptyState, TruncationNote } from "../components/Panels";
+import { useRef, useState } from "react";
+import type { Board } from "../api/types";
+import { SummaryLine } from "../components/SummaryLine";
+import { Notified } from "../components/Notified";
+import { Waiting } from "../components/Waiting";
+import { Running } from "../components/Running";
+import { LeadInbox } from "../components/LeadInbox";
+import { Exceptions } from "../components/Exceptions";
+import { Recent } from "../components/Recent";
+import { Sessions, SessionsOnly } from "../components/Sessions";
+import { EmptyState } from "../components/EmptyState";
 
-type Grouping = "project" | "role";
+type SectionKey = "lead_inbox" | "exceptions" | "recent" | "sessions";
 
-function groupRuns(
-  runs: RunSummary[],
-  grouping: Grouping,
-): Array<{ key: string; runs: RunSummary[] }> {
-  const groups = new Map<string, RunSummary[]>();
-  for (const run of runs) {
-    const key =
-      grouping === "project" ? (run.project ?? "no project") : (run.role_id ?? "no role");
-    const existing = groups.get(key);
-    if (existing) existing.push(run);
-    else groups.set(key, [run]);
-  }
-  return Array.from(groups, ([key, grouped]) => ({ key, runs: grouped }));
+const INITIAL_OPEN: Record<SectionKey, boolean> = {
+  lead_inbox: false,
+  exceptions: false,
+  recent: false,
+  sessions: false,
+};
+
+/** First-seen project order, kept in a ref so a refresh never reorders groups. */
+function useProjectOrder(board: Board): string[] {
+  const order = useRef<string[]>([]);
+  const seen = new Set(order.current);
+  const fresh = Array.from(
+    new Set(board.running.map((work) => work.project ?? "no project")),
+  ).filter((project) => !seen.has(project));
+  if (fresh.length > 0) order.current = [...order.current, ...fresh];
+  return order.current;
 }
 
-export function Overview({ snapshot }: { snapshot: Snapshot }) {
-  const [grouping, setGrouping] = useState<Grouping>("project");
+/**
+ * The viewer's first screen (visual spec §5), top to bottom and nothing else:
+ * notification, waiting and running work at a glance, then quiet aggregates.
+ */
+export function Overview({ board }: { board: Board }) {
+  const [open, setOpen] = useState<Record<SectionKey, boolean>>(INITIAL_OPEN);
+  const projectOrder = useProjectOrder(board);
+  const toggle = (key: SectionKey) => () =>
+    setOpen((previous) => ({ ...previous, [key]: !previous[key] }));
 
-  const isEmpty =
-    snapshot.sources.length === 0 &&
-    snapshot.runs.length === 0 &&
-    snapshot.jobs.length === 0 &&
-    snapshot.inbox.length === 0 &&
-    snapshot.sessions.length === 0;
-
-  if (isEmpty) {
+  if (board.sources.length === 0) {
     return (
       <main className="screen">
         <EmptyState />
@@ -40,135 +48,40 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
     );
   }
 
-  const active = snapshot.runs.filter((run) => !isTerminal(run.display_state));
-  const terminal = snapshot.runs.filter((run) => isTerminal(run.display_state));
-  const groups = groupRuns(active, grouping);
-  const projects = new Set(snapshot.runs.map((run) => run.project ?? "no project"));
+  const exceptions =
+    board.counts.process_gone +
+    board.counts.out_of_date +
+    board.counts.unverified_recent;
+
+  if (!board.capabilities.execution) {
+    return (
+      <main className="screen">
+        <SummaryLine board={board} />
+        {board.needs_you.length > 0 ? <Notified board={board} /> : null}
+        <SessionsOnly board={board} />
+      </main>
+    );
+  }
 
   return (
     <main className="screen">
-      <div className="screen-head">
-        <h1>Overview</h1>
-        <p className="summary-line">
-          {projects.size} projects · {countNoun(snapshot.runs.length, "run", snapshot.truncated.runs)} ·{" "}
-          {countNoun(snapshot.jobs.length, "job", snapshot.truncated.jobs)} · read-only
-        </p>
+      <SummaryLine board={board} />
+      <Notified board={board} />
+      <div className="columns">
+        <Waiting board={board} />
+        <Running board={board} projectOrder={projectOrder} />
       </div>
-
-      <div className="tiles">
-        <CountTile
-          label="Running"
-          value={snapshot.counts.running}
-          states={["running"]}
-          href="/"
-        />
-        <CountTile
-          label="Waiting"
-          value={snapshot.counts.waiting}
-          states={["waiting"]}
-          href="/"
-        />
-        <CountTile
-          label="Needs attention"
-          value={snapshot.counts.attention}
-          states={["attention"]}
-          href="/attention"
-          note={
-            snapshot.counts.attention > snapshot.attention.length
-              ? `Showing ${snapshot.attention.length} of ${snapshot.counts.attention}`
-              : undefined
-          }
-        />
-        <CountTile
-          label="Stale / lost / unknown"
-          value={snapshot.counts.stale_lost_unknown}
-          states={["stale", "lost", "unknown"]}
-          href="/attention"
-        />
-      </div>
-
-      <section className="section" aria-label="Runs">
-        <div className="section-head">
-          <h2>Runs</h2>
-          {snapshot.truncated.runs ? (
-            <TruncationNote truncated shown={snapshot.runs.length} noun="runs" />
-          ) : (
-            <span className="count">{active.length} active</span>
-          )}
-          <div className="grouping">
-            <span className="label">group by</span>
-            <button
-              type="button"
-              aria-pressed={grouping === "project"}
-              onClick={() => setGrouping("project")}
-            >
-              project
-            </button>
-            <button
-              type="button"
-              aria-pressed={grouping === "role"}
-              onClick={() => setGrouping("role")}
-            >
-              role
-            </button>
-          </div>
-        </div>
-        {groups.map((group) => (
-          <div className="row-group" key={group.key}>
-            <div className="row-group-head">
-              <strong>{group.key}</strong>
-              <span className="count">{countNoun(group.runs.length, "run")}</span>
-            </div>
-            {group.runs.map((run) => (
-              <RunRow key={`${run.ref.source_id}/${run.ref.id}`} run={run} />
-            ))}
-          </div>
-        ))}
-      </section>
-
-      <section className="section" aria-label="Jobs">
-        <div className="section-head">
-          <h2>Jobs</h2>
-          {snapshot.truncated.jobs ? (
-            <TruncationNote truncated shown={snapshot.jobs.length} noun="jobs" />
-          ) : (
-            <span className="count">{snapshot.jobs.length}</span>
-          )}
-        </div>
-        {snapshot.jobs.map((job) => (
-          <JobRow key={`${job.ref.source_id}/${job.ref.id}`} job={job} />
-        ))}
-      </section>
-
-      <section className="section" aria-label="Sessions">
-        <div className="section-head">
-          <h2>Sessions</h2>
-          {snapshot.truncated.sessions ? (
-            <TruncationNote truncated shown={snapshot.sessions.length} noun="sessions" />
-          ) : (
-            <span className="count">{snapshot.sessions.length}</span>
-          )}
-        </div>
-        <p className="hint">
-          found in local history; activity, not proof of execution
-        </p>
-        <div className="session-list">
-          {snapshot.sessions.map((session) => (
-            <SessionRow key={`${session.ref.source_id}/${session.ref.id}`} session={session} />
-          ))}
-        </div>
-      </section>
-
-      {terminal.length > 0 ? (
-        <details className="terminal-runs">
-          <summary>
-            Recent terminal runs ({terminal.length}
-            {snapshot.truncated.runs ? "+" : ""}) — done work recedes
-          </summary>
-          {terminal.map((run) => (
-            <RunRow key={`${run.ref.source_id}/${run.ref.id}`} run={run} />
-          ))}
-        </details>
+      {board.counts.lead_inbox_open > 0 ? (
+        <LeadInbox board={board} open={open.lead_inbox} onToggle={toggle("lead_inbox")} />
+      ) : null}
+      {exceptions > 0 || board.counts.older_unverified > 0 ? (
+        <Exceptions board={board} open={open.exceptions} onToggle={toggle("exceptions")} />
+      ) : null}
+      {board.counts.failed_recent > 0 || board.recent.length > 0 ? (
+        <Recent board={board} open={open.recent} onToggle={toggle("recent")} />
+      ) : null}
+      {board.sessions.length > 0 ? (
+        <Sessions board={board} open={open.sessions} onToggle={toggle("sessions")} />
       ) : null}
     </main>
   );
