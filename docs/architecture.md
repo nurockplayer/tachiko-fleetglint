@@ -504,6 +504,11 @@ poll_s = 2
 default_stale_after_s = 900
 window_hours = 24
 
+[ui]
+viewer_roles = ["owner"]   # inbox items for these roles are "You were notified"
+needs_you_hours = 24
+inbox_old_after_s = 14400
+
 [retention]
 segment_days = 30
 abandon_days = 90

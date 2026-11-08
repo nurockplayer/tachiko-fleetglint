@@ -2,6 +2,7 @@ import type { Board, BoardWork } from "../api/types";
 import { StateBadge, type StateBadgeProps } from "./StateBadge";
 import { CollapsibleSection } from "./Section";
 import { WorkRow, updatedAgo, workRole, workTitle } from "./Rows";
+import { countNoun } from "../format";
 
 function ExceptionRow({ work, now }: { work: BoardWork; now: number }) {
   const role = workRole(work);
@@ -68,7 +69,7 @@ export function Exceptions({ board, open, onToggle }: ExceptionsProps) {
         <>
           <span className="summary-dot"> · </span>
           <a href="/history">
-            {counts.older_unverified} older records unverified, in history
+            {countNoun(counts.older_unverified, "older record")} unverified, in history
           </a>
         </>
       ) : null}
@@ -81,7 +82,7 @@ export function Exceptions({ board, open, onToggle }: ExceptionsProps) {
   return (
     <CollapsibleSection
       id="exceptions"
-      heading={`${total} exceptions`}
+      heading={countNoun(total, "exception")}
       open={open}
       onToggle={onToggle}
       ariaLabel="Exceptions"
