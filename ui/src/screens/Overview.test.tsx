@@ -73,6 +73,25 @@ describe("Overview", () => {
     );
   });
 
+  it("says 1 exception and 1 older record in the singular", () => {
+    const one = {
+      ...board,
+      counts: {
+        ...board.counts,
+        process_gone: 0,
+        out_of_date: 1,
+        unverified_recent: 0,
+        older_unverified: 1,
+      },
+    };
+    render(<Overview board={one} />);
+    expect(within(summary()).getByRole("link", { name: "1 exception" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: /^1 exception$/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "1 older record unverified, in history" }),
+    ).toBeInTheDocument();
+  });
+
   it("keeps the spec §5 order from top to bottom", () => {
     render(<Overview board={board} />);
     const headings = screen

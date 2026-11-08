@@ -69,7 +69,7 @@ export function SummaryLine({
   }
   parts.push(
     <CountLink key="lead-inbox" href="#lead-inbox" onOpen={onOpenSection} count={counts.lead_inbox_open} noun="lead inbox" />,
-    <CountLink key="exceptions" href="#exceptions" onOpen={onOpenSection} count={exceptions} noun="exceptions" />,
+    <CountLink key="exceptions" href="#exceptions" onOpen={onOpenSection} count={exceptions} noun={exceptions === 1 ? "exception" : "exceptions"} />,
   );
 
   return (

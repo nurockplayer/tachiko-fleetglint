@@ -19,7 +19,7 @@ brew install nurockplayer/fleetglint/fleetglint
 pipx:
 
 ```sh
-pipx install https://github.com/nurockplayer/tachiko-fleetglint/releases/download/v0.1.0/fleetglint-0.1.0-py3-none-any.whl
+pipx install https://github.com/nurockplayer/tachiko-fleetglint/releases/download/v0.1.1/fleetglint-0.1.1-py3-none-any.whl
 ```
 
 Fleetglint needs Python 3.11 or later. It runs on macOS and Linux and has no
