@@ -7,7 +7,7 @@
   "required": ["v", "type", "id", "source_id", "updated_at"],
   "properties": {
     "v": {"const": 1},
-    "type": {"enum": ["run", "job", "inbox_item", "session"]},
+    "type": {"enum": ["run", "job", "inbox_item", "session", "decision"]},
     "id": {"$ref": "#/$defs/id"},
     "source_id": {"$ref": "#/$defs/source_id"},
     "updated_at": {"$ref": "#/$defs/timestamp"},
@@ -21,7 +21,8 @@
     {"if": {"properties": {"type": {"const": "run"}}}, "then": {"$ref": "#/$defs/run"}},
     {"if": {"properties": {"type": {"const": "job"}}}, "then": {"$ref": "#/$defs/job"}},
     {"if": {"properties": {"type": {"const": "inbox_item"}}}, "then": {"$ref": "#/$defs/inbox_item"}},
-    {"if": {"properties": {"type": {"const": "session"}}}, "then": {"$ref": "#/$defs/session"}}
+    {"if": {"properties": {"type": {"const": "session"}}}, "then": {"$ref": "#/$defs/session"}},
+    {"if": {"properties": {"type": {"const": "decision"}}}, "then": {"$ref": "#/$defs/decision"}}
   ],
   "$defs": {
     "id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\s\\x00-\\x1f\\x7f]+$"},
@@ -110,6 +111,14 @@
       "then": {"required": ["ended_at"]}
     },
 
+    "decision": {
+      "required": ["role_id", "text", "decided_at"],
+      "properties": {
+        "role_id": {"$ref": "#/$defs/role_id"},
+        "text": {"type": "string", "maxLength": 1000},
+        "decided_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
     "run": {
       "required": ["state", "agent"],
       "properties": {
@@ -119,6 +128,7 @@
         "provider": {"type": "string", "minLength": 1, "maxLength": 64},
         "effort": {"type": "string", "minLength": 1, "maxLength": 32},
         "role_id": {"$ref": "#/$defs/role_id"},
+        "worker": {"type": "string", "maxLength": 200},
         "session_id": {"type": "string", "minLength": 1, "maxLength": 200},
         "parent_run": {"$ref": "#/$defs/run_ref"},
         "resume_of": {"$ref": "#/$defs/run_ref"},

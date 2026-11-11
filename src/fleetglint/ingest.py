@@ -911,6 +911,8 @@ def _blocks_retention(record, abandon_cutoff):
 
 
 def _terminal(record):
+    if record["type"] == "decision":
+        return True
     if record["type"] == "inbox_item":
         return record["state"] == "acked"
     if record["type"] == "session":

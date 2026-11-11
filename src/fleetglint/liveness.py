@@ -20,7 +20,7 @@ class Display:
 
 
 def is_terminal(record: dict) -> bool:
-    return record.get("state") in TERMINAL_STATES
+    return record.get("type") == "decision" or record.get("state") in TERMINAL_STATES
 
 
 def _parse_ts(value):
@@ -72,7 +72,7 @@ def display(record: dict, now: datetime, *, default_stale_after_s=DEFAULT_STALE_
     activity_field = "last_activity_at" if record_type == "session" else "observed_at"
     age = _age(record, now, activity_field)
     if is_terminal(record):
-        return Display(state, "terminal", None)
+        return Display("done" if record_type == "decision" else state, "terminal", None)
     if not source_ok:
         return Display("unknown", "source_problem", age)
     if record_type == "inbox_item":

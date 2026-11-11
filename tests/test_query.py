@@ -35,7 +35,7 @@ RELATION_KEYS = {"parent", "resume_of", "children", "resumed_by", "jobs", "inbox
                  "waited_on_by"}
 BOARD_KEYS = {"api", "generated_at", "server", "window_hours", "inbox_old_after_s", "demo", "sources",
               "capabilities", "counts", "needs_you", "lead_inbox", "queued", "waiting", "running",
-              "exceptions", "recent", "sessions", "sessions_total", "truncated"}
+              "exceptions", "recent", "sessions", "sessions_total", "truncated", "projects"}
 BOARD_COUNT_KEYS = {"needs_you", "queued", "waiting", "running", "lead_inbox_open", "lead_inbox_old",
                     "process_gone", "out_of_date", "unverified_recent", "failed_recent",
                     "older_unverified", "sessions_recent"}
@@ -651,6 +651,22 @@ class BoardTest(unittest.TestCase):
         return {item["ref"]["id"]: item for item in items}
 
     # --- shape ------------------------------------------------------------
+
+    def test_project_board_groups_waiting_job_and_recent_decisions(self):
+        self.write([
+            run("waiting-run", state="waiting", project="alpha", waits_on=[{"type": "job", "id": "job1"}]),
+            job("job1", project="alpha"),
+            run("failed", state="failed", project="beta", summary="broken", ended_at=stamp()),
+            {"v": 1, "type": "decision", "id": "new", "source_id": "work@mbp", "updated_at": stamp(), "role_id": "alpha-lead", "text": "ship", "decided_at": stamp()},
+            {"v": 1, "type": "decision", "id": "old", "source_id": "work@mbp", "updated_at": stamp(days=-8), "role_id": "alpha-lead", "text": "old", "decided_at": stamp(days=-8)},
+        ])
+        projects = self.board()["projects"]
+        self.assertEqual(projects[0]["project"], "beta")
+        alpha = next(p for p in projects if p["project"] == "alpha")
+        self.assertEqual([i["ref"]["id"] for i in alpha["in_progress"]], ["waiting-run"])
+        self.assertEqual(alpha["in_progress"][0]["jobs"][0]["ref"]["id"], "job1")
+        self.assertEqual([d["ref"]["id"] for d in alpha["decisions"]], ["new"])
+        self.assertEqual(projects[0]["needs_you"][0]["section_reason"], "broken")
 
     def test_board_shape_and_redaction(self):
         self.write([

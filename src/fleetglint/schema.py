@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 
 MAX_LINE_BYTES = 65536
-RECORD_TYPES = frozenset({"run", "job", "inbox_item", "session"})
+RECORD_TYPES = frozenset({"run", "job", "inbox_item", "session", "decision"})
 
 _ANNOTATIONS = {"title", "description", "$schema", "$id"}
 _KEYWORDS = _ANNOTATIONS | {

@@ -44,7 +44,11 @@ def run(args, now=None):
 
 def build(now):
     """Every record the demo writes, in write order."""
-    return _chain(now) + _extras(now)
+    return _chain(now) + _extras(now) + [
+        _record("decision", f"demo-decision-{i}", now,
+                {"project": project, "role_id": "demo-lead", "text": "Proceed with the planned work",
+                 "decided_at": _stamp(now)})
+        for i, project in enumerate(PROJECTS[:2], 1)]
 
 
 def _chain(now):
@@ -73,6 +77,7 @@ def _chain(now):
         "parent_run": {"type": "run", "id": "demo-lead-1"},
         "session_id": WORKER_SESSION,
         "title": "[demo] fix-retry: fix the blinking store badge",
+        "worker": "fix-retry",
     }
     job = {
         "project": PROJECTS[0],
