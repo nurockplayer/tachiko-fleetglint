@@ -739,7 +739,7 @@ class HarnessAdapter:
         """A run's role comes from the wait-worker job that launched it, when the job's
         worker name and its time window both fit. Titles alone are never enough."""
         for record in records:
-            title = record.get("title")
+            title = record.get("worker") or record.get("title")
             started = _parse_rfc3339(record.get("started_at", ""))
             if (record.get("type") != "run" or "role_id" in record
                     or not title or started is None):
