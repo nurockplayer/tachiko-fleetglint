@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from fleetglint.adapters import harness
+from fleetglint import liveness
 
 FIXTURES = Path(__file__).parent / "fixtures" / "harness" / "state"
 JST = timezone(timedelta(hours=9))
@@ -231,7 +232,22 @@ class HarnessAdapterTest(unittest.TestCase):
         keyed = records[run_id("ds", "/Users/example/.local/state/ds-exec/flash-sub.log")]
         self.assertEqual(keyed["state"], "running")
         self.assertEqual(keyed["provider"], "deepseek")
-        self.assertEqual(keyed["process"]["pid"], 4002)
+        self.assertNotIn("process", keyed)
+
+    def test_keyed_running_marker_expires_from_start_time(self):
+        for age, expected in ((timedelta(minutes=10), "running"),
+                              (timedelta(days=2), "stale")):
+            with self.subTest(age=age), tempfile.TemporaryDirectory() as tmp:
+                state = make_state(tmp)
+                started = NOW - age
+                write_running(state, 4100, "-", tool="sonnet", epoch=str(int(started.timestamp())))
+                running = state / "worker-ledger" / "running"
+                (running / "sonnet.4100").rename(running / "sonnet.4100.toolu_01GQ")
+                record = harness.HarnessAdapter(state, hostname="h").scan(NOW).records[0]
+                self.assertNotIn("process", record)
+                self.assertEqual(record["observed_at"], record["started_at"])
+                self.assertEqual(record["stale_after_s"], 21600)
+                self.assertEqual(liveness.display(record, NOW).state, expected)
 
     def test_vanished_running_entry_is_left_to_the_liveness_layer(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -391,6 +407,15 @@ class HarnessAdapterTest(unittest.TestCase):
             self.assertEqual(harness._project_from_path(str(root / "elsewhere" / "topic")), "bare")
         self.assertEqual(harness._project_from_path("/gone/repo/.claude/worktrees/x"), "repo")
         self.assertEqual(harness._project_from_path("/gone/plain"), "plain")
+
+    def test_git_repo_name_with_nested_worktrees_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            worktree = root / "linked"
+            worktree.mkdir()
+            (worktree / ".git").write_text(
+                f"gitdir: {root}/worktrees/app/.git/worktrees/feature\n")
+            self.assertEqual(harness._project_from_path(str(worktree)), "app")
 
     def test_jobs(self):
         records = by_id(self.result.records)
@@ -646,6 +671,20 @@ class HarnessAdapterTest(unittest.TestCase):
             result = harness.HarnessAdapter(state, hostname="h").scan(NOW)
         self.assertEqual(result.records, [])
         self.assertIsNone(result.detail)
+
+    def test_owner_notify_reserved_keys_and_length(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            (state / "owner-notify").mkdir()
+            (state / "owner-notify" / "log.tsv").write_text(
+                "2026-11-07 07:08 JST\t-\tlead\tsent\tunkeyed\n"
+                "2026-11-07 07:09 JST\tline.1\tlead\tsent\texplicit\n"
+                "2026-11-07 07:10 JST\tkey:x\tlead\tsent\tescaped\n"
+                f"2026-11-07 07:11 JST\tline.{'x' * 180}\tlead\tsent\ttoo long\n")
+            result = harness.HarnessAdapter(state, hostname="h").scan(NOW)
+        self.assertEqual(set(by_id(result.records)), {
+            "owner-notify.line.1", "owner-notify.key:line.1", "owner-notify.key:key:x"})
+        self.assertEqual(result.detail, "1 malformed row(s) skipped")
 
     def test_every_record_passes_minimal_schema(self):
         for record in self.result.records:

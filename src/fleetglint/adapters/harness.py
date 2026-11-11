@@ -320,7 +320,7 @@ def _git_repo_name(path):
                 with entry.open(encoding="utf-8", errors="replace") as handle:
                     line = handle.read(4096).strip()
                 if line.startswith("gitdir:") and "/worktrees/" in line:
-                    common = line[len("gitdir:"):].strip().split("/worktrees/", 1)[0]
+                    common = line[len("gitdir:"):].strip().rsplit("/worktrees/", 1)[0]
                     if common.endswith("/.git"):
                         common = common[:-len("/.git")]
                     return os.path.basename(common.removesuffix(".git").rstrip("/"))
@@ -483,21 +483,21 @@ class HarnessAdapter:
             return None
         record_id = (_run_identity(tool, fields[9])
                      or f"{tool}.{pid}" + (f".{key}" if key else "") + f".{int(fields[3])}")
-        # The ledger writes the entry seconds after the process started; the process
-        # check needs the process's own start time, not the row's epoch.
-        process = {"host": self.hostname, "pid": pid}
-        lstart = _parse_lstart(fields[2])
-        if lstart is not None:
-            process["start_time"] = _iso(lstart)
         record = self._base("run", record_id, _iso(started))
         record.update({
             "state": "running",
             "agent": _clip(agent, 64),
             "started_at": _iso(started),
-            "stale_after_s": 3600,
-            "process": process,
-            "observed_at": _iso(now),
+            "stale_after_s": 21600 if key else 3600,
+            "observed_at": _iso(started if key else now),
         })
+        # A keyed subagent marker uses its parent session's pid, not its own.
+        if not key:
+            process = {"host": self.hostname, "pid": pid}
+            lstart = _parse_lstart(fields[2])
+            if lstart is not None:
+                process["start_time"] = _iso(lstart)
+            record["process"] = process
         waiting_on = _wait_from_log(fields[9])
         if waiting_on is not None:
             record["state"] = "waiting"
@@ -880,6 +880,12 @@ class HarnessAdapter:
             # even when two rows read the same. The log is append-only, so the line number holds.
             if key == "-":
                 key = f"line.{number}"
+            # Reserve line. and key: for unkeyed rows and escaped explicit keys.
+            elif key.startswith(("line.", "key:")):
+                key = f"key:{key}"
+                if _ID.match(f"owner-notify.{key}") is None:
+                    stats.malformed += 1
+                    continue
             # A key's newest sent/failed row wins; a skipped-only key keeps its newest skip.
             priority = 0 if status in ("sent", "failed") else 1 if status == "skipped" else None
             if priority is None:
