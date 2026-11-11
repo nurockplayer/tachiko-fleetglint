@@ -140,7 +140,15 @@ describe("Overview", () => {
       "edd 1",
     ]);
     expect(screen.getByText("pnpm test --run")).toBeInTheDocument();
-    expect(screen.getByText(/checked 2m ago/)).toBeInTheDocument();
+    const checkNote = within(running).getByText("checked 2m ago");
+    const row = checkNote.closest(".running-row");
+    const runningCell = checkNote.closest(".row-age");
+    expect(row).not.toBeNull();
+    expect(runningCell).not.toBeNull();
+    expect(runningCell).toContainElement(screen.getByText("2h"));
+    expect(row?.querySelector(".row-model")).not.toContainElement(checkNote);
+    expect(checkNote.parentElement).toBe(runningCell);
+    expect(checkNote.parentElement).not.toBe(row);
     expect(within(running).getByText("worker")).toBeInTheDocument();
     expect(within(running).getByText("role")).toBeInTheDocument();
     expect(within(running).getByText("model")).toBeInTheDocument();
