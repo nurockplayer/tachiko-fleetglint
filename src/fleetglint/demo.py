@@ -46,7 +46,8 @@ def build(now):
     """Every record the demo writes, in write order."""
     return _chain(now) + _extras(now) + [
         _record("decision", f"demo-decision-{i}", now,
-                {"project": project, "role_id": "demo-lead", "text": "Proceed with the planned work",
+                {"project": project, "role_id": "demo-lead", "title": "[demo] project decision",
+                 "text": "Proceed with the planned work",
                  "decided_at": _stamp(now)})
         for i, project in enumerate(PROJECTS[:2], 1)]
 

@@ -507,7 +507,7 @@ class HarnessAdapter:
             record["state"] = "waiting"
             record["waits_on"] = [{"type": "job", "id": waiting_on}]
         self._add_run_details(record, fields[4], fields[5], fields[6], provider, fields[9],
-                              fields[10] if len(fields) > 10 else "")
+                              fields[11] if len(fields) > 11 else "")
         return record
 
     def _add_run_details(self, record, project, worker, model, provider, log, title=""):
@@ -761,6 +761,7 @@ class HarnessAdapter:
             if len(roles) == 1 and None not in roles:
                 record["role_id"] = roles.pop()
 
+    # Harness roles conventionally use <project>-<function>; only this adapter infers projects.
     # -- lead-inbox -------------------------------------------------------
 
     def _scan_inbox(self, job_ids, stats):

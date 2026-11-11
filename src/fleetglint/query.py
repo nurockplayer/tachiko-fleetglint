@@ -848,8 +848,7 @@ def _board_work(view, rows, now, window_start, counts):
 def _board_projects(view, rows, needs_you, now, window_start, cfg):
     groups = {}
     def project(record):
-        role = record.get("role_id") or ""
-        return record.get("project") or (role.split("-", 1)[0] if "-" in role else None)
+        return record.get("project")
 
     def group(name):
         return groups.setdefault(name, {"project": name, "needs_you": [], "in_progress": [],
@@ -859,7 +858,6 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
     # Include live work and open inbox even if last updated before the window.
     for kind, entries in rows.items():
         for row in entries:
-            record = view.record(row)
             if kind == "decision":
                 included = row["observed_ts"] >= now.timestamp() - 7 * 86400
             elif kind == "session":
@@ -870,6 +868,7 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
                 included = not _board_excluded(row, window_start)
             if not included:
                 continue
+            record = view.record(row)
             name = project(record)
             g = group(name)
             activity = record.get("decided_at") if kind == "decision" else (record.get("last_activity_at") if kind == "session" else record["updated_at"])
@@ -886,8 +885,8 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
                     g["lead_inbox_open"] += 1
             else:
                 state = view.display(record, row["source_id"]).state
-                if state in ("stale", "lost") or (state == "failed" and row["updated_ts"] >= window_start):
-                    reason = (record.get("summary") or (f"exit {record['exit_code']}" if record.get("exit_code") is not None else "failed")) if state == "failed" else state
+                if state in ("stale", "lost") or (state in ("failed", "unknown") and row["updated_ts"] >= window_start):
+                    reason = (record.get("summary") or (f"exit {record['exit_code']}" if record.get("exit_code") is not None else "failed")) if state == "failed" else "unverified" if state == "unknown" else state
                     g["needs_you"].append(_work_item(view, row, reason, now))
                 if state in ("done", "failed") and row["updated_ts"] >= window_start:
                     g["recent"][state].append(_work_item(view, row, None, now))
@@ -898,6 +897,8 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
 
     live_runs = []
     for row in rows["run"]:
+        if _board_excluded(row, window_start):
+            continue
         record = view.record(row)
         if view.display(record, row["source_id"]).state in ("running", "waiting", "queued"):
             item = _work_item(view, row, None, now)
@@ -905,6 +906,8 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
             group(project(record))["in_progress"].append(item)
             live_runs.append((row, record, item))
     for row in rows["job"]:
+        if _board_excluded(row, window_start):
+            continue
         record = view.record(row)
         if view.display(record, row["source_id"]).state != "running":
             continue
@@ -917,7 +920,7 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
             if match:
                 item["jobs"].append(_work_item(view, row, None, now))
                 attached = True
-        if not attached and not record.get("run"):
+        if not attached:
             group(project(record))["in_progress"].append(_work_item(view, row, None, now))
 
     for g in groups.values():

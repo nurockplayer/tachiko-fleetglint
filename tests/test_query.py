@@ -657,8 +657,8 @@ class BoardTest(unittest.TestCase):
             run("waiting-run", state="waiting", project="alpha", waits_on=[{"type": "job", "id": "job1"}]),
             job("job1", project="alpha"),
             run("failed", state="failed", project="beta", summary="broken", ended_at=stamp()),
-            {"v": 1, "type": "decision", "id": "new", "source_id": "work@mbp", "updated_at": stamp(), "role_id": "alpha-lead", "text": "ship", "decided_at": stamp()},
-            {"v": 1, "type": "decision", "id": "old", "source_id": "work@mbp", "updated_at": stamp(days=-8), "role_id": "alpha-lead", "text": "old", "decided_at": stamp(days=-8)},
+            {"v": 1, "type": "decision", "id": "new", "source_id": "work@mbp", "updated_at": stamp(), "role_id": "alpha-lead", "project": "alpha", "text": "ship", "decided_at": stamp()},
+            {"v": 1, "type": "decision", "id": "old", "source_id": "work@mbp", "updated_at": stamp(days=-8), "role_id": "alpha-lead", "project": "alpha", "text": "old", "decided_at": stamp(days=-8)},
         ])
         projects = self.board()["projects"]
         self.assertEqual(projects[0]["project"], "beta")
@@ -667,6 +667,23 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(alpha["in_progress"][0]["jobs"][0]["ref"]["id"], "job1")
         self.assertEqual([d["ref"]["id"] for d in alpha["decisions"]], ["new"])
         self.assertEqual(projects[0]["needs_you"][0]["section_reason"], "broken")
+
+    def test_project_orphan_jobs_unknown_and_global(self):
+        self.write([
+            run("finished", state="done", project="alpha", ended_at=stamp()),
+            job("after-finish", project="alpha", run={"type": "run", "id": "finished"}),
+            job("missing-run", project="alpha", run={"type": "run", "id": "missing"}),
+            run("unknown", state="unknown", project="alpha"),
+            job("unknown-job", state="unknown", project="alpha"),
+            run("old-unknown", state="unknown", project="alpha", updated_at=stamp(hours=-26)),
+            run("global", state="unknown", role_id="alpha-lead"),
+        ])
+        projects = {p["project"]: p for p in self.board()["projects"]}
+        alpha = projects["alpha"]
+        self.assertEqual({i["ref"]["id"] for i in alpha["in_progress"]}, {"after-finish", "missing-run"})
+        self.assertEqual({i["ref"]["id"]: i["section_reason"] for i in alpha["needs_you"]},
+                         {"unknown": "unverified", "unknown-job": "unverified"})
+        self.assertEqual(projects[None]["needs_you"][0]["ref"]["id"], "global")
 
     def test_board_shape_and_redaction(self):
         self.write([

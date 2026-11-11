@@ -122,7 +122,7 @@ def write_running(state, pid, log, tool="ds", worker="flash-live",
     running.mkdir(parents=True, exist_ok=True)
     (running / f"{tool}.{pid}").write_text(
         f"{tool}\t{pid}\t{lstart}\t{epoch}\talpha\t{worker}\t{model}\tpane:1\t"
-        f"/Users/example/Developer/alpha\t{log}\n")
+        f"/Users/example/Developer/alpha\t{log}\troutine/{tool}\n")
 
 
 def write_job(state, job_id, argv, pid=None, result=None):
@@ -158,10 +158,10 @@ class HarnessAdapterTest(unittest.TestCase):
             write_running(state, pid=111, log="-", tool="cx", worker="worker-a")
             marker = state / "worker-ledger/running/cx.111"
             fields = marker.read_text().rstrip("\n").split("\t")
-            marker.write_text("\t".join(fields[:10] + ["Task heading"]) + "\n")
+            marker.write_text("\t".join(fields[:11] + ["Task heading"]) + "\n")
             write_running(state, pid=222, log="-", tool="cx", worker="worker-b")
             old = state / "worker-ledger/running/cx.222"
-            old.write_text("\t".join(old.read_text().rstrip("\n").split("\t")[:10]) + "\n")
+            self.assertEqual(len(old.read_text().rstrip("\n").split("\t")), 11)
             (state / "lead-decision").mkdir()
             (state / "lead-decision/log.tsv").write_text("time\trole\tproject\trepo\tref\turl\ttext\n2026-11-05 06:10 JST\tgteki-lead\t-\ta/b\t12\thttps://github.com/a/b/issues/12#issuecomment-1\tship\n2026-11-05 06:11 JST\towner\t-\ta/b\t-\t-\tkeep\tfailed\n")
             (state / "owner-notify").mkdir()
@@ -176,7 +176,8 @@ class HarnessAdapterTest(unittest.TestCase):
             titled = next(r for r in runs if r.get("worker"))
             self.assertEqual(titled["title"], "Task heading")
             self.assertEqual(titled["worker"], "worker-a")
-            self.assertEqual(len([r for r in runs if "worker" not in r]), 1)
+            legacy = next(r for r in runs if "worker" not in r)
+            self.assertEqual(legacy["title"], "worker-b")
             notices = {r["detail"]: r for r in records if r["type"] == "inbox_item"}
             self.assertEqual(notices["first"]["project"], "gteki")
             self.assertNotIn("project", notices["second"])
