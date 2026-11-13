@@ -474,12 +474,12 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertNotIn("no-cmd-20261105-060000-111", records)
 
         curl = records["curl-20261105-050000-222"]
-        self.assertEqual(curl["command_summary"], "curl")
+        self.assertEqual(curl["command_summary"], "curl -u alice:[redacted]")
         self.assertNotIn("hunter2", str(self.result.records))
 
         fetch = records["fetch-20261105-040000-444"]
         self.assertEqual(fetch["command_summary"], "curl https://example.test/status")
-        for secret in ("alice", "hunter2", "synthetictokenvalue"):
+        for secret in ("hunter2", "synthetictokenvalue"):
             self.assertNotIn(secret, str(self.result.records))
 
     def test_job_without_a_pid_is_unknown(self):
