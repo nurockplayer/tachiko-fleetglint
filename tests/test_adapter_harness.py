@@ -872,6 +872,17 @@ class HarnessAdapterTest(unittest.TestCase):
             for secret in ("sk-abc123", "xyz", "u:p"):
                 self.assertNotIn(secret, str(records))
 
+    def test_orb_label_command_part_is_not_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            orb = state / "orb-test"
+            (orb / "active").mkdir(parents=True)
+            (orb / "runs.tsv").write_text("")
+            (orb / "active" / "123").write_text(
+                "demo\t123\tThu Nov  5 02:00:00 2026\t512\tpnpm test :: pnpm test --token=s3cr3t\n")
+            records = harness.HarnessAdapter(state, hostname="h").scan(NOW).records
+            self.assertEqual([r["command_summary"] for r in records], ["pnpm test"])
+
     def test_orb_without_finish_log(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = make_state(tmp)
