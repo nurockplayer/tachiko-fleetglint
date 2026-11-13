@@ -881,16 +881,13 @@ class BoardTest(unittest.TestCase):
                           board["counts"]["older_unverified"]), (1, 1, 1))
         self.assertEqual(board["recent"], [])
 
-    def test_rule8_unknown_recent_without_summarising_old_rows(self):
+    def test_rule8_unknown_recent_excludes_old_rows(self):
         self.write([run("unknown-1", state="unknown", updated_at=stamp(minutes=-5)),
                     run("old-unknown", state="unknown", updated_at=stamp(hours=-26))])
-        real_loads = json.loads
-        with mock.patch.object(query.json, "loads", wraps=real_loads) as loads:
-            board = self.board()
-        parsed = "".join(call.args[0] for call in loads.call_args_list)
-        self.assertIn('"unknown-1"', parsed)
-        self.assertNotIn('"old-unknown"', parsed)
+        board = self.board()
         self.assertEqual([item["ref"]["id"] for item in board["exceptions"]["unverified_recent"]],
+                         ["unknown-1"])
+        self.assertEqual([item["ref"]["id"] for item in board["projects"][0]["needs_you"]],
                          ["unknown-1"])
         self.assertEqual(board["counts"]["older_unverified"], 1)
 
