@@ -849,6 +849,9 @@ class HarnessAdapterTest(unittest.TestCase):
                 summary = harness._command_summary(argv)
                 self.assertIn("[redacted]", summary)
                 self.assertNotIn(header.split(": ", 1)[1], summary)
+        self.assertEqual(harness._command_summary(["API_TOKEN=sk-test-secret", "A=b", "pnpm", "test"]),
+                         "pnpm test")
+        self.assertIsNone(harness._command_summary(["API_TOKEN=sk-test-secret"]))
         for option in ("-u", "--user"):
             for value in ("user:pass", "ghp_abcdefghijklmnopqrstuvwxyz0123456789:x-oauth-basic"):
                 self.assertEqual(harness._command_summary(["curl", option, value]),

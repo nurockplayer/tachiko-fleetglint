@@ -214,6 +214,8 @@ def _scrub_url(argument):
 
 def _command_summary(argv):
     """First word (basename) plus at most two arguments, credential-looking ones dropped."""
+    while argv and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
+        argv = argv[1:]  # leading VAR=value assignments, which often carry tokens
     if not argv:
         return None
     head = os.path.basename(argv[0]) or argv[0]
