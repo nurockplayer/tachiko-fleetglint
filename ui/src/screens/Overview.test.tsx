@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { Overview } from "./Overview";
 import { board, boardEmpty, boardSessions } from "../test-fixtures";
 
@@ -36,35 +36,12 @@ describe("Overview", () => {
     expect(screen.getByText(/fleetglint emit <<'EOF'/)).toBeInTheDocument();
   });
 
-  it("renders one summary line whose counts link to their sections", () => {
+  it("renders counts without links to missing sections", () => {
     render(<Overview board={board} />);
     expect(summary()).toHaveTextContent(
       "2 notified · 3 waiting · 4 running · 2 queued · 3 lead inbox · 3 exceptions",
     );
-    expect(within(summary()).getByRole("link", { name: "2 notified" })).toHaveAttribute(
-      "href",
-      "#notified",
-    );
-    expect(within(summary()).getByRole("link", { name: "3 waiting" })).toHaveAttribute(
-      "href",
-      "#waiting",
-    );
-    expect(within(summary()).getByRole("link", { name: "4 running" })).toHaveAttribute(
-      "href",
-      "#running",
-    );
-    expect(within(summary()).getByRole("link", { name: "2 queued" })).toHaveAttribute(
-      "href",
-      "#queued",
-    );
-    expect(within(summary()).getByRole("link", { name: "3 lead inbox" })).toHaveAttribute(
-      "href",
-      "#lead-inbox",
-    );
-    expect(within(summary()).getByRole("link", { name: "3 exceptions" })).toHaveAttribute(
-      "href",
-      "#exceptions",
-    );
+    expect(summary().querySelectorAll("a")).toHaveLength(0);
   });
 
   it("gives session rows no link, because a session has no detail page", () => {
@@ -87,6 +64,9 @@ describe("Overview", () => {
     );
     expect(summary()).toHaveTextContent(`${board.counts.lead_inbox_open} lead inbox`);
     expect(screen.getByLabelText("Lead inbox")).toBeInTheDocument();
+    summary().querySelectorAll('a[href^="#"]').forEach((link) => {
+      expect(document.getElementById(link.getAttribute("href")!.slice(1))).not.toBeNull();
+    });
   });
 
   it("says execution is not observable instead of showing zeros", () => {

@@ -29,6 +29,14 @@ describe("project board", () => {
     rerender(<ProjectCard project={{ ...project, truncated: { ...project.truncated, needs_you: true } }} now={0} />);
     expect(screen.getByText(/more on the project page/i).closest("a")?.getAttribute("href")).toBe("/project?name=fleetglint");
   });
+  it("shows states for in-progress runs and nested jobs", () => {
+    const run = project.in_progress[0];
+    const waiting = { ...run, ref: { ...run.ref, id: "waiting-run" }, display_state: "waiting" as const };
+    const { container } = render(<ProjectCard project={{ ...project, in_progress: [run, waiting] }} now={0} />);
+    expect(container.querySelector('[data-record-id="' + run.ref.id + '"] > .state-badge')).toHaveTextContent("running");
+    expect(container.querySelector('[data-record-id="waiting-run"] > .state-badge')).toHaveTextContent("waiting");
+    expect(container.querySelector('.project-job > .state-badge')).toHaveTextContent(run.jobs![0].display_state);
+  });
   it("filters project pages and handles missing projects", () => {
     expect(parseRoute({ pathname: "/project", search: "?name=fleetglint" })).toEqual({ kind: "project", name: "fleetglint" });
     const { rerender } = render(<Project board={board} name="fleetglint" />);
