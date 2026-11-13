@@ -677,6 +677,8 @@ class BoardTest(unittest.TestCase):
             job("job-failed", state="failed", project="alpha", cwd="/work/a", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
             job("job-other-role", state="failed", project="alpha", cwd="/work/b", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
             job("job-done", state="done", project="alpha", cwd="/work/a", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
+            job("cwd-role-a", state="failed", project="alpha", cwd="/work/c", kind="wait-worker", role_id="a-lead", title="task-a", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
+            job("cwd-role-b", state="done", project="alpha", cwd="/work/c", kind="wait-worker", role_id="b-lead", title="task-b", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
             job("wait-failed", state="failed", project="alpha", kind="wait-worker", role_id="worker", title="first", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
             job("wait-other", state="failed", project="alpha", kind="wait-worker", role_id="worker", title="other", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
             job("wait-done", state="done", project="alpha", kind="wait-worker", role_id="worker", title="first", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
@@ -691,8 +693,8 @@ class BoardTest(unittest.TestCase):
                 return False
 
         alpha = next(p for p in self.board(query.QueryBackend(self.cfg, process_checker=Dead()))["projects"] if p["project"] == "alpha")
-        self.assertEqual(set(self.by_id(alpha["needs_you"])), {"gha-later-failure", "job-other-role", "wait-other", "run-failed", "new-lost"})
-        self.assertEqual(alpha["needs_you_total"], 5)
+        self.assertEqual(set(self.by_id(alpha["needs_you"])), {"gha-later-failure", "job-other-role", "cwd-role-a", "wait-other", "run-failed", "new-lost"})
+        self.assertEqual(alpha["needs_you_total"], 6)
         self.assertIn("gha-failed", self.by_id(alpha["recent"]["failed"]))
         self.assertIn("job-failed", self.by_id(alpha["recent"]["failed"]))
 

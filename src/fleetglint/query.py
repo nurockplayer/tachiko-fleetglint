@@ -858,7 +858,8 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
         if record.get("kind") == "github-actions":
             return (project(record), "gha", record.get("command_summary"))
         if record.get("cwd"):
-            return (project(record), "job", record["cwd"], record.get("command_summary"))
+            return (project(record), "job", record["cwd"], record.get("role_id"), record.get("kind"),
+                    record.get("title"), record.get("command_summary"))
         if record.get("role_id") and record.get("title"):
             return (project(record), "job", record["role_id"], record.get("kind"), record["title"])
         return None
