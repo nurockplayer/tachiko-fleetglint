@@ -746,6 +746,14 @@ class HarnessAdapterTest(unittest.TestCase):
             self.assertEqual(records["gha.nurockplayer.gteki.1"]["links"][0]["label"], "GitHub run")
             self.assertEqual(records["gha.nurockplayer.gteki.2"]["summary"], "failure")
             self.assertEqual(records["gha.nurockplayer.gteki.3"]["state"], "cancelled")
+            poll = records["gha.nurockplayer.gteki.poll"]
+            self.assertEqual((poll["project"], poll["state"], poll["summary"]),
+                             ("gteki", "unknown", "ci-watch could not read this repo's runs"))
+            self.assertEqual(poll["updated_at"], poll["observed_at"])
+            (ci / "runs.tsv").write_text(header + row("1", "in_progress", "-"))
+            poll = by_id(adapter.scan(NOW).records)["gha.nurockplayer.gteki.poll"]
+            self.assertEqual((poll["state"], poll["summary"]), ("cancelled", "ci-watch polled this repo"))
+            self.assertEqual(poll["updated_at"], poll["ended_at"])
             job = next(r for r in result.records if r.get("kind") == "orb-test")
             self.assertEqual((job["state"], job["summary"]), ("queued", "waiting for lock"))
             (orb / "active/123").write_text(f"demo\t123\t{start}\t512\ttests\n")
@@ -763,6 +771,21 @@ class HarnessAdapterTest(unittest.TestCase):
                 self.assertEqual(check(record), [])
                 from fleetglint.schema import validate
                 self.assertEqual(validate(record), [])
+
+    def test_orb_command_credentials_are_not_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            orb = state / "orb-test"
+            (orb / "active").mkdir(parents=True)
+            (orb / "runs.tsv").write_text("")
+            start = "Thu Nov  5 02:00:00 2026"
+            for pid, label in (("123", "env API_TOKEN=sk-abc123 pnpm test"),
+                               ("124", "curl -H 'Authorization: Bearer xyz' https://u:p@host/x")):
+                (orb / "active" / pid).write_text(f"demo\t{pid}\t{start}\t512\t{label}\n")
+            records = harness.HarnessAdapter(state, hostname="h").scan(NOW).records
+            self.assertEqual(len(records), 2)
+            for secret in ("sk-abc123", "xyz", "u:p"):
+                self.assertNotIn(secret, str(records))
 
     def test_orb_without_finish_log(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import signal
 import stat
 from datetime import datetime, timedelta, timezone
@@ -416,12 +417,18 @@ class HarnessAdapter:
             stats.unreadable += 1
             return []
         records = []
+        polls = {}
         for line in lines[1:]:
             fields = line.split("\t")
             if len(fields) != 12:
                 stats.malformed += 1
                 continue
             polled, repo, run_id, workflow, branch, event, status, conclusion, created, updated, url, _ = fields
+            poll_id = f"gha.{repo.replace('/', '.')}.poll"
+            poll_time = _parse_rfc3339(polled)
+            if repo.count("/") == 1 and all(repo.split("/")) and _ID.match(poll_id) and poll_time:
+                previous = polls.get(repo)
+                polls[repo] = (poll_time, status == "error" or (previous is not None and previous[1]))
             if status == "error" or run_id == "-":
                 stats.ci_errors += 1
                 continue
@@ -456,6 +463,17 @@ class HarnessAdapter:
             if state == "failed":
                 record["summary"] = conclusion
             records.append(record)
+        for repo, (polled, failed) in polls.items():
+            timestamp = _iso(polled)
+            record = self._base("job", f"gha.{repo.replace('/', '.')}.poll", timestamp)
+            record.update(kind="github-actions", project=_clip(repo.split("/")[1], 200),
+                          command_summary="ci-watch poll", state="unknown" if failed else "cancelled",
+                          summary="ci-watch could not read this repo's runs" if failed else "ci-watch polled this repo")
+            if failed:
+                record["observed_at"] = timestamp
+            else:
+                record["ended_at"] = timestamp
+            records.append(record)
         return records
 
     def _scan_orb_test(self, now, stats):
@@ -479,8 +497,12 @@ class HarnessAdapter:
                 return None
             record_id = f"orb-test.{int(pid)}.{int(started.timestamp())}"
             record = self._base("job", record_id, _iso(now))
+            try:
+                argv = shlex.split(label)
+            except ValueError:
+                argv = label.split()
             record.update(kind="orb-test", project=_clip(project, 200),
-                          command_summary=_clip(label, 200), started_at=_iso(started))
+                          command_summary=_command_summary(argv), started_at=_iso(started))
             return record
 
         # Later sources override earlier ones: active beats holder and queue.
