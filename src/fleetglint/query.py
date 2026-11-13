@@ -852,17 +852,26 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
 
     def line_key(record):
         if record["type"] == "run":
-            return (project(record), "run", record.get("role_id"), record.get("agent"), record.get("title"))
+            if record.get("role_id") and record.get("title"):
+                return (project(record), "run", record["role_id"], record.get("agent"), record["title"])
+            return None
         if record.get("kind") == "github-actions":
             return (project(record), "gha", record.get("command_summary"))
-        return (project(record), "job", record.get("role_id"), record.get("command_summary"))
+        if record.get("cwd"):
+            return (project(record), "job", record["cwd"], record.get("command_summary"))
+        if record.get("role_id") and record.get("title"):
+            return (project(record), "job", record["role_id"], record.get("kind"), record["title"])
+        return None
 
     done_lines = {}
     for row in rows["run"] + rows["job"]:
+        if row["updated_ts"] < window_start:
+            continue
         record = view.record(row)
         if view.display(record, row["source_id"]).state == "done":
             key = line_key(record)
-            done_lines[key] = max(done_lines.get(key, row["updated_ts"]), row["updated_ts"])
+            if key is not None:
+                done_lines[key] = max(done_lines.get(key, row["updated_ts"]), row["updated_ts"])
 
     def group(name):
         return groups.setdefault(name, {"project": name, "needs_you": [], "in_progress": [],
@@ -899,9 +908,10 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
                     g["lead_inbox_open"] += 1
             else:
                 state = view.display(record, row["source_id"]).state
+                key = line_key(record)
                 if (state in ("stale", "lost", "failed", "unknown")
                         and row["updated_ts"] >= window_start
-                        and done_lines.get(line_key(record), row["updated_ts"]) <= row["updated_ts"]):
+                        and (key is None or done_lines.get(key, row["updated_ts"]) <= row["updated_ts"])):
                     reason = (record.get("summary") or (f"exit {record['exit_code']}" if record.get("exit_code") is not None else "failed")) if state == "failed" else "unverified" if state == "unknown" else state
                     g["needs_you"].append(_work_item(view, row, reason, now))
                 if state in ("done", "failed") and row["updated_ts"] >= window_start:

@@ -674,9 +674,14 @@ class BoardTest(unittest.TestCase):
             job("gha-done", state="done", project="alpha", kind="github-actions", command_summary="CI · main · push", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
             job("gha-earlier", state="done", project="alpha", kind="github-actions", command_summary="CI · dev · push", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
             job("gha-later-failure", state="failed", project="alpha", kind="github-actions", command_summary="CI · dev · push", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
-            job("job-failed", state="failed", project="alpha", role_id="worker", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
-            job("job-other-role", state="failed", project="alpha", role_id="other", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
-            job("job-done", state="done", project="alpha", role_id="worker", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
+            job("job-failed", state="failed", project="alpha", cwd="/work/a", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
+            job("job-other-role", state="failed", project="alpha", cwd="/work/b", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
+            job("job-done", state="done", project="alpha", cwd="/work/a", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
+            job("wait-failed", state="failed", project="alpha", kind="wait-worker", role_id="worker", title="first", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
+            job("wait-other", state="failed", project="alpha", kind="wait-worker", role_id="worker", title="other", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
+            job("wait-done", state="done", project="alpha", kind="wait-worker", role_id="worker", title="first", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
+            run("run-failed", state="failed", project="alpha", title="same", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
+            run("run-done", state="done", project="alpha", title="same", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
             job("old-lost", project="alpha", command_summary="old", process={"host": "mbp", "pid": 424242}, updated_at=stamp(hours=-25)),
             job("new-lost", project="alpha", command_summary="new", process={"host": "mbp", "pid": 424242}, updated_at=stamp(hours=-1)),
         ])
@@ -686,8 +691,8 @@ class BoardTest(unittest.TestCase):
                 return False
 
         alpha = next(p for p in self.board(query.QueryBackend(self.cfg, process_checker=Dead()))["projects"] if p["project"] == "alpha")
-        self.assertEqual(set(self.by_id(alpha["needs_you"])), {"gha-later-failure", "job-other-role", "new-lost"})
-        self.assertEqual(alpha["needs_you_total"], 3)
+        self.assertEqual(set(self.by_id(alpha["needs_you"])), {"gha-later-failure", "job-other-role", "wait-other", "run-failed", "new-lost"})
+        self.assertEqual(alpha["needs_you_total"], 5)
         self.assertIn("gha-failed", self.by_id(alpha["recent"]["failed"]))
         self.assertIn("job-failed", self.by_id(alpha["recent"]["failed"]))
 
@@ -883,8 +888,14 @@ class BoardTest(unittest.TestCase):
 
     def test_rule8_unknown_recent_excludes_old_rows(self):
         self.write([run("unknown-1", state="unknown", updated_at=stamp(minutes=-5)),
-                    run("old-unknown", state="unknown", updated_at=stamp(hours=-26))])
-        board = self.board()
+                    run("old-unknown", state="unknown", updated_at=stamp(hours=-26)),
+                    run("old-done", state="done", updated_at=stamp(hours=-26), ended_at=stamp(hours=-26))])
+        real_loads = json.loads
+        with mock.patch.object(query.json, "loads", wraps=real_loads) as loads:
+            board = self.board()
+        parsed = "".join(call.args[0] for call in loads.call_args_list)
+        self.assertNotIn('"old-unknown"', parsed)
+        self.assertNotIn('"old-done"', parsed)
         self.assertEqual([item["ref"]["id"] for item in board["exceptions"]["unverified_recent"]],
                          ["unknown-1"])
         self.assertEqual([item["ref"]["id"] for item in board["projects"][0]["needs_you"]],
