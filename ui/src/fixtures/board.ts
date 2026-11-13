@@ -404,6 +404,7 @@ const leadOld = inboxItem({
   subject: { type: "job", id: "review-pr-43", source_id: "codex-cli@demo-host" },
   created_at: "2026-11-07T05:00:00+09:00",
   age_s: 18000,
+  project: "fleetglint",
   detail: "One worker is waiting on a decision.",
 });
 
@@ -414,6 +415,7 @@ const leadNew = inboxItem({
   subject: { type: "external", kind: "ticket", key: "oracle-1" },
   created_at: "2026-11-07T09:50:00+09:00",
   age_s: 600,
+  project: "fleetglint",
   detail: "Review request sent to oracle.",
 });
 
@@ -424,6 +426,7 @@ const artLead = inboxItem({
   subject: { type: "run", id: "run-902", source_id: "codex-cli@demo-host" },
   created_at: "2026-11-07T09:45:00+09:00",
   age_s: 900,
+  project: "edd",
   detail: "Cover draft is ready for a look.",
 });
 
@@ -546,6 +549,14 @@ export const board: Board = {
   sources,
   capabilities: { execution: true, requests: true },
   counts,
+  projects: [
+    { project: null, needs_you: [notifiedDecision], in_progress: [], decisions: [], recent: { done: [], failed: [] }, lead_inbox_open: 0, sessions_recent: 0, last_activity_at: NOW, truncated: { needs_you: false, in_progress: false, decisions: false, recent: { done: false, failed: false } } },
+    { project: "fleetglint", needs_you: [failedRun], in_progress: [{ ...runningLeadRun, jobs: [runningJob] }], decisions: [
+      { ref: { type: "decision", id: "d1", source_id: "demo" }, project: "fleetglint", role_id: "lead", text: "Ship the board", decided_at: NOW, links: [{ label: "PR", url: "https://github.com/example/example/pull/1" }] },
+      { ref: { type: "decision", id: "d2", source_id: "demo" }, project: "fleetglint", role_id: "lead", text: "Keep it read-only", decided_at: NOW, links: [] },
+    ], recent: { done: [doneRun], failed: [failedRun] }, lead_inbox_open: 2, sessions_recent: 1, last_activity_at: NOW, truncated: { needs_you: false, in_progress: false, decisions: false, recent: { done: false, failed: false } } },
+    { project: "edd", needs_you: [], in_progress: [runningArtRun], decisions: [], recent: { done: [], failed: [] }, lead_inbox_open: 1, sessions_recent: 0, last_activity_at: NOW, truncated: { needs_you: false, in_progress: false, decisions: false, recent: { done: false, failed: false } } },
+  ],
   needs_you: [notifiedDecision, notifiedReview],
   lead_inbox: leadInbox,
   queued: [queuedJob, queuedRun],
@@ -688,6 +699,7 @@ export const boardSessions: Board = {
     sessions_recent: 1,
   },
   needs_you: [notifiedReview],
+  projects: [],
   lead_inbox: [],
   queued: [],
   waiting: [],
@@ -711,6 +723,7 @@ export const boardEmpty: Board = {
   capabilities: { execution: false, requests: false },
   counts: zeroCounts,
   needs_you: [],
+  projects: [],
   lead_inbox: [],
   queued: [],
   waiting: [],

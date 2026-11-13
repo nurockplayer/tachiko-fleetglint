@@ -20,7 +20,7 @@ function CountLink({
 }
 
 /**
- * One line of numbers, never tiles. Every count links to its section; zero
+ * One line of numbers, never tiles. Zero
  * counts stay in the line. When execution cannot be observed, it says so
  * instead of showing zero (visual spec §5).
  */
@@ -60,16 +60,16 @@ export function SummaryLine({
     counts.process_gone + counts.out_of_date + counts.unverified_recent;
 
   const parts: Array<ReactElement> = [
-    <CountLink key="notified" href="#notified" onOpen={onOpenSection} count={counts.needs_you} noun="notified" />,
-    <CountLink key="waiting" href="#waiting" onOpen={onOpenSection} count={counts.waiting} noun="waiting" />,
-    <CountLink key="running" href="#running" onOpen={onOpenSection} count={counts.running} noun="running" />,
+    <span key="notified">{counts.needs_you} notified</span>,
+    <span key="waiting">{counts.waiting} waiting</span>,
+    <span key="running">{counts.running} running</span>,
   ];
   if (counts.queued > 0) {
-    parts.push(<CountLink key="queued" href="#queued" onOpen={onOpenSection} count={counts.queued} noun="queued" />);
+    parts.push(<span key="queued">{counts.queued} queued</span>);
   }
   parts.push(
-    <CountLink key="lead-inbox" href="#lead-inbox" onOpen={onOpenSection} count={counts.lead_inbox_open} noun="lead inbox" />,
-    <CountLink key="exceptions" href="#exceptions" onOpen={onOpenSection} count={exceptions} noun={exceptions === 1 ? "exception" : "exceptions"} />,
+    <span key="lead-inbox">{counts.lead_inbox_open} lead inbox</span>,
+    <span key="exceptions">{exceptions} {exceptions === 1 ? "exception" : "exceptions"}</span>,
   );
 
   return (

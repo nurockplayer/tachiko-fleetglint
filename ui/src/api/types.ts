@@ -89,6 +89,7 @@ export interface SummaryBase {
 
 export interface RunSummary extends SummaryBase {
   agent: string;
+  worker?: string;
   model: string | null;
   provider: string | null;
   effort: string | null;
@@ -211,7 +212,7 @@ export interface Snapshot {
   demo: boolean;
 }
 
-export type SectionReason = "waits_on" | "lead_wait";
+export type SectionReason = string;
 
 /** A run or job on the board, with the per-section fields of architecture §4.1b. */
 export type BoardWork = (RunSummary | JobSummary) & {
@@ -253,6 +254,27 @@ export interface BoardExceptions {
   unverified_recent: BoardWork[];
 }
 
+export interface Decision {
+  ref: { type: "decision"; id: string; source_id: string };
+  project: string | null;
+  role_id: string;
+  text: string;
+  decided_at: string;
+  links: Link[];
+}
+
+export interface ProjectCard {
+  project: string | null;
+  needs_you: (BoardWork | BoardInboxItem)[];
+  in_progress: (BoardWork & { jobs?: BoardWork[] })[];
+  decisions: Decision[];
+  recent: { done: BoardWork[]; failed: BoardWork[] };
+  lead_inbox_open: number;
+  sessions_recent: number;
+  last_activity_at: string | null;
+  truncated: { needs_you: boolean; in_progress: boolean; decisions: boolean; recent: { done: boolean; failed: boolean } };
+}
+
 export interface Board {
   api: 1;
   generated_at: string;
@@ -264,6 +286,7 @@ export interface Board {
   capabilities: { execution: boolean; requests: boolean };
   counts: BoardCounts;
   needs_you: BoardInboxItem[];
+  projects: ProjectCard[];
   lead_inbox: BoardInboxRole[];
   queued: BoardWork[];
   waiting: BoardWork[];
