@@ -3,7 +3,7 @@ import { App } from "./App";
 import { board, snapshot } from "./test-fixtures";
 import { jsonResponse, notModified, routeFetcher, sequenceFetcher } from "./test-fetcher";
 
-const TITLE = "Rebuild the viewer board";
+const TITLE = "Run the review gate";
 // Under a loaded host a poll cycle can take longer than the default 1 s.
 const SLOW = { timeout: 5000 };
 
