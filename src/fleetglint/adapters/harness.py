@@ -486,6 +486,8 @@ class HarnessAdapter:
                 return None
             record_id = f"orb-test.{int(pid)}.{int(started.timestamp())}"
             record = self._base("job", record_id, _iso(now))
+            # orb-test writes '<prefix> :: <command>'; only the prefix is meant to be read.
+            label = label.split(" :: ", 1)[0]
             try:
                 argv = shlex.split(label)
             except ValueError:
