@@ -474,12 +474,12 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertNotIn("no-cmd-20261105-060000-111", records)
 
         curl = records["curl-20261105-050000-222"]
-        self.assertEqual(curl["command_summary"], "curl")
+        self.assertEqual(curl["command_summary"], "curl -u [redacted]")
         self.assertNotIn("hunter2", str(self.result.records))
 
         fetch = records["fetch-20261105-040000-444"]
         self.assertEqual(fetch["command_summary"], "curl https://example.test/status")
-        for secret in ("alice", "hunter2", "synthetictokenvalue"):
+        for secret in ("hunter2", "synthetictokenvalue"):
             self.assertNotIn(secret, str(self.result.records))
 
     def test_job_without_a_pid_is_unknown(self):
@@ -715,6 +715,120 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertEqual(set(by_id(result.records)), {
             "owner-notify.line.1", "owner-notify.key:line.1", "owner-notify.key:key:x"})
         self.assertEqual(result.detail, "1 malformed row(s) skipped")
+
+    def test_ci_and_orb_jobs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            ci = state / "ci-watch"
+            ci.mkdir()
+            header = "polled_at\trepo\trun_id\tworkflow\tbranch\tevent\tstatus\tconclusion\tcreated_at\tupdated_at\turl\ttruncated\n"
+            def row(run, status, conclusion):
+                return (f"2026-11-05T03:00:00Z\tnurockplayer/gteki\t{run}\tci\tmain\tpush\t"
+                        f"{status}\t{conclusion}\t2026-11-05T02:00:00Z\t2026-11-05T02:30:00Z\t"
+                        f"https://github.com/nurockplayer/gteki/actions/runs/{run}\tfalse\n")
+            (ci / "runs.tsv").write_text(header + row("1", "in_progress", "-") +
+                                         row("2", "completed", "failure") +
+                                         row("3", "completed", "cancelled") + row("-", "error", "-"))
+            orb = state / "orb-test"
+            for name in ("queue", "active"):
+                (orb / name).mkdir(parents=True)
+            (orb / "runs.tsv").write_text("")
+            start = "Thu Nov  5 02:00:00 2026"
+            queue = orb / "queue/000001.123"
+            queue.write_text(f"1\t123\t1793844000\tdemo\tworktree\tpane\tpython test\t{start}\n")
+            (orb / "queue/000001.123.why").write_text("waiting for lock\n")
+            adapter = harness.HarnessAdapter(state, hostname="h")
+            result = adapter.scan(NOW)
+            records = by_id(result.records)
+            self.assertIn("ci-watch errors=1", result.detail)
+            self.assertEqual(records["gha.nurockplayer.gteki.1"]["state"], "running")
+            self.assertEqual(records["gha.nurockplayer.gteki.1"]["project"], "gteki")
+            self.assertEqual(records["gha.nurockplayer.gteki.1"]["links"][0]["label"], "GitHub run")
+            self.assertEqual(records["gha.nurockplayer.gteki.2"]["summary"], "failure")
+            self.assertEqual(records["gha.nurockplayer.gteki.3"]["state"], "cancelled")
+            poll = records["gha.nurockplayer.gteki.poll"]
+            self.assertEqual((poll["project"], poll["state"], poll["summary"]),
+                             ("gteki", "unknown", "ci-watch could not read this repo's runs"))
+            self.assertEqual(poll["updated_at"], poll["observed_at"])
+            (ci / "runs.tsv").write_text(header + row("1", "in_progress", "-"))
+            poll = by_id(adapter.scan(NOW).records)["gha.nurockplayer.gteki.poll"]
+            self.assertEqual((poll["state"], poll["summary"]), ("cancelled", "ci-watch polled this repo"))
+            self.assertEqual(poll["updated_at"], poll["ended_at"])
+            job = next(r for r in result.records if r.get("kind") == "orb-test")
+            self.assertEqual((job["state"], job["summary"]), ("queued", "waiting for lock"))
+            (orb / "active/123").write_text(f"demo\t123\t{start}\t512\ttests\n")
+            result = adapter.scan(NOW)
+            jobs = [r for r in result.records if r.get("kind") == "orb-test"]
+            self.assertEqual(len(jobs), 1)
+            self.assertEqual(jobs[0]["state"], "running")
+            end = int(NOW.timestamp())
+            (orb / "runs.tsv").write_text(f"{end}\t123\t{start}\tdemo\ttests\t1\n"
+                                          f"{end}\t124\t{start}\tdemo\tmore tests\t0\n")
+            result = adapter.scan(NOW)
+            jobs = [r for r in result.records if r.get("kind") == "orb-test"]
+            self.assertEqual(sorted((r["state"], r["exit_code"]) for r in jobs), [("done", 0), ("failed", 1)])
+            for record in result.records:
+                self.assertEqual(check(record), [])
+                from fleetglint.schema import validate
+                self.assertEqual(validate(record), [])
+
+    def test_ci_poll_latest_row_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            ci = state / "ci-watch"
+            ci.mkdir()
+            header = "polled_at\trepo\trun_id\tworkflow\tbranch\tevent\tstatus\tconclusion\tcreated_at\tupdated_at\turl\ttruncated\n"
+            def row(time, status):
+                return (f"2026-11-05T{time}:00Z\towner/repo\t-\tci\tmain\tpush\t"
+                        f"{status}\t-\t-\t-\t-\tfalse\n")
+            adapter = harness.HarnessAdapter(state, hostname="h")
+            for first, second, expected in (("error", "completed", "cancelled"),
+                                            ("completed", "error", "unknown")):
+                (ci / "runs.tsv").write_text(header + row("03:00", first) + row("04:00", second))
+                poll = by_id(adapter.scan(NOW).records)["gha.owner.repo.poll"]
+                self.assertEqual(poll["state"], expected)
+                self.assertEqual(poll["updated_at"], "2026-11-05T04:00:00+00:00")
+
+    def test_command_summary_redacts_authorization_and_user_password(self):
+        for header in ("Authorization: Basic dXNlcjpwYXNz", "authorization: baretoken",
+                       "Proxy-Authorization: Digest secret"):
+            for argv in (["curl", header], ["curl", "-H", header], ["curl", "--header", header]):
+                summary = harness._command_summary(argv)
+                self.assertIn("[redacted]", summary)
+                self.assertNotIn(header.split(": ", 1)[1], summary)
+        for option in ("-u", "--user"):
+            for value in ("user:pass", "ghp_abcdefghijklmnopqrstuvwxyz0123456789:x-oauth-basic"):
+                self.assertEqual(harness._command_summary(["curl", option, value]),
+                                 f"curl {option} [redacted]")
+
+    def test_orb_command_credentials_are_not_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            orb = state / "orb-test"
+            (orb / "active").mkdir(parents=True)
+            (orb / "runs.tsv").write_text("")
+            start = "Thu Nov  5 02:00:00 2026"
+            for pid, label in (("123", "env API_TOKEN=sk-abc123 pnpm test"),
+                               ("124", "curl -H 'Authorization: Bearer xyz' https://u:p@host/x")):
+                (orb / "active" / pid).write_text(f"demo\t{pid}\t{start}\t512\t{label}\n")
+            records = harness.HarnessAdapter(state, hostname="h").scan(NOW).records
+            self.assertEqual(len(records), 2)
+            for secret in ("sk-abc123", "xyz", "u:p"):
+                self.assertNotIn(secret, str(records))
+
+    def test_orb_without_finish_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            (state / "orb-test/active").mkdir(parents=True)
+            (state / "orb-test/active/123").write_text("demo\t123\tThu Nov  5 02:00:00 2026\t512\ttests\n")
+            result = harness.HarnessAdapter(state, hostname="h").scan(NOW)
+        self.assertEqual(result.records, [])
+        self.assertIn("orb-test: no finish log", result.detail)
+
+    def test_role_project_inference(self):
+        for role, project in (("harness-dot-observer", "harness-dot"),
+                              ("fleetglint-lead", "fleetglint"), ("solo", None)):
+            self.assertEqual(harness.HarnessAdapter._role_project(role), project)
 
     def test_every_record_passes_minimal_schema(self):
         for record in self.result.records:
