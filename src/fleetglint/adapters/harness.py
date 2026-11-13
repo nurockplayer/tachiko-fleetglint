@@ -467,7 +467,8 @@ class HarnessAdapter:
             timestamp = _iso(polled)
             record = self._base("job", f"gha.{repo.replace('/', '.')}.poll", timestamp)
             record.update(kind="github-actions", project=_clip(repo.split("/")[1], 200),
-                          command_summary="ci-watch poll", state="unknown" if failed else "cancelled",
+                          command_summary="ci-watch poll", started_at=timestamp,
+                          state="unknown" if failed else "cancelled",
                           summary="ci-watch could not read this repo's runs" if failed else "ci-watch polled this repo")
             if failed:
                 record["observed_at"] = timestamp
