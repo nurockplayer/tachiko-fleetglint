@@ -850,6 +850,20 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
     def project(record):
         return record.get("project")
 
+    def line_key(record):
+        if record["type"] == "run":
+            return (project(record), "run", record.get("role_id"), record.get("agent"), record.get("title"))
+        if record.get("kind") == "github-actions":
+            return (project(record), "gha", record.get("command_summary"))
+        return (project(record), "job", record.get("role_id"), record.get("command_summary"))
+
+    done_lines = {}
+    for row in rows["run"] + rows["job"]:
+        record = view.record(row)
+        if view.display(record, row["source_id"]).state == "done":
+            key = line_key(record)
+            done_lines[key] = max(done_lines.get(key, row["updated_ts"]), row["updated_ts"])
+
     def group(name):
         return groups.setdefault(name, {"project": name, "needs_you": [], "in_progress": [],
             "decisions": [], "recent": {"done": [], "failed": []},
@@ -885,7 +899,9 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
                     g["lead_inbox_open"] += 1
             else:
                 state = view.display(record, row["source_id"]).state
-                if state in ("stale", "lost") or (state in ("failed", "unknown") and row["updated_ts"] >= window_start):
+                if (state in ("stale", "lost", "failed", "unknown")
+                        and row["updated_ts"] >= window_start
+                        and done_lines.get(line_key(record), row["updated_ts"]) <= row["updated_ts"]):
                     reason = (record.get("summary") or (f"exit {record['exit_code']}" if record.get("exit_code") is not None else "failed")) if state == "failed" else "unverified" if state == "unknown" else state
                     g["needs_you"].append(_work_item(view, row, reason, now))
                 if state in ("done", "failed") and row["updated_ts"] >= window_start:
@@ -924,6 +940,7 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
             group(project(record))["in_progress"].append(_work_item(view, row, None, now))
 
     for g in groups.values():
+        g["needs_you_total"] = len(g["needs_you"])
         g["decisions"].sort(key=lambda x: _epoch(x["decided_at"]), reverse=True)
         for items in g["recent"].values():
             items.sort(key=lambda x: _epoch(x["updated_at"]), reverse=True)
