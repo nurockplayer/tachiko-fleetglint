@@ -27,6 +27,8 @@ JSON
 
 A job that a run started, with an explicit link back to that run:
 
+Jobs may include `cwd`, an absolute working-directory path.
+
 ```sh
 fleetglint emit <<'JSON'
 {"v":1,"type":"job","id":"job-20261106-102000","source_id":"my-workflow@workstation","updated_at":"2026-11-06T10:20:00+09:00","state":"running","command_summary":"pytest tests/test_api.py","kind":"test","run":{"type":"run","id":"run-20261106-101500"},"started_at":"2026-11-06T10:20:00+09:00","stale_after_s":900}

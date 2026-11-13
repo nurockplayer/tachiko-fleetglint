@@ -147,6 +147,7 @@
       "properties": {
         "state": {"enum": ["queued", "running", "done", "failed", "cancelled", "unknown"]},
         "command_summary": {"type": "string", "minLength": 1, "maxLength": 200},
+        "cwd": {"$ref": "#/$defs/abs_path"},
         "kind": {"type": "string", "minLength": 1, "maxLength": 64},
         "run": {"$ref": "#/$defs/run_ref"},
         "role_id": {"$ref": "#/$defs/role_id"},

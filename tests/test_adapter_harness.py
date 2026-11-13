@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from fleetglint.adapters import harness
-from fleetglint import liveness
+from fleetglint import liveness, schema
 
 FIXTURES = Path(__file__).parent / "fixtures" / "harness" / "state"
 JST = timezone(timedelta(hours=9))
@@ -617,6 +617,8 @@ class HarnessAdapterTest(unittest.TestCase):
                 record = by_id(harness.HarnessAdapter(state, hostname="h").scan(NOW).records)[
                     "job-20261105-120000"]
             self.assertEqual(record["project"], expected)
+            self.assertEqual(record["cwd"], cwd)
+            self.assertEqual(schema.validate(record), [])
 
     def test_job_without_a_readable_cwd_has_no_project(self):
         for kind in ("absent", "directory"):
@@ -629,6 +631,7 @@ class HarnessAdapterTest(unittest.TestCase):
                 record = by_id(harness.HarnessAdapter(state, hostname="h").scan(NOW).records)[
                     "job-20261105-120100"]
             self.assertNotIn("project", record)
+            self.assertNotIn("cwd", record)
 
     def test_run_role_from_the_wait_worker_job(self):
         with tempfile.TemporaryDirectory() as tmp:

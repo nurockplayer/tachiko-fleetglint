@@ -742,6 +742,12 @@ class HarnessAdapter:
         project = _job_project(directory)
         if project is not None:
             record["project"] = project
+        try:
+            cwd = _text(directory / "cwd").strip()
+            if os.path.isabs(cwd):
+                record["cwd"] = _clip(cwd, 4096)
+        except OSError:
+            pass
         return record, self._apply_lead_wait(record, wait) if wait is not None else None
 
     def _apply_lead_wait(self, record, wait):

@@ -150,6 +150,7 @@ when resolved, `"display_state"` and `"title"`.
 `null`, extended as above), `role_id`, `started_at`, `ended_at`,
 `exit_code`, `signal`, `summary` (redacted, 300 chars), `log` and `result`
 (`{"path": "…", "readable": bool}` or `null`).
+The underlying job record may also contain an absolute `cwd` path.
 
 **InboxSummary** adds: `role_id`, `kind`, `subject` (Ref, extended),
 `outcome`, `action_required`, `created_at`, `acked_at`, `detail` (redacted,
