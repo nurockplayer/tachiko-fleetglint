@@ -14,7 +14,7 @@ describe("project board", () => {
     expect(cards).toHaveLength(3);
     expect(cards[2].textContent).toContain("Global");
     const run = cards[0].querySelector('[data-record-id="run-901"]')!;
-    expect(within(run as HTMLElement).getByText(/pnpm test --run/)).toBeTruthy();
+    expect(within(run as HTMLElement).getByRole("link", { name: "pnpm test --run" })).toBeTruthy();
     expect(screen.getByText("Ship the board").closest("a")?.href).toContain("github.com");
     expect(screen.getByText("Keep it read-only").closest("a")).toBeNull();
   });
