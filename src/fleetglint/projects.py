@@ -12,6 +12,8 @@ def _git_repo_name(path):
     """The repo a directory is in, from its `.git` entry; a worktree's `.git` file names the repo."""
     current = Path(path)
     for directory in [current, *current.parents][:8]:
+        if not directory.exists() and re.fullmatch(r"(.+)-wt(?:-.+)?", directory.name):
+            return None
         entry = directory / ".git"
         try:
             if entry.is_dir():
