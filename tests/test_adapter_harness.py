@@ -474,7 +474,7 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertNotIn("no-cmd-20261105-060000-111", records)
 
         curl = records["curl-20261105-050000-222"]
-        self.assertEqual(curl["command_summary"], "curl -u alice:[redacted]")
+        self.assertEqual(curl["command_summary"], "curl -u [redacted]")
         self.assertNotIn("hunter2", str(self.result.records))
 
         fetch = records["fetch-20261105-040000-444"]
@@ -797,8 +797,9 @@ class HarnessAdapterTest(unittest.TestCase):
                 self.assertIn("[redacted]", summary)
                 self.assertNotIn(header.split(": ", 1)[1], summary)
         for option in ("-u", "--user"):
-            self.assertEqual(harness._command_summary(["curl", option, "user:pass"]),
-                             f"curl {option} user:[redacted]")
+            for value in ("user:pass", "ghp_abcdefghijklmnopqrstuvwxyz0123456789:x-oauth-basic"):
+                self.assertEqual(harness._command_summary(["curl", option, value]),
+                                 f"curl {option} [redacted]")
 
     def test_orb_command_credentials_are_not_recorded(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -222,8 +222,7 @@ def _command_summary(argv):
     for argument in argv[1:3]:
         if user_next:
             user_next = False
-            user, separator, _ = argument.partition(":")
-            parts.append((user + ":[redacted]" if separator else user)[:40])
+            parts.append("[redacted]")  # the username can be a token too
             continue
         if argument in ("-u", "--user"):
             parts.append(argument)
