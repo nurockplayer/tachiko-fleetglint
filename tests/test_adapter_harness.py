@@ -772,6 +772,34 @@ class HarnessAdapterTest(unittest.TestCase):
                 from fleetglint.schema import validate
                 self.assertEqual(validate(record), [])
 
+    def test_ci_poll_latest_row_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            ci = state / "ci-watch"
+            ci.mkdir()
+            header = "polled_at\trepo\trun_id\tworkflow\tbranch\tevent\tstatus\tconclusion\tcreated_at\tupdated_at\turl\ttruncated\n"
+            def row(time, status):
+                return (f"2026-11-05T{time}:00Z\towner/repo\t-\tci\tmain\tpush\t"
+                        f"{status}\t-\t-\t-\t-\tfalse\n")
+            adapter = harness.HarnessAdapter(state, hostname="h")
+            for first, second, expected in (("error", "completed", "cancelled"),
+                                            ("completed", "error", "unknown")):
+                (ci / "runs.tsv").write_text(header + row("03:00", first) + row("04:00", second))
+                poll = by_id(adapter.scan(NOW).records)["gha.owner.repo.poll"]
+                self.assertEqual(poll["state"], expected)
+                self.assertEqual(poll["updated_at"], "2026-11-05T04:00:00+00:00")
+
+    def test_command_summary_redacts_authorization_and_user_password(self):
+        for header in ("Authorization: Basic dXNlcjpwYXNz", "authorization: baretoken",
+                       "Proxy-Authorization: Digest secret"):
+            for argv in (["curl", header], ["curl", "-H", header], ["curl", "--header", header]):
+                summary = harness._command_summary(argv)
+                self.assertIn("[redacted]", summary)
+                self.assertNotIn(header.split(": ", 1)[1], summary)
+        for option in ("-u", "--user"):
+            self.assertEqual(harness._command_summary(["curl", option, "user:pass"]),
+                             f"curl {option} user:[redacted]")
+
     def test_orb_command_credentials_are_not_recorded(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = make_state(tmp)

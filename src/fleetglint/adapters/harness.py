@@ -218,7 +218,21 @@ def _command_summary(argv):
     head = os.path.basename(argv[0]) or argv[0]
     parts = [head]
     drop_next = False
+    user_next = False
     for argument in argv[1:3]:
+        if user_next:
+            user_next = False
+            user, separator, _ = argument.partition(":")
+            parts.append((user + ":[redacted]" if separator else user)[:40])
+            continue
+        if argument in ("-u", "--user"):
+            parts.append(argument)
+            user_next = True
+            continue
+        header = re.match(r"(?i)^(authorization|proxy-authorization)\s*:", argument)
+        if header:
+            parts.append(header.group(0) + " [redacted]")
+            continue
         if drop_next:
             drop_next = False
             continue
@@ -428,7 +442,8 @@ class HarnessAdapter:
             poll_time = _parse_rfc3339(polled)
             if repo.count("/") == 1 and all(repo.split("/")) and _ID.match(poll_id) and poll_time:
                 previous = polls.get(repo)
-                polls[repo] = (poll_time, status == "error" or (previous is not None and previous[1]))
+                if previous is None or poll_time >= previous[0]:
+                    polls[repo] = (poll_time, status == "error")
             if status == "error" or run_id == "-":
                 stats.ci_errors += 1
                 continue
