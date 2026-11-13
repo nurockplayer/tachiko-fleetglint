@@ -74,6 +74,11 @@ class CodexAdapterTest(unittest.TestCase):
         self.assertEqual(record["entries"], 8)
         self.assertIn("1 duplicate rollout(s) collapsed", self.scan().detail)
 
+    def test_worktree_cwd_uses_repo_name(self):
+        path = self.active
+        path.write_text(path.read_text().replace("/Users/me/work/demo", "/Users/me/work/demo/.claude/worktrees/feature"))
+        self.assertEqual(self.by_id(self.scan())[SESSION_ID]["project"], "demo")
+
     def test_required_fields_present(self):
         for record in self.scan().records:
             for key in ("v", "type", "id", "source_id", "updated_at",

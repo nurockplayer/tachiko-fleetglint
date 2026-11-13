@@ -14,6 +14,7 @@ from pathlib import Path
 
 from fleetglint import config, emit, schema
 from fleetglint.adapters.base import short_hostname
+from fleetglint.projects import project_from_path
 
 EVENTS = ("SessionStart", "SessionEnd", "SubagentStart", "SubagentStop")
 COMMAND_SUFFIX = "hooks record claude"
@@ -363,7 +364,7 @@ def _text(value):
 def _project(cwd):
     if not isinstance(cwd, str) or not cwd:
         return None
-    return Path(cwd).name or None
+    return project_from_path(cwd)
 
 
 def _load_state(path):

@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .base import ScanResult, short_hostname
+from fleetglint.projects import project_from_path
 
 _CHUNK = 1 << 20
 _MAX_SESSIONS = 5000
@@ -33,8 +34,7 @@ def _count(value):
 
 
 def _project(cwd):
-    name = Path(cwd).name if cwd else ""
-    return name or None
+    return project_from_path(cwd)
 
 
 def _consume_stream(stream, on_line):

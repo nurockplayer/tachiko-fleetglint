@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fleetglint.adapters.base import ScanResult, short_hostname
+from fleetglint.projects import project_from_path
 
 JST = timezone(timedelta(hours=9))
 ROOTS = ("cx-exec", "ds-exec", "agy-exec", "job-run", "lead-wait")
@@ -213,6 +214,8 @@ def _scrub_url(argument):
 
 def _command_summary(argv):
     """First word (basename) plus at most two arguments, credential-looking ones dropped."""
+    while argv and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
+        argv = argv[1:]  # leading VAR=value assignments, which often carry tokens
     if not argv:
         return None
     head = os.path.basename(argv[0]) or argv[0]
@@ -322,39 +325,9 @@ def _lead_wait_summary(wait):
     return _command_summary(wait["wrapped"])
 
 
-def _git_repo_name(path):
-    """The repo a directory is in, from its `.git` entry; a worktree's `.git` file names the repo."""
-    current = Path(path)
-    for directory in [current, *current.parents][:8]:
-        entry = directory / ".git"
-        try:
-            if entry.is_dir():
-                return directory.name
-            if entry.is_file():
-                with entry.open(encoding="utf-8", errors="replace") as handle:
-                    line = handle.read(4096).strip()
-                if line.startswith("gitdir:") and "/worktrees/" in line:
-                    common = line[len("gitdir:"):].strip().rsplit("/worktrees/", 1)[0]
-                    if common.endswith("/.git"):
-                        common = common[:-len("/.git")]
-                    return os.path.basename(common.removesuffix(".git").rstrip("/"))
-                return directory.name
-        except OSError:
-            return None
-    return None
-
-
-def _project_from_path(path):
-    """The repo a cwd belongs to: the part before `/.claude/worktrees/`, its git repo, else the basename."""
-    marker = "/.claude/worktrees/"
-    if marker in path:
-        path = path.split(marker, 1)[0]
-    return _clip(_git_repo_name(path) or os.path.basename(path.rstrip("/")), 200) or None
-
-
 def _job_project(directory):
     try:
-        return _project_from_path(_text(Path(directory) / "cwd").strip())
+        return project_from_path(_text(Path(directory) / "cwd").strip())
     except OSError:
         return None
 
@@ -403,7 +376,8 @@ class HarnessAdapter:
             ledger_text = _text(ledger)
         except OSError as exc:
             return ScanResult("unavailable", f"cannot read {ledger}: {exc}")
-        records = self._scan_runs(ledger_text, now, stats)
+        decisions, aliases = self._scan_decisions(stats)
+        records = self._scan_runs(ledger_text, now, stats, aliases)
         jobs, jobs_by_id, workers = self._scan_jobs(now, stats)
         self._link_waits(jobs_by_id, stats)
         self._link_runs_to_jobs(records, jobs_by_id)
@@ -411,9 +385,9 @@ class HarnessAdapter:
         records.extend(jobs)
         records.extend(self._scan_ci(stats))
         records.extend(self._scan_orb_test(now, stats))
-        records.extend(self._scan_inbox(set(jobs_by_id), stats))
-        records.extend(self._scan_owner_notify(stats))
-        records.extend(self._scan_decisions(stats))
+        records.extend(self._scan_inbox(set(jobs_by_id), stats, aliases))
+        records.extend(self._scan_owner_notify(stats, aliases))
+        records.extend(decisions)
         return ScanResult("ok", stats.detail(), records)
 
     def _base(self, record_type, record_id, updated_at):
@@ -588,7 +562,7 @@ class HarnessAdapter:
 
     # -- worker-ledger ----------------------------------------------------
 
-    def _scan_runs(self, ledger_text, now, stats):
+    def _scan_runs(self, ledger_text, now, stats, aliases):
         records = []
         seen = set()
         header = ledger_text.splitlines()[0].split("\t") if ledger_text.splitlines() else []
@@ -596,7 +570,7 @@ class HarnessAdapter:
         for row in ledger_text.splitlines():
             if not row.strip() or row.startswith("started\t"):
                 continue
-            record = self._ledger_record(row, stats, title_index)
+            record = self._ledger_record(row, stats, aliases, title_index)
             if record is None or record["id"] in seen:
                 continue
             seen.add(record["id"])
@@ -611,14 +585,14 @@ class HarnessAdapter:
             for path in entries:
                 if path.name.startswith(".") or not path.is_file():
                     continue
-                record = self._running_record(path, now, stats)
+                record = self._running_record(path, now, stats, aliases)
                 if record is None or record["id"] in seen:
                     continue
                 seen.add(record["id"])
                 records.append(record)
         return records
 
-    def _ledger_record(self, row, stats, title_index=None):
+    def _ledger_record(self, row, stats, aliases, title_index=None):
         fields = row.split("\t")
         if len(fields) < 10:
             stats.malformed += 1
@@ -647,12 +621,12 @@ class HarnessAdapter:
             record["ended_at"] = _iso(ended)
         if exit_code is not None:
             record["exit_code"] = exit_code
-        self._add_run_details(record, project, worker, model, provider, log, title)
+        self._add_run_details(record, project, worker, model, provider, log, aliases, title)
         if note.strip():
             record["summary"] = _clip(note.strip(), 2000)
         return record
 
-    def _running_record(self, path, now, stats):
+    def _running_record(self, path, now, stats, aliases):
         match = _RUNNING_NAME.match(path.name)
         if match is None:
             stats.malformed += 1
@@ -694,13 +668,13 @@ class HarnessAdapter:
         if waiting_on is not None:
             record["state"] = "waiting"
             record["waits_on"] = [{"type": "job", "id": waiting_on}]
-        self._add_run_details(record, fields[4], fields[5], fields[6], provider, fields[9],
+        self._add_run_details(record, fields[4], fields[5], fields[6], provider, fields[9], aliases,
                               fields[11] if len(fields) > 11 else "")
         return record
 
-    def _add_run_details(self, record, project, worker, model, provider, log, title=""):
+    def _add_run_details(self, record, project, worker, model, provider, log, aliases, title=""):
         if _clean(project):
-            record["project"] = _clip(project, 200)
+            record["project"] = _clip(aliases.get(project, project), 200)
         if _clean(worker):
             record["title"] = _clip(worker, 200)
         if _clean(title):
@@ -956,7 +930,7 @@ class HarnessAdapter:
 
     # -- lead-inbox -------------------------------------------------------
 
-    def _scan_inbox(self, job_ids, stats):
+    def _scan_inbox(self, job_ids, stats, aliases):
         records = []
         root = self.state_dir / "lead-inbox"
         if not root.is_dir():
@@ -979,12 +953,12 @@ class HarnessAdapter:
             for number, line in enumerate(text.splitlines(), start=1):
                 if not line.strip() or (number == 1 and line.startswith("id\t")):
                     continue
-                record = self._inbox_record(role, line, job_ids, stats)
+                record = self._inbox_record(role, line, job_ids, stats, aliases)
                 if record is not None:
                     records.append(record)
         return records
 
-    def _inbox_record(self, role, line, job_ids, stats):
+    def _inbox_record(self, role, line, job_ids, stats, aliases):
         fields = line.split("\t", 6)
         if len(fields) < 6:
             stats.malformed += 1
@@ -1011,7 +985,8 @@ class HarnessAdapter:
             "created_at": _iso(created),
         })
         if "-" in role:
-            record["project"] = self._role_project(role)
+            prefix = self._role_project(role)
+            record["project"] = aliases.get(prefix, prefix)
         if acked is not None:
             record["acked_at"] = _iso(acked)
         outcome = outcome.strip()
@@ -1056,7 +1031,7 @@ class HarnessAdapter:
 
     # -- owner-notify -----------------------------------------------------
 
-    def _scan_owner_notify(self, stats):
+    def _scan_owner_notify(self, stats, aliases):
         """One open item per key of owner-notify's log; the log has no acknowledged state."""
         path = self.state_dir / "owner-notify" / "log.tsv"
         if not path.exists():
@@ -1113,20 +1088,37 @@ class HarnessAdapter:
                 "detail": _clip(message.strip(), 4000),
             })
             if "-" in role.strip():
-                record["project"] = self._role_project(role.strip())
+                prefix = self._role_project(role.strip())
+                record["project"] = aliases.get(prefix, prefix)
             records.append(record)
         return records
 
     def _scan_decisions(self, stats):
         path = self.state_dir / "lead-decision" / "log.tsv"
         if not path.exists():
-            return []
+            return [], {}
         try:
             text = _text(path)
         except OSError:
             stats.unreadable += 1
-            return []
+            return [], {}
         records = []
+        aliases = {}
+        ambiguous = set()
+        for line in text.splitlines():
+            fields = line.split("\t")
+            if len(fields) < 7 or not _parse_harness_time(fields[0]) or not _clean(fields[1]):
+                continue
+            role, project, repo = fields[1:4]
+            if not _clean(repo):
+                continue
+            name = os.path.basename(repo.rstrip("/"))
+            for key in {_clean(project), self._role_project(role)} - {None, ""}:
+                if key in aliases and aliases[key] != name:
+                    ambiguous.add(key)
+                aliases[key] = name
+        for key in ambiguous:
+            aliases.pop(key, None)
         for number, line in enumerate(text.splitlines(), 1):
             if not line.strip() or (number == 1 and line.startswith("time\t")):
                 continue
@@ -1141,7 +1133,8 @@ class HarnessAdapter:
                 continue
             record = self._base("decision", f"decision.{number}", _iso(moment))
             record.update(role_id=_clip(role.strip(), 200), text=_clip(decision_text, 1000), decided_at=_iso(moment))
-            project = _clean(project) or self._role_project(role)
+            key = _clean(project) or self._role_project(role)
+            project = os.path.basename(repo.rstrip("/")) if _clean(repo) else aliases.get(key, key)
             if project:
                 record["project"] = _clip(project, 200)
             links = []
@@ -1152,4 +1145,4 @@ class HarnessAdapter:
             if links:
                 record["links"] = links
             records.append(record)
-        return records
+        return records, aliases

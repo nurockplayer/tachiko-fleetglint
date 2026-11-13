@@ -1,3 +1,4 @@
+from fleetglint.projects import project_from_path
 import hashlib
 import re
 import shutil
@@ -169,7 +170,7 @@ class HarnessAdapterTest(unittest.TestCase):
             records = harness.HarnessAdapter(state, hostname="h").scan(NOW).records
             decisions = [r for r in records if r["type"] == "decision"]
             self.assertEqual(len(decisions), 2)
-            self.assertEqual(decisions[0]["project"], "gteki")
+            self.assertEqual(decisions[0]["project"], "b")
             self.assertEqual(len(decisions[0]["links"]), 2)
             self.assertNotIn("links", decisions[1])
             runs = [r for r in records if r["type"] == "run"]
@@ -179,8 +180,60 @@ class HarnessAdapterTest(unittest.TestCase):
             legacy = next(r for r in runs if "worker" not in r)
             self.assertEqual(legacy["title"], "worker-b")
             notices = {r["detail"]: r for r in records if r["type"] == "inbox_item"}
-            self.assertEqual(notices["first"]["project"], "gteki")
+            self.assertEqual(notices["first"]["project"], "b")
             self.assertNotIn("project", notices["second"])
+
+    def test_decision_aliases_for_inbox_and_notifications(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            (state / "lead-decision").mkdir()
+            (state / "lead-decision/log.tsv").write_text(
+                "2026-11-05 06:10 JST\tfleetglint-lead\ttachiko-fleetglint\tnurockplayer/tachiko-fleetglint\t-\t-\tx\n"
+                "2026-11-05 06:10 JST\tfleetglint-lead\ttachiko-fleetglint\t-\t-\t-\tx\n"
+                "2026-11-05 06:10 JST\tedd-lead\t-\ttachikochoko/eddington-1919\t-\t-\tx\n"
+                "2026-11-05 06:10 JST\tdup-lead\t-\ta/one\t-\t-\tx\n"
+                "2026-11-05 06:10 JST\tdup-lead\t-\tb/two\t-\t-\tx\n")
+            inbox = state / "lead-inbox"
+            inbox.mkdir()
+            for role in ("fleetglint-lead", "ops-lead", "dup-lead"):
+                (inbox / f"{role}.tsv").write_text(
+                    f"{role}\t2026-11-05 06:10 JST\tjob\tunknown\tdone\tx\n")
+            (state / "owner-notify").mkdir()
+            (state / "owner-notify/log.tsv").write_text(
+                "2026-11-05 06:10 JST\ta\tedd-art\tsent\tx\n")
+            records = by_id(harness.HarnessAdapter(state).scan(NOW).records)
+            self.assertEqual(records["decision.2"]["project"], "tachiko-fleetglint")
+            self.assertEqual(records["fleetglint-lead"]["project"], "tachiko-fleetglint")
+            self.assertEqual(records["ops-lead"]["project"], "ops")
+            self.assertEqual(records["dup-lead"]["project"], "dup")
+            self.assertEqual(records["owner-notify.a"]["project"], "eddington-1919")
+
+    def test_path_fallbacks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "repo/.git/worktrees/x").mkdir(parents=True)
+            worktree = root / "repo/.claude/worktrees/x"
+            worktree.mkdir(parents=True)
+            (worktree / ".git").write_text(f"gitdir: {root}/repo/.git/worktrees/x\n")
+            for path, expected in ((worktree, "repo"), (root / "repo/.claude/director", "repo"),
+                                   (root / "tachiko-sheet-wt/column-alignment", "tachiko-sheet"),
+                                   (root / "tachiko-harness-wt-testline", "tachiko-harness"),
+                                   (root / "eddington-1919-wt/reunion", "eddington-1919"),
+                                   (root / "vpn", "vpn")):
+                self.assertEqual(project_from_path(str(path)), expected)
+            self.assertIsNone(project_from_path(None))
+            self.assertIsNone(project_from_path(""))
+
+    def test_git_walk_stops_at_home_and_handles_permission_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            (home / ".git").mkdir(parents=True)
+            child = home / "vpn"
+            child.mkdir()
+            with mock.patch.object(Path, "home", return_value=home):
+                self.assertEqual(project_from_path(str(child)), "vpn")
+            with mock.patch.object(Path, "exists", side_effect=PermissionError):
+                self.assertEqual(project_from_path(str(child)), "vpn")
 
     def test_identity_and_allowed_roots(self):
         self.assertEqual(self.adapter.source_id, "tachiko-harness@fixture-host")
@@ -431,12 +484,12 @@ class HarnessAdapterTest(unittest.TestCase):
             (root / "elsewhere" / "topic").mkdir()
             (root / "elsewhere" / "topic" / ".git").write_text(
                 f"gitdir: {root}/bare.git/worktrees/topic\n")
-            self.assertEqual(harness._project_from_path(str(root / "app" / "ui")), "app")
+            self.assertEqual(project_from_path(str(root / "app" / "ui")), "app")
             self.assertEqual(
-                harness._project_from_path(str(root / "elsewhere" / "feature" / "src")), "app")
-            self.assertEqual(harness._project_from_path(str(root / "elsewhere" / "topic")), "bare")
-        self.assertEqual(harness._project_from_path("/gone/repo/.claude/worktrees/x"), "repo")
-        self.assertEqual(harness._project_from_path("/gone/plain"), "plain")
+                project_from_path(str(root / "elsewhere" / "feature" / "src")), "app")
+            self.assertEqual(project_from_path(str(root / "elsewhere" / "topic")), "bare")
+        self.assertEqual(project_from_path("/gone/repo/.claude/worktrees/x"), "repo")
+        self.assertEqual(project_from_path("/gone/plain"), "plain")
 
     def test_git_repo_name_with_nested_worktrees_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -445,7 +498,7 @@ class HarnessAdapterTest(unittest.TestCase):
             worktree.mkdir()
             (worktree / ".git").write_text(
                 f"gitdir: {root}/worktrees/app/.git/worktrees/feature\n")
-            self.assertEqual(harness._project_from_path(str(worktree)), "app")
+            self.assertEqual(project_from_path(str(worktree)), "app")
 
     def test_jobs(self):
         records = by_id(self.result.records)
@@ -796,6 +849,9 @@ class HarnessAdapterTest(unittest.TestCase):
                 summary = harness._command_summary(argv)
                 self.assertIn("[redacted]", summary)
                 self.assertNotIn(header.split(": ", 1)[1], summary)
+        self.assertEqual(harness._command_summary(["API_TOKEN=sk-test-secret", "A=b", "pnpm", "test"]),
+                         "pnpm test")
+        self.assertIsNone(harness._command_summary(["API_TOKEN=sk-test-secret"]))
         for option in ("-u", "--user"):
             for value in ("user:pass", "ghp_abcdefghijklmnopqrstuvwxyz0123456789:x-oauth-basic"):
                 self.assertEqual(harness._command_summary(["curl", option, value]),
