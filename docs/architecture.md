@@ -437,6 +437,10 @@ automatically when `<state_dir>/worker-ledger/runs.tsv` exists. Sources
 - `job-run/<name>/` (`cmd`, `cwd`, `log`, `pid`, `result.json`) → `job`
   records; `command_summary` = first word of `cmd` + at most the next two
   arguments, never the full argv.
+- `ci-watch/runs.tsv` → GitHub Actions jobs, including all repositories in the poll.
+- `orb-test/` → jobs identified by PID and process start time; live entries are
+  emitted only when `runs.tsv` exists, and recent finish rows override live entries.
+- Role-based project inference removes the last hyphen segment.
 - `lead-wait/<role>/<job id>` markers → `job` records of kind `wait` with
   `role_id = <role>`.
 - `lead-inbox/<role>.tsv` → `inbox_item` records (`id`, `time` →

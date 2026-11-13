@@ -3,6 +3,17 @@
 All notable changes to Fleetglint are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- The harness adapter reads GitHub Actions and orb-test jobs, including recent
+  orb-test finishes when its finish log is available.
+
+### Changed
+
+- Role-based project inference removes the last hyphen segment.
+
 ## [0.1.1] - 2026-11-08
 
 ### Changed

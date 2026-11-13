@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import signal
 import stat
 from datetime import datetime, timedelta, timezone
@@ -218,7 +219,20 @@ def _command_summary(argv):
     head = os.path.basename(argv[0]) or argv[0]
     parts = [head]
     drop_next = False
+    user_next = False
     for argument in argv[1:3]:
+        if user_next:
+            user_next = False
+            parts.append("[redacted]")  # the username can be a token too
+            continue
+        if argument in ("-u", "--user"):
+            parts.append(argument)
+            user_next = True
+            continue
+        header = re.match(r"(?i)^(authorization|proxy-authorization)\s*:", argument)
+        if header:
+            parts.append(header.group(0) + " [redacted]")
+            continue
         if drop_next:
             drop_next = False
             continue
@@ -322,6 +336,8 @@ class _Stats:
     def __init__(self):
         self.malformed = 0
         self.unreadable = 0
+        self.ci_errors = 0
+        self.orb_no_log = False
 
     def detail(self):
         parts = []
@@ -329,6 +345,10 @@ class _Stats:
             parts.append(f"{self.malformed} malformed row(s) skipped")
         if self.unreadable:
             parts.append(f"{self.unreadable} unreadable file(s) skipped")
+        if self.ci_errors:
+            parts.append(f"ci-watch errors={self.ci_errors}")
+        if self.orb_no_log:
+            parts.append("orb-test: no finish log")
         return "; ".join(parts) or None
 
 
@@ -361,6 +381,8 @@ class HarnessAdapter:
         self._link_runs_to_jobs(records, jobs_by_id)
         self._link_run_roles(records, jobs_by_id, workers)
         records.extend(jobs)
+        records.extend(self._scan_ci(stats))
+        records.extend(self._scan_orb_test(now, stats))
         records.extend(self._scan_inbox(set(jobs_by_id), stats, aliases))
         records.extend(self._scan_owner_notify(stats, aliases))
         records.extend(decisions)
@@ -369,6 +391,172 @@ class HarnessAdapter:
     def _base(self, record_type, record_id, updated_at):
         return {"v": 1, "type": record_type, "id": record_id,
                 "source_id": self.source_id, "updated_at": updated_at}
+
+    def _scan_ci(self, stats):
+        path = self.state_dir / "ci-watch" / "runs.tsv"
+        if not path.exists():
+            return []
+        try:
+            lines = _text(path).splitlines()
+        except OSError:
+            stats.unreadable += 1
+            return []
+        records = []
+        polls = {}
+        for line in lines[1:]:
+            fields = line.split("\t")
+            if len(fields) != 12:
+                stats.malformed += 1
+                continue
+            polled, repo, run_id, workflow, branch, event, status, conclusion, created, updated, url, _ = fields
+            poll_id = f"gha.{repo.replace('/', '.')}.poll"
+            poll_time = _parse_rfc3339(polled)
+            if repo.count("/") == 1 and all(repo.split("/")) and _ID.match(poll_id) and poll_time:
+                previous = polls.get(repo)
+                if previous is None or poll_time >= previous[0]:
+                    polls[repo] = (poll_time, status == "error")
+            if status == "error" or run_id == "-":
+                stats.ci_errors += 1
+                continue
+            times = [_parse_rfc3339(t) for t in (polled, created, updated)]
+            record_id = f"gha.{repo.replace('/', '.')}.{run_id}"
+            if (not run_id.isdigit() or repo.count("/") != 1 or not all(repo.split("/"))
+                    or not _ID.match(record_id) or not all(times)
+                    or not url.startswith(("http://", "https://")) or len(url) > 2000):
+                stats.malformed += 1
+                continue
+            state = "unknown"
+            if status in ("queued", "waiting", "pending", "requested"):
+                state = "queued"
+            elif status == "in_progress":
+                state = "running"
+            elif status == "completed":
+                if conclusion in ("success", "neutral", "skipped"):
+                    state = "done"
+                elif conclusion in ("failure", "timed_out", "startup_failure"):
+                    state = "failed"
+                elif conclusion == "cancelled":
+                    state = "cancelled"
+            record = self._base("job", record_id, _iso(times[2]))
+            record.update(kind="github-actions", project=_clip(repo.split("/")[1], 200),
+                          command_summary=_clip(f"{workflow} · {branch} · {event}", 200),
+                          state=state, started_at=_iso(times[1]),
+                          links=[{"label": "GitHub run", "url": url}])
+            if state in TERMINAL_STATES:
+                record["ended_at"] = _iso(times[2])
+            else:
+                record.update(observed_at=_iso(times[0]), stale_after_s=1800)
+            if state == "failed":
+                record["summary"] = conclusion
+            records.append(record)
+        for repo, (polled, failed) in polls.items():
+            timestamp = _iso(polled)
+            record = self._base("job", f"gha.{repo.replace('/', '.')}.poll", timestamp)
+            record.update(kind="github-actions", project=_clip(repo.split("/")[1], 200),
+                          command_summary="ci-watch poll", started_at=timestamp,
+                          state="unknown" if failed else "cancelled",
+                          summary="ci-watch could not read this repo's runs" if failed else "ci-watch polled this repo")
+            if failed:
+                record["observed_at"] = timestamp
+            else:
+                record["ended_at"] = timestamp
+            records.append(record)
+        return records
+
+    def _scan_orb_test(self, now, stats):
+        root = self.state_dir / "orb-test"
+        if not root.is_dir():
+            return []
+        finish = root / "runs.tsv"
+        if not finish.exists():
+            stats.orb_no_log = True
+            return []
+        try:
+            lines = _text(finish).splitlines()
+        except OSError:
+            stats.unreadable += 1
+            return []
+        records = {}
+
+        def build(pid, pstart, project, label):
+            started = _parse_lstart(pstart)
+            if not pid.isdigit() or int(pid) < 1 or started is None or not _clean(project) or not _clean(label):
+                return None
+            record_id = f"orb-test.{int(pid)}.{int(started.timestamp())}"
+            record = self._base("job", record_id, _iso(now))
+            try:
+                argv = shlex.split(label)
+            except ValueError:
+                argv = label.split()
+            record.update(kind="orb-test", project=_clip(project, 200),
+                          command_summary=_command_summary(argv), started_at=_iso(started))
+            return record
+
+        # Later sources override earlier ones: active beats holder and queue.
+        for name in ("queue", "waiting", "holder", "active"):
+            directory = root / name
+            try:
+                paths = ([root / "heavy.holder"] if name == "holder" and (root / "heavy.holder").is_file()
+                         else sorted(directory.iterdir()) if directory.is_dir() else [])
+            except OSError:
+                stats.unreadable += 1
+                continue
+            for path in paths:
+                if path.name.startswith(".") or path.name.endswith(".why") or not path.is_file():
+                    continue
+                try:
+                    fields = _text(path).rstrip("\n").split("\t")
+                    if name in ("queue", "holder"):
+                        if len(fields) != 8 or not fields[0].isdigit() or not fields[2].isdigit():
+                            raise ValueError
+                        ticket, pid, _, project, _, _, label, pstart = fields
+                        if name == "queue" and path.name != f"{int(ticket):06d}.{pid}":
+                            raise ValueError
+                    else:
+                        if len(fields) != (5 if name == "active" else 6):
+                            raise ValueError
+                        project, pid, pstart, memory, label = fields[:5]
+                        if path.name != pid or not memory.isdigit() or (name == "waiting" and not fields[5].isdigit()):
+                            raise ValueError
+                    record = build(pid, pstart, project, label)
+                    if record is None:
+                        raise ValueError
+                    record.update(state="running" if name in ("active", "holder") else "queued",
+                                  observed_at=_iso(now), stale_after_s=600,
+                                  process={"host": self.hostname, "pid": int(pid), "start_time": record["started_at"]})
+                    if name == "holder":
+                        record["summary"] = "heavy lock held, starting"
+                    elif name == "waiting":
+                        record["summary"] = "waiting for memory"
+                    elif name == "queue":
+                        why = path.with_name(path.name + ".why")
+                        record["summary"] = _clip(_text(why).strip(), 2000) if why.is_file() else f"queued #{int(ticket)}"
+                    records[record["id"]] = record
+                except OSError:
+                    stats.unreadable += 1
+                except ValueError:
+                    stats.malformed += 1
+        for line in lines:
+            fields = line.split("\t")
+            if len(fields) != 6:
+                stats.malformed += 1
+                continue
+            ended_text, pid, pstart, project, label, exit_text = fields
+            ended = _from_epoch(int(ended_text)) if ended_text.isdigit() else None
+            record = build(pid, pstart, project, label)
+            if ended is None or record is None or (exit_text != "-" and not re.fullmatch(r"-?\d+", exit_text)):
+                stats.malformed += 1
+                continue
+            if ended < now - timedelta(hours=24) or ended > now:
+                continue
+            record.update(updated_at=_iso(ended), ended_at=_iso(ended))
+            if exit_text == "-":
+                record.update(state="cancelled", summary="ended; exit status not recorded")
+            else:
+                code = int(exit_text)
+                record.update(state="done" if code == 0 else "failed", exit_code=code)
+            records[record["id"]] = record
+        return list(records.values())
 
     # -- worker-ledger ----------------------------------------------------
 
@@ -734,6 +922,10 @@ class HarnessAdapter:
                 record["role_id"] = roles.pop()
 
     # Harness roles conventionally use <project>-<function>; only this adapter infers projects.
+    @staticmethod
+    def _role_project(role):
+        return role.rsplit("-", 1)[0] if "-" in role else None
+
     # -- lead-inbox -------------------------------------------------------
 
     def _scan_inbox(self, job_ids, stats, aliases):
@@ -791,7 +983,7 @@ class HarnessAdapter:
             "created_at": _iso(created),
         })
         if "-" in role:
-            prefix = role.split("-", 1)[0]
+            prefix = self._role_project(role)
             record["project"] = aliases.get(prefix, prefix)
         if acked is not None:
             record["acked_at"] = _iso(acked)
@@ -894,7 +1086,7 @@ class HarnessAdapter:
                 "detail": _clip(message.strip(), 4000),
             })
             if "-" in role.strip():
-                prefix = role.strip().split("-", 1)[0]
+                prefix = self._role_project(role.strip())
                 record["project"] = aliases.get(prefix, prefix)
             records.append(record)
         return records
@@ -919,7 +1111,7 @@ class HarnessAdapter:
             if not _clean(repo):
                 continue
             name = os.path.basename(repo.rstrip("/"))
-            for key in {_clean(project), role.split("-", 1)[0]} - {None, ""}:
+            for key in {_clean(project), self._role_project(role)} - {None, ""}:
                 if key in aliases and aliases[key] != name:
                     ambiguous.add(key)
                 aliases[key] = name
@@ -939,7 +1131,7 @@ class HarnessAdapter:
                 continue
             record = self._base("decision", f"decision.{number}", _iso(moment))
             record.update(role_id=_clip(role.strip(), 200), text=_clip(decision_text, 1000), decided_at=_iso(moment))
-            key = _clean(project) or role.split("-", 1)[0]
+            key = _clean(project) or self._role_project(role)
             project = os.path.basename(repo.rstrip("/")) if _clean(repo) else aliases.get(key, key)
             if project:
                 record["project"] = _clip(project, 200)

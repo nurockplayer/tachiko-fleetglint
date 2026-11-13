@@ -1,4 +1,4 @@
-"""Allow unittest discovery to import the project from its src layout."""
+"""Make the src-layout package importable during unittest discovery."""
 import sys
 from pathlib import Path
 
