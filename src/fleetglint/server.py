@@ -19,7 +19,7 @@ from fleetglint import __version__
 
 MAX_REQUEST_LINE = 2048
 API_CONTENT_TYPE = "application/json; charset=utf-8"
-RECORD_TYPES = ("run", "job", "inbox_item")
+RECORD_TYPES = ("run", "job", "inbox_item", "decision")
 FILE_FIELDS = ("log_path", "result_path", "link")
 
 SECURITY_HEADERS = (
@@ -275,7 +275,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if params is None:
             return
         if params["type"] not in RECORD_TYPES:
-            self._error(400, "bad_request", "type must be run, job or inbox_item")
+            self._error(400, "bad_request", "type must be run, job, inbox_item or decision")
             return
         now = self.server.clock()
         data = self._guard(self.server.backend.record, now, params["source_id"],
@@ -302,7 +302,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if params is None:
             return
         if params["type"] not in RECORD_TYPES:
-            self._error(400, "bad_request", "type must be run, job or inbox_item")
+            self._error(400, "bad_request", "type must be run, job, inbox_item or decision")
             return
         if params["field"] not in FILE_FIELDS:
             self._error(400, "bad_request", "field must be log_path, result_path or link")

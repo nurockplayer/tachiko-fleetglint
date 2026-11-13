@@ -225,6 +225,8 @@ class _View:
             "links": self.links(record),
         }
         summary.update(_FIELDS[row["type"]](self, record, row, source_id))
+        if row["type"] == "run" and "worker" in record:
+            summary["worker"] = _text(record["worker"])
         return summary
 
     # -- per-type summary fields ------------------------------------------
@@ -300,6 +302,7 @@ _FIELDS = {
     "job": _View._job_fields,
     "inbox_item": _View._inbox_fields,
     "session": _View._session_fields,
+    "decision": lambda view, record, row, source_id: {"role_id": record.get("role_id"), "text": _text(record.get("text")), "decided_at": record.get("decided_at")},
 }
 
 
@@ -380,6 +383,8 @@ class QueryBackend:
         window_start = now.timestamp() - self.cfg.window_hours * 3600
         rows = {"run": [], "job": [], "inbox_item": [], "session": []}
         for row in store.iter_latest(conn):
+            if row["type"] == "decision":
+                continue
             if row["type"] == "session":
                 if row["observed_ts"] >= window_start:
                     rows["session"].append(row)
@@ -451,6 +456,7 @@ class QueryBackend:
                        "unverified_recent": 0, "failed_recent": 0, "older_unverified": 0,
                        "sessions_recent": 0},
             "needs_you": [],
+            "projects": [],
             "lead_inbox": [],
             "queued": [],
             "waiting": [],
@@ -839,9 +845,102 @@ def _board_work(view, rows, now, window_start, counts):
             [item for _, item in recent])
 
 
+def _board_projects(view, rows, needs_you, now, window_start, cfg):
+    groups = {}
+    def project(record):
+        return record.get("project")
+
+    def group(name):
+        return groups.setdefault(name, {"project": name, "needs_you": [], "in_progress": [],
+            "decisions": [], "recent": {"done": [], "failed": []},
+            "lead_inbox_open": 0, "sessions_recent": 0, "last_activity_at": None})
+
+    # Include live work and open inbox even if last updated before the window.
+    for kind, entries in rows.items():
+        for row in entries:
+            if kind == "decision":
+                included = row["observed_ts"] >= now.timestamp() - 7 * 86400
+            elif kind == "session":
+                included = row["observed_ts"] >= window_start
+            elif kind == "inbox_item":
+                included = row["state"] == "open" or row["updated_ts"] >= window_start
+            else:
+                included = not _board_excluded(row, window_start)
+            if not included:
+                continue
+            record = view.record(row)
+            name = project(record)
+            g = group(name)
+            activity = record.get("decided_at") if kind == "decision" else (record.get("last_activity_at") if kind == "session" else record["updated_at"])
+            if g["last_activity_at"] is None or _epoch(activity) > _epoch(g["last_activity_at"]):
+                g["last_activity_at"] = activity
+            if kind == "decision":
+                g["decisions"].append({"ref": {"type": kind, "id": row["id"], "source_id": row["source_id"]},
+                    "project": name, "role_id": record["role_id"], "text": _text(record["text"]),
+                    "decided_at": record["decided_at"], "links": view.links(record)})
+            elif kind == "session":
+                g["sessions_recent"] += view.display(record, row["source_id"]).state == "recent"
+            elif kind == "inbox_item":
+                if row["state"] == "open" and not (record.get("action_required") and record.get("role_id") in cfg.viewer_roles):
+                    g["lead_inbox_open"] += 1
+            else:
+                state = view.display(record, row["source_id"]).state
+                if state in ("stale", "lost") or (state in ("failed", "unknown") and row["updated_ts"] >= window_start):
+                    reason = (record.get("summary") or (f"exit {record['exit_code']}" if record.get("exit_code") is not None else "failed")) if state == "failed" else "unverified" if state == "unknown" else state
+                    g["needs_you"].append(_work_item(view, row, reason, now))
+                if state in ("done", "failed") and row["updated_ts"] >= window_start:
+                    g["recent"][state].append(_work_item(view, row, None, now))
+    for item in needs_you:
+        ref = item["ref"]
+        row = view.latest(ref["source_id"], ref["type"], ref["id"])
+        group(project(view.record(row)))["needs_you"].append(item)
+
+    live_runs = []
+    for row in rows["run"]:
+        if _board_excluded(row, window_start):
+            continue
+        record = view.record(row)
+        if view.display(record, row["source_id"]).state in ("running", "waiting", "queued"):
+            item = _work_item(view, row, None, now)
+            item["jobs"] = []
+            group(project(record))["in_progress"].append(item)
+            live_runs.append((row, record, item))
+    for row in rows["job"]:
+        if _board_excluded(row, window_start):
+            continue
+        record = view.record(row)
+        if view.display(record, row["source_id"]).state != "running":
+            continue
+        job_ref = (row["source_id"], row["id"])
+        attached = False
+        for run_row, run_record, item in live_runs:
+            run_ref = record.get("run") or {}
+            match = (run_ref.get("type") == "run" and run_ref.get("id") == run_row["id"] and (run_ref.get("source_id") or row["source_id"]) == run_row["source_id"])
+            match |= any(ref.get("type") == "job" and (ref.get("source_id") or run_row["source_id"], ref.get("id")) == job_ref for ref in run_record.get("waits_on", []))
+            if match:
+                item["jobs"].append(_work_item(view, row, None, now))
+                attached = True
+        if not attached:
+            group(project(record))["in_progress"].append(_work_item(view, row, None, now))
+
+    for g in groups.values():
+        g["decisions"].sort(key=lambda x: _epoch(x["decided_at"]), reverse=True)
+        for items in g["recent"].values():
+            items.sort(key=lambda x: _epoch(x["updated_at"]), reverse=True)
+        g["truncated"] = {"needs_you": len(g["needs_you"]) > BOARD_LIST_LIMIT,
+            "in_progress": len(g["in_progress"]) > BOARD_LIST_LIMIT,
+            "decisions": len(g["decisions"]) > 10,
+            "recent": {key: len(items) > 10 for key, items in g["recent"].items()}}
+        g["needs_you"] = g["needs_you"][:BOARD_LIST_LIMIT]
+        g["in_progress"] = g["in_progress"][:BOARD_LIST_LIMIT]
+        g["decisions"] = g["decisions"][:10]
+        g["recent"] = {key: items[:10] for key, items in g["recent"].items()}
+    return sorted(groups.values(), key=lambda g: (not bool(g["needs_you"]), g["project"] is None and not g["needs_you"], -(_epoch(g["last_activity_at"]) or 0), g["project"] or ""))
+
+
 def _board_data(view, cfg, now, server):
     window_start = now.timestamp() - cfg.window_hours * 3600
-    rows = {"run": [], "job": [], "inbox_item": [], "session": []}
+    rows = {"run": [], "job": [], "inbox_item": [], "session": [], "decision": []}
     for row in store.iter_latest(view.conn):
         if row["type"] == "session":
             if row["observed_ts"] >= window_start:
@@ -877,6 +976,7 @@ def _board_data(view, cfg, now, server):
                          "requests": bool(rows["inbox_item"])},
         "counts": counts,
         "needs_you": needs_you[:BOARD_LIST_LIMIT],
+        "projects": _board_projects(view, rows, needs_you, now, window_start, cfg),
         "lead_inbox": lead_inbox[:BOARD_LIST_LIMIT],
         "queued": queued[:BOARD_LIST_LIMIT],
         "waiting": waiting[:BOARD_LIST_LIMIT],

@@ -6,7 +6,7 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 
-RECORD_TYPES = ("run", "job", "inbox_item", "session")
+RECORD_TYPES = ("run", "job", "inbox_item", "session", "decision")
 
 _MIGRATION_1 = (
     """CREATE TABLE sources (
@@ -301,12 +301,14 @@ def iter_latest(conn, types=()):
 def _record_columns(record):
     updated_at = record["updated_at"]
     updated_ts = epoch(updated_at)
-    if record["type"] == "session":
+    if record["type"] == "decision":
+        observed_text = record["decided_at"]
+    elif record["type"] == "session":
         observed_text = record.get("last_activity_at") or updated_at
     else:
         observed_text = record.get("observed_at") or updated_at
     return {
-        "state": record["state"],
+        "state": "done" if record["type"] == "decision" else record["state"],
         "updated_at": updated_at,
         "updated_ts": updated_ts,
         "observed_ts": epoch(observed_text),

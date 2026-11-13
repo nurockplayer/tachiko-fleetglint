@@ -391,6 +391,7 @@ class HarnessAdapter:
         records.extend(jobs)
         records.extend(self._scan_inbox(set(jobs_by_id), stats))
         records.extend(self._scan_owner_notify(stats))
+        records.extend(self._scan_decisions(stats))
         return ScanResult("ok", stats.detail(), records)
 
     def _base(self, record_type, record_id, updated_at):
@@ -402,10 +403,12 @@ class HarnessAdapter:
     def _scan_runs(self, ledger_text, now, stats):
         records = []
         seen = set()
+        header = ledger_text.splitlines()[0].split("\t") if ledger_text.splitlines() else []
+        title_index = header.index("title") if "title" in header else None
         for row in ledger_text.splitlines():
             if not row.strip() or row.startswith("started\t"):
                 continue
-            record = self._ledger_record(row, stats)
+            record = self._ledger_record(row, stats, title_index)
             if record is None or record["id"] in seen:
                 continue
             seen.add(record["id"])
@@ -427,13 +430,14 @@ class HarnessAdapter:
                 records.append(record)
         return records
 
-    def _ledger_record(self, row, stats):
+    def _ledger_record(self, row, stats, title_index=None):
         fields = row.split("\t")
         if len(fields) < 10:
             stats.malformed += 1
             return None
         started_text, ended_text, tool, project, worker, model, _pane, exit_text, _advice, log = fields[:10]
-        note = fields[10] if len(fields) > 10 else ""
+        note = fields[10] if len(fields) > 10 and title_index != 10 else ""
+        title = fields[title_index] if title_index is not None and title_index < len(fields) else ""
         started = _parse_harness_time(started_text)
         ended = _parse_harness_time(ended_text)
         agent, provider = _agent_for(tool)
@@ -455,7 +459,7 @@ class HarnessAdapter:
             record["ended_at"] = _iso(ended)
         if exit_code is not None:
             record["exit_code"] = exit_code
-        self._add_run_details(record, project, worker, model, provider, log)
+        self._add_run_details(record, project, worker, model, provider, log, title)
         if note.strip():
             record["summary"] = _clip(note.strip(), 2000)
         return record
@@ -502,14 +506,19 @@ class HarnessAdapter:
         if waiting_on is not None:
             record["state"] = "waiting"
             record["waits_on"] = [{"type": "job", "id": waiting_on}]
-        self._add_run_details(record, fields[4], fields[5], fields[6], provider, fields[9])
+        self._add_run_details(record, fields[4], fields[5], fields[6], provider, fields[9],
+                              fields[11] if len(fields) > 11 else "")
         return record
 
-    def _add_run_details(self, record, project, worker, model, provider, log):
+    def _add_run_details(self, record, project, worker, model, provider, log, title=""):
         if _clean(project):
             record["project"] = _clip(project, 200)
         if _clean(worker):
             record["title"] = _clip(worker, 200)
+        if _clean(title):
+            record["title"] = _clip(title, 200)
+            if _clean(worker):
+                record["worker"] = _clip(worker, 200)
         if provider:
             record["provider"] = _clip(provider, 64)
         if _clean(model):
@@ -730,7 +739,7 @@ class HarnessAdapter:
         """A run's role comes from the wait-worker job that launched it, when the job's
         worker name and its time window both fit. Titles alone are never enough."""
         for record in records:
-            title = record.get("title")
+            title = record.get("worker") or record.get("title")
             started = _parse_rfc3339(record.get("started_at", ""))
             if (record.get("type") != "run" or "role_id" in record
                     or not title or started is None):
@@ -752,6 +761,7 @@ class HarnessAdapter:
             if len(roles) == 1 and None not in roles:
                 record["role_id"] = roles.pop()
 
+    # Harness roles conventionally use <project>-<function>; only this adapter infers projects.
     # -- lead-inbox -------------------------------------------------------
 
     def _scan_inbox(self, job_ids, stats):
@@ -808,6 +818,8 @@ class HarnessAdapter:
             "subject": self._subject(kind.strip(), ref, detail, job_ids),
             "created_at": _iso(created),
         })
+        if "-" in role:
+            record["project"] = role.split("-", 1)[0]
         if acked is not None:
             record["acked_at"] = _iso(acked)
         outcome = outcome.strip()
@@ -908,5 +920,44 @@ class HarnessAdapter:
                 "outcome": _clip(status, 80),
                 "detail": _clip(message.strip(), 4000),
             })
+            if "-" in role.strip():
+                record["project"] = role.strip().split("-", 1)[0]
+            records.append(record)
+        return records
+
+    def _scan_decisions(self, stats):
+        path = self.state_dir / "lead-decision" / "log.tsv"
+        if not path.exists():
+            return []
+        try:
+            text = _text(path)
+        except OSError:
+            stats.unreadable += 1
+            return []
+        records = []
+        for number, line in enumerate(text.splitlines(), 1):
+            if not line.strip() or (number == 1 and line.startswith("time\t")):
+                continue
+            fields = line.split("\t")
+            if len(fields) < 7:
+                stats.malformed += 1
+                continue
+            when, role, project, repo, ref, url, decision_text = fields[:7]
+            moment = _parse_harness_time(when)
+            if moment is None or not _clean(role):
+                stats.malformed += 1
+                continue
+            record = self._base("decision", f"decision.{number}", _iso(moment))
+            record.update(role_id=_clip(role.strip(), 200), text=_clip(decision_text, 1000), decided_at=_iso(moment))
+            project = _clean(project) or (role.split("-", 1)[0] if "-" in role else None)
+            if project:
+                record["project"] = _clip(project, 200)
+            links = []
+            if url.startswith(("http://", "https://")):
+                links.append({"label": "decision", "url": url[:2000]})
+            if ref.isdigit() and _clean(repo):
+                links.append({"label": "issue", "url": f"https://github.com/{repo}/issues/{ref}"})
+            if links:
+                record["links"] = links
             records.append(record)
         return records

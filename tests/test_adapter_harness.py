@@ -152,6 +152,36 @@ class HarnessAdapterTest(unittest.TestCase):
         self.adapter = harness.HarnessAdapter(FIXTURES, hostname="fixture-host")
         self.result = self.adapter.scan(NOW)
 
+    def test_decisions_titles_and_notification_projects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            write_running(state, pid=111, log="-", tool="cx", worker="worker-a")
+            marker = state / "worker-ledger/running/cx.111"
+            fields = marker.read_text().rstrip("\n").split("\t")
+            marker.write_text("\t".join(fields[:11] + ["Task heading"]) + "\n")
+            write_running(state, pid=222, log="-", tool="cx", worker="worker-b")
+            old = state / "worker-ledger/running/cx.222"
+            self.assertEqual(len(old.read_text().rstrip("\n").split("\t")), 11)
+            (state / "lead-decision").mkdir()
+            (state / "lead-decision/log.tsv").write_text("time\trole\tproject\trepo\tref\turl\ttext\n2026-11-05 06:10 JST\tgteki-lead\t-\ta/b\t12\thttps://github.com/a/b/issues/12#issuecomment-1\tship\n2026-11-05 06:11 JST\towner\t-\ta/b\t-\t-\tkeep\tfailed\n")
+            (state / "owner-notify").mkdir()
+            (state / "owner-notify/log.tsv").write_text("2026-11-05 06:10 JST\ta\tgteki-lead\tsent\tfirst\n2026-11-05 06:11 JST\tb\ttachikoma\tsent\tsecond\n")
+            records = harness.HarnessAdapter(state, hostname="h").scan(NOW).records
+            decisions = [r for r in records if r["type"] == "decision"]
+            self.assertEqual(len(decisions), 2)
+            self.assertEqual(decisions[0]["project"], "gteki")
+            self.assertEqual(len(decisions[0]["links"]), 2)
+            self.assertNotIn("links", decisions[1])
+            runs = [r for r in records if r["type"] == "run"]
+            titled = next(r for r in runs if r.get("worker"))
+            self.assertEqual(titled["title"], "Task heading")
+            self.assertEqual(titled["worker"], "worker-a")
+            legacy = next(r for r in runs if "worker" not in r)
+            self.assertEqual(legacy["title"], "worker-b")
+            notices = {r["detail"]: r for r in records if r["type"] == "inbox_item"}
+            self.assertEqual(notices["first"]["project"], "gteki")
+            self.assertNotIn("project", notices["second"])
+
     def test_identity_and_allowed_roots(self):
         self.assertEqual(self.adapter.source_id, "tachiko-harness@fixture-host")
         self.assertEqual(self.adapter.allowed_roots,
@@ -295,7 +325,7 @@ class HarnessAdapterTest(unittest.TestCase):
             shutil.copytree(FIXTURES, state)
             (state / "worker-ledger/running/cx.4001").write_text(
                 "cx\t4001\tThu Nov  5 03:00:00 2026\t1793847600\talpha\tterra-nolog\t"
-                "gpt-6.1-terra\tpane:9\t/Users/example/Developer/alpha\t-\troutine/cx\n")
+                "gpt-6.1-terra\tpane:9\t/Users/example/Developer/alpha\t-\n")
             adapter = harness.HarnessAdapter(state, hostname="fixture-host")
             records = by_id(adapter.scan(NOW).records)
         record = records["cx.4001.1793847600"]
@@ -312,7 +342,7 @@ class HarnessAdapterTest(unittest.TestCase):
             (state / "worker-ledger/running/cx.4001").write_text(
                 "cx\t4001\tThu Nov  5 03:01:00 2026\t1793847660\talpha\tterra-reused\t"
                 "gpt-6.1-terra\tpane:9\t/Users/example/Developer/alpha\t"
-                f"{reused}\troutine/cx\n")
+                f"{reused}\n")
             records = by_id(adapter.scan(LATER).records)
             new_id = run_id("cx", reused)
             self.assertNotEqual(new_id, TERRA_LIVE_ID)

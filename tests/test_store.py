@@ -67,6 +67,15 @@ class HelpersTest(unittest.TestCase):
         self.conn = store.open_db(Path(self.tmp.name) / "db.sqlite")
         self.addCleanup(self.conn.close)
 
+    def test_decision_round_trip(self):
+        import json
+        record = {"v": 1, "type": "decision", "id": "d1", "source_id": "s@host",
+                  "updated_at": UPDATED, "role_id": "a-lead", "text": "ship", "decided_at": UPDATED}
+        self.assertTrue(store.put_latest(self.conn, record, 1, 1))
+        row = store.get_latest(self.conn, "s@host", "decision", "d1")
+        self.assertEqual(json.loads(row["json"]), record)
+        self.assertEqual(row["state"], "done")
+
     def test_meta_and_change_counter(self):
         self.assertIsNone(store.get_meta(self.conn, "missing"))
         self.assertEqual(store.get_meta(self.conn, "missing", "fallback"), "fallback")

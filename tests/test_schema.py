@@ -35,6 +35,9 @@ class ExamplesTest(unittest.TestCase):
 
 
 class ValidateTest(unittest.TestCase):
+    def test_decision_example(self):
+        self.assertEqual(schema.validate(json.loads((VALID / "decision.json").read_text())), [])
+
     def test_error_path_and_enum_message(self):
         errors = schema.validate(make_record(state="bogus"))
         self.assertIn("/state: not one of", errors[0])

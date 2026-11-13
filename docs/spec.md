@@ -36,7 +36,7 @@ Every record is one JSON object. These fields are common to all types.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `v` | integer | yes | Format version. This document defines `1`. |
-| `type` | string | yes | `run`, `job`, `inbox_item` or `session` (§4). |
+| `type` | string | yes | `run`, `job`, `inbox_item`, `session` or `decision` (§4). |
 | `id` | string | yes | Writer-chosen id, unique within `(source_id, type)`. |
 | `source_id` | string | yes | The source that wrote the record (§6.1). |
 | `updated_at` | timestamp | yes | When the writer produced this version of the record. |
@@ -140,7 +140,8 @@ A session that is paused and later resumed produces a **new** run with
 | `model` | string | no | Model id as the tool reports it: `gpt-6.1-terra`, `claude-opus-5-5`. |
 | `provider` | string | no | Who serves the model: `openai`, `anthropic`, `deepseek`, `ollama`, … |
 | `effort` | string | no | Reasoning effort or similar setting, as the tool names it. |
-| `role_id` | string | no | The role responsible for this run, usually the one that dispatched it (§4.5). |
+| `role_id` | string | no | The role responsible for this run, usually the one that dispatched it (§4.6). |
+| `worker` | string | no | Worker name, at most 200 characters. |
 | `session_id` | string | no | The tool's own session or conversation id, if it has one. Runs that share a `session_id` are segments of one conversation. |
 | `parent_run` | RecordRef to a run | no | The run that **spawned** this run. |
 | `resume_of` | RecordRef to a run | no | The run this run **continues** (same conversation, later segment). |
@@ -251,7 +252,17 @@ session has not ended (for example a session-start event without an end).
 Writers MUST NOT copy prompts, model output, tool input or tool output into
 a session record; it carries metadata only.
 
-### 4.5 Roles
+### 4.5 `decision`: a decision a lead made
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `role_id` | string | yes | Role that made the decision. |
+| `text` | string | yes | Decision text, at most 1000 characters. |
+| `decided_at` | timestamp | yes | When it was made. |
+
+Decisions have no state. They are terminal and displayed as made; liveness does not apply. Common `project`, `title`, and `links` may be supplied.
+
+### 4.6 Roles
 
 `role_id` names who is responsible: a lead session (`fleetglint-lead`), a
 human (`owner`), a team. It is a free-form string in v1; a `role` record type
