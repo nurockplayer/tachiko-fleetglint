@@ -188,7 +188,8 @@ class HarnessAdapterTest(unittest.TestCase):
             state = make_state(tmp)
             (state / "lead-decision").mkdir()
             (state / "lead-decision/log.tsv").write_text(
-                "2026-11-05 06:10 JST\tfleetglint-lead\t-\tnurockplayer/tachiko-fleetglint\t-\t-\tx\n"
+                "2026-11-05 06:10 JST\tfleetglint-lead\ttachiko-fleetglint\tnurockplayer/tachiko-fleetglint\t-\t-\tx\n"
+                "2026-11-05 06:10 JST\tfleetglint-lead\ttachiko-fleetglint\t-\t-\t-\tx\n"
                 "2026-11-05 06:10 JST\tedd-lead\t-\ttachikochoko/eddington-1919\t-\t-\tx\n"
                 "2026-11-05 06:10 JST\tdup-lead\t-\ta/one\t-\t-\tx\n"
                 "2026-11-05 06:10 JST\tdup-lead\t-\tb/two\t-\t-\tx\n")
@@ -201,6 +202,7 @@ class HarnessAdapterTest(unittest.TestCase):
             (state / "owner-notify/log.tsv").write_text(
                 "2026-11-05 06:10 JST\ta\tedd-art\tsent\tx\n")
             records = by_id(harness.HarnessAdapter(state).scan(NOW).records)
+            self.assertEqual(records["decision.2"]["project"], "tachiko-fleetglint")
             self.assertEqual(records["fleetglint-lead"]["project"], "tachiko-fleetglint")
             self.assertEqual(records["ops-lead"]["project"], "ops")
             self.assertEqual(records["dup-lead"]["project"], "dup")
@@ -221,6 +223,17 @@ class HarnessAdapterTest(unittest.TestCase):
                 self.assertEqual(project_from_path(str(path)), expected)
             self.assertIsNone(project_from_path(None))
             self.assertIsNone(project_from_path(""))
+
+    def test_git_walk_stops_at_home_and_handles_permission_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            (home / ".git").mkdir(parents=True)
+            child = home / "vpn"
+            child.mkdir()
+            with mock.patch.object(Path, "home", return_value=home):
+                self.assertEqual(project_from_path(str(child)), "vpn")
+            with mock.patch.object(Path, "exists", side_effect=PermissionError):
+                self.assertEqual(project_from_path(str(child)), "vpn")
 
     def test_identity_and_allowed_roots(self):
         self.assertEqual(self.adapter.source_id, "tachiko-harness@fixture-host")

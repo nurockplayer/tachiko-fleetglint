@@ -918,11 +918,11 @@ class HarnessAdapter:
             role, project, repo = fields[1:4]
             if not _clean(repo):
                 continue
-            key = _clean(project) or role.split("-", 1)[0]
             name = os.path.basename(repo.rstrip("/"))
-            if key in aliases and aliases[key] != name:
-                ambiguous.add(key)
-            aliases[key] = name
+            for key in {_clean(project), role.split("-", 1)[0]} - {None, ""}:
+                if key in aliases and aliases[key] != name:
+                    ambiguous.add(key)
+                aliases[key] = name
         for key in ambiguous:
             aliases.pop(key, None)
         for number, line in enumerate(text.splitlines(), 1):
@@ -939,8 +939,8 @@ class HarnessAdapter:
                 continue
             record = self._base("decision", f"decision.{number}", _iso(moment))
             record.update(role_id=_clip(role.strip(), 200), text=_clip(decision_text, 1000), decided_at=_iso(moment))
-            prefix = role.split("-", 1)[0] if "-" in role else _clean(project)
-            project = os.path.basename(repo.rstrip("/")) if _clean(repo) else aliases.get(prefix, prefix)
+            key = _clean(project) or role.split("-", 1)[0]
+            project = os.path.basename(repo.rstrip("/")) if _clean(repo) else aliases.get(key, key)
             if project:
                 record["project"] = _clip(project, 200)
             links = []
