@@ -80,6 +80,11 @@ class ClaudeCodeAdapterTest(unittest.TestCase):
         self.assertEqual(main["usage"]["output_tokens"], 500)
         self.assertEqual(main["usage"]["input_tokens"], 1110)
 
+    def test_worktree_cwd_uses_repo_name(self):
+        path = self.main
+        path.write_text(path.read_text().replace("/Users/me/work/demo", "/Users/me/work/demo/.claude/worktrees/feature"))
+        self.assertEqual(self.by_id(self.scan())[SESSION_ID]["project"], "demo")
+
     def test_required_fields_present(self):
         for record in self.scan().records:
             for key in ("v", "type", "id", "source_id", "updated_at",
