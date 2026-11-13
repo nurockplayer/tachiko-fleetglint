@@ -119,61 +119,15 @@ maximum width 1320 px, centred. Row height 36 px, 40 px when a row has two lines
 
 ## 5. First screen
 
-Order from the top, and nothing else. No page title and no KPI tiles.
+Keep the top bar and summary line. Below them, show one card per project in backend order,
+with Global (No project) last. Cards show last activity, open lead inbox and recent session
+counts, and link to the project page. Omit empty sections: Needs you, In progress (with jobs
+nested under their runs), Recent decisions, and Recent. Recent shows at most three done and
+three failed, sorted together by newest; link to the project page when results are truncated.
 
-```
-Fleetglint   ● Claude Code  ● Codex CLI  ● Tachiko Harness     updated 8s ago   Read only
-3 notified · 8 waiting · 14 running · 12 lead inbox · 4 exceptions
-You were notified                                              last 24 hours
-▌ 外部審查服務失敗，已改走備援，需要你重新登入。           lead-a · review-login · 18m ago
-▌ An approval is needed before task-12 proceeds.             lead-b · repo-access · 2h ago
-Waiting 8                         Running 14                       process checks 6s ago
-worker-962       lead-a           project-a                                  3
-  waits on job scan-3      12m    ● feature-import    lead-a      Claude Opus 5.5    47m
-PR #301 review   lead-b           ● worker-engine     lead-c      DeepSeek Flash     31m
-  waits on review           8m    project-b                                  2
-Lead inbox  12 open · 3 waiting over 4 h                           [show]
-  lead-c 4 · lead-d 4 · lead-b 2 · lead-a 1
-4 exceptions                                                       [show]
-  2 process gone · 1 out of date · 1 unverified · 700 older records unverified, in history
-Recent  3 failed · 17 done                                         [show]
-```
-
-The content is illustrative. Rules for each part:
-
-- **Top bar.** 56 px, `surface-chrome`; under 768 px the source names move to a second line, in full.
-  Friendly source names from the adapter kind (Claude Code,
-  Codex CLI, Tachiko Harness; an NDJSON source shows its own name). A dot plus words when not
-  connected: Data gap, Unavailable, N quarantined. The machine id goes in a tooltip and on the
-  source's detail, never in the bar.
-- **Summary line.** One line, not tiles. Each number links to its section. A count states its unit
-  in words. Zero sections stay in the line. A missing capability shows `running: not observable`.
-- **You were notified.** The heading says it once; items do not repeat it. Message first, regular
-  weight, at most two lines with the rest on hover and in detail. Sender, key and age in `text-meta`:
-  in a right-hand column at 1280 and wider, on a line below otherwise. Never print the viewer's own
-  role or a `from:` prefix.
-  4 px amber leading edge, no fill. Never call them open or unacknowledged, and show no checkbox:
-  the source has no acknowledged state. They leave after 24 hours. When empty, the section collapses
-  to `Nothing notified you in the last 24 hours.` in `text-meta`.
-- **Waiting.** Title, role when recorded, what it waits on in words, how long. The section heading
-  carries the state, so a row shows the glyph without the word, and never the bare word `waiting`:
-  when nothing says what it waits on, the row has one line. Sort longest first.
-- **Running.** Grouped by project, group heading once with a count. Row: glyph, title, role when
-  recorded, model or agent (a job: its command summary, mono), `47m` right-aligned. A job's title is
-  its `title`, else its id, never its command: many jobs share one command. Column headings once at
-  the top of the list.
-  The heading carries `process checks 6s ago` once. A row shows its own check time only when it
-  differs by more than 60 s. A row with no process evidence says `no process check`.
-- **Queued.** Work accepted but not started is never waiting. Only when non-zero: `N queued` in the
-  summary line and a small `Queued N` group at the end of the Running list.
-- **Lead inbox.** Collapsed to one summary line with per-role counts. Items older than the configured
-  threshold get `text-secondary` plus `over 4 h`, not amber: these are addressed to AI leads, not the
-  viewer. Expanding shows role groups with their messages.
-- **Exceptions.** Collapsed line with separate counts. Never one combined number. Old unverified
-  records stay one aggregate that links to history; they are never rendered one by one here.
-- **Recent.** Collapsed line. Expanding lists failures first, then the newest done.
-- **Sessions.** When execution is observable, a collapsed line at the bottom. In the sessions-only
-  case they are the main list; see below.
+Each card has a 4 px top band using state tokens. Needs-you items take precedence in order
+failed, gone, stale, unverified, then needs; otherwise running, waiting or queued, done, and
+idle take precedence in that order. State words remain visible alongside colour.
 
 ### Sessions-only first run
 
@@ -207,6 +161,13 @@ One column, at most 960 px. In order:
    `[redacted]` explicit. Unavailable is a stated condition.
 7. Collapsed by default with native `<details>`: usage, version history, raw fields. Absolute times with
    their zone belong here and in tooltips.
+
+### Project page
+
+`/project?name=<project>` opens the named project; `/project` opens Global. Show the
+same card sections without the recent card cap, followed by the project's lead inbox and
+sessions. An unknown project says `No activity for <name> in the window` and links back.
+Backend truncation still applies.
 
 ## 7. Words
 

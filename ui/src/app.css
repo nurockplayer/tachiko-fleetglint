@@ -1362,3 +1362,13 @@ pre,
     transition: none !important;
   }
 }
+
+.project-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: var(--space-4, 16px); align-items: start; }
+.project-card { border: 1px solid var(--border-subtle, #ccc); border-top: 4px solid; background: var(--surface-panel); padding: 16px; border-radius: 4px; }
+.project-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.project-header h2 { margin: 0; }
+.project-meta, .project-item .quiet, .project-more { font-size: 0.875em; }
+.project-card section { margin-top: 16px; }
+.project-card h3 { margin: 0 0 8px; }
+.project-item { padding: 5px 0; }
+.project-job { margin: 6px 0 0 20px; }

@@ -6,6 +6,7 @@ import { formatTimeOfDay } from "./format";
 import { TopBar } from "./components/TopBar";
 import { Banner } from "./components/Banner";
 import { OverviewSkeleton } from "./components/Skeleton";
+import { Project } from "./screens/Project";
 import { Overview } from "./screens/Overview";
 import { History } from "./screens/History";
 import { RunDetail } from "./screens/RunDetail";
@@ -48,7 +49,7 @@ export function App({ fetcher = defaultFetcher, pollMs = 15000 }: AppProps) {
   } else if (board) {
     content = (
       <div className={`stale-data${unavailable ? " is-stale" : ""}`}>
-        <Overview board={board} />
+        {route.kind === "project" ? <Project board={board} name={route.name} /> : <Overview board={board} />}
       </div>
     );
   } else {
