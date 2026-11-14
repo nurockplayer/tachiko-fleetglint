@@ -552,12 +552,12 @@ export const board: Board = {
   capabilities: { execution: true, requests: true },
   counts,
   projects: [
-    { project: null, needs_you: [notifiedDecision], in_progress: [], decisions: [], recent: { done: [], failed: [] }, lead_inbox_open: 0, sessions_recent: 0, last_activity_at: NOW, truncated: { needs_you: false, in_progress: false, decisions: false, recent: { done: false, failed: false } } },
-    { project: "fleetglint", needs_you: [failedRun], in_progress: [{ ...runningLeadRun, jobs: [runningJob] }], decisions: [
+    { project: null, needs_you: [notifiedDecision], needs_you_total: 1, in_progress: [], decisions: [], recent: { done: [], failed: [] }, lead_inbox_open: 0, sessions_recent: 0, last_activity_at: NOW, truncated: { needs_you: false, in_progress: false, decisions: false, recent: { done: false, failed: false } } },
+    { project: "fleetglint", needs_you: [failedRun], needs_you_total: 1, in_progress: [{ ...runningLeadRun, jobs: [runningJob] }], decisions: [
       { ref: { type: "decision", id: "d1", source_id: "demo" }, project: "fleetglint", role_id: "lead", text: "Ship the board", decided_at: NOW, links: [{ label: "PR", url: "https://github.com/example/example/pull/1" }] },
       { ref: { type: "decision", id: "d2", source_id: "demo" }, project: "fleetglint", role_id: "lead", text: "Keep it read-only", decided_at: NOW, links: [] },
     ], recent: { done: [doneRun], failed: [failedRun] }, lead_inbox_open: 2, sessions_recent: 1, last_activity_at: NOW, truncated: { needs_you: false, in_progress: false, decisions: false, recent: { done: false, failed: false } } },
-    { project: "edd", needs_you: [], in_progress: [runningArtRun], decisions: [], recent: { done: [], failed: [] }, lead_inbox_open: 1, sessions_recent: 0, last_activity_at: NOW, truncated: { needs_you: false, in_progress: false, decisions: false, recent: { done: false, failed: false } } },
+    { project: "edd", needs_you: [], needs_you_total: 0, in_progress: [runningArtRun], decisions: [], recent: { done: [], failed: [] }, lead_inbox_open: 1, sessions_recent: 0, last_activity_at: NOW, truncated: { needs_you: false, in_progress: false, decisions: false, recent: { done: false, failed: false } } },
   ],
   needs_you: [notifiedDecision, notifiedReview],
   lead_inbox: leadInbox,

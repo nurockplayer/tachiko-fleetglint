@@ -268,6 +268,7 @@ export interface Decision {
 export interface ProjectCard {
   project: string | null;
   needs_you: (BoardWork | BoardInboxItem)[];
+  needs_you_total: number;
   in_progress: (BoardWork & { jobs?: BoardWork[] })[];
   decisions: Decision[];
   recent: { done: BoardWork[]; failed: BoardWork[] };
