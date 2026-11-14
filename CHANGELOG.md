@@ -16,6 +16,8 @@ All notable changes to Fleetglint are recorded here. The format follows
 
 ### Fixed
 
+- Project needs-you cards omit unknown oracle dot-ci runs and superseded GitHub
+  Actions failures, and collapse repeated work failures with a quiet repeat count.
 - Successful ci-watch polls are marked done and clear earlier poll errors without
   appearing in project cards' recent results. Empty successful polls no longer
   count as ci-watch errors.
