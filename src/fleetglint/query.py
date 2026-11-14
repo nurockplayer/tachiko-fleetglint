@@ -869,7 +869,10 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
         if record.get("kind") == "github-actions":
             if record["id"].endswith(".poll"):
                 return (project(record), "gha-poll", record["id"])
-            return (project(record), "gha", record.get("command_summary"))
+            # Run ids are gha.<owner>.<repo>.<run>; owners have no dots, so one repo name under two owners stays apart.
+            parts = record["id"].split(".")
+            owner = parts[1] if len(parts) >= 4 and parts[0] == "gha" else None
+            return (project(record), "gha", owner, record.get("command_summary"))
         if record.get("cwd"):
             return (project(record), "job", record["cwd"], record.get("role_id"), record.get("kind"),
                     record.get("title"), record.get("command_summary"))

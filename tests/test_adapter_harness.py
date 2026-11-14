@@ -511,6 +511,8 @@ class HarnessAdapterTest(unittest.TestCase):
         paths = ["/", "/Volumes", "/Volumes/KIOXIA", "/tmp", "/private/tmp", "/var/tmp",
                  "/tmp/claude-501", "/tmp/claude-501/-Users-x-Developer-app/abc/scratchpad",
                  "/private/tmp/claude-501/tasks/abc", "/private/var/tmp",
+                 "/var/tmp/claude-501/tasks/abc/scratchpad",
+                 "/private/var/tmp/claude-501/tasks/abc/scratchpad",
                  "/tmp/claude-501/app-wt-topic/src",
                  "/private/tmp/claude-501/-Users-x-Developer-app-wt-topic/abc/scratchpad",
                  str(Path.home()), str(Path.home() / "Developer"),
