@@ -757,6 +757,20 @@ class BoardTest(unittest.TestCase):
         # Different exits keep these as separate failure classes when repeats collapse.
         self.assertEqual(set(self.by_id(alpha["needs_you"])), {"failed-main", "failed-dev"})
 
+    def test_project_gha_failures_on_different_branches_do_not_collapse(self):
+        self.write([
+            job("main-failed", state="failed", project="alpha", kind="github-actions",
+                command_summary="CI · main · push", exit_code=1, updated_at=stamp(hours=-1),
+                ended_at=stamp(hours=-1)),
+            job("dev-failed", state="failed", project="alpha", kind="github-actions",
+                command_summary="CI · dev · push", exit_code=1, ended_at=stamp()),
+        ])
+        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
+        items = self.by_id(alpha["needs_you"])
+        self.assertEqual(set(items), {"main-failed", "dev-failed"})
+        for item in items.values():
+            self.assertNotIn("repeat_count", item)
+
     def test_project_gha_old_in_progress_and_poll_lines(self):
         self.write([
             job("old-running", project="alpha", kind="github-actions", updated_at=stamp(hours=-26),
