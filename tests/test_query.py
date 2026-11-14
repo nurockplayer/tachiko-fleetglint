@@ -935,6 +935,34 @@ class BoardTest(unittest.TestCase):
                     else:
                         self.assertNotIn("repeat_count", item)
 
+    def test_project_needs_you_job_repeats_use_work_line(self):
+        for project, second_cwd, second_role, count in (
+                ("different", "/p/web", "frontend-worker", 2),
+                ("identical", "/p/api", "backend-worker", 1)):
+            with self.subTest(project=project):
+                self.write([
+                    job(f"{project}-first", state="failed", project=project,
+                        command_summary="pnpm test", cwd="/p/api", role_id="backend-worker",
+                        updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
+                    job(f"{project}-second", state="failed", project=project,
+                        command_summary="pnpm test", cwd=second_cwd, role_id=second_role,
+                        updated_at=stamp(), ended_at=stamp()),
+                ])
+                card = next(p for p in self.board()["projects"] if p["project"] == project)
+                items = self.by_id(card["needs_you"])
+                expected = {f"{project}-second"}
+                if count == 2:
+                    expected.add(f"{project}-first")
+                self.assertEqual(set(items), expected)
+                self.assertEqual(card["needs_you_total"], count)
+                for item in items.values():
+                    if count == 1:
+                        self.assertEqual(item["repeat_count"], 2)
+                        self.assertEqual(set(item), JOB_BOARD_KEYS | {"repeat_count"})
+                    else:
+                        self.assertNotIn("repeat_count", item)
+                        self.assertEqual(set(item), JOB_BOARD_KEYS)
+
     def test_project_needs_you_job_repeats_fall_back_to_title(self):
         # Ingest requires a command summary; exercise stored records without one.
         for record in [

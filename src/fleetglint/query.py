@@ -857,6 +857,7 @@ def _board_work(view, rows, now, window_start, counts):
 
 def _board_projects(view, rows, needs_you, now, window_start, cfg):
     groups = {}
+    work_line_keys = {}
     def project(record):
         return record.get("project")
 
@@ -936,7 +937,9 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
                         and row["updated_ts"] >= window_start
                         and not superseded and not oracle_dot_ci):
                     reason = (record.get("summary") or (f"exit {record['exit_code']}" if record.get("exit_code") is not None else "failed")) if state == "failed" else "unverified" if state == "unknown" else state
-                    g["needs_you"].append(_work_item(view, row, reason, now))
+                    item = _work_item(view, row, reason, now)
+                    work_line_keys[id(item)] = key
+                    g["needs_you"].append(item)
                 if (state in ("done", "failed") and row["updated_ts"] >= window_start
                         and not (record.get("kind") == "github-actions" and record["id"].endswith(".poll"))):
                     g["recent"][state].append(_work_item(view, row, None, now))
@@ -946,7 +949,8 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
             head = item.get("command_summary") or (item.get("title") if item["ref"]["type"] == "job" else None)
             key = (item["ref"]["type"], item.get("kind"), item.get("agent"),
                    item["display_state"], item["section_reason"], head,
-                   item.get("title") if item["ref"]["type"] == "run" else None)
+                   item.get("title") if item["ref"]["type"] == "run" else None,
+                   work_line_keys[id(item)])
             if key not in repeats:
                 repeats[key] = (item, 1)
             else:
