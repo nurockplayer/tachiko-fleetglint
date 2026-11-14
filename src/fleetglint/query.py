@@ -1011,14 +1011,18 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
 
 
 def _board_rows(conn):
-    """Prefer the latest-scanned host for each adapter's record identity."""
+    """Collapse retired-hostname adapter sources only."""
     scans = {}
-    for source in conn.execute("SELECT source_id, last_scan_at FROM sources"):
+    for source in conn.execute("SELECT source_id, kind, last_scan_at FROM sources"):
+        if source["kind"] != "adapter":
+            continue
         scanned_at = _epoch(source["last_scan_at"])
         scans[source["source_id"]] = scanned_at if scanned_at is not None else float("-inf")
     rows = {}
     for row in store.iter_latest(conn):
-        key = (row["source_id"].partition("@")[0], row["type"], row["id"])
+        adapter = row["source_id"] in scans
+        source = row["source_id"].partition("@")[0] if adapter else row["source_id"]
+        key = (adapter, source, row["type"], row["id"])
         rank = (scans.get(row["source_id"], float("-inf")), row["observed_ts"])
         previous = rows.get(key)
         if previous is None or rank > previous[0]:
