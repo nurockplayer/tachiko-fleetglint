@@ -247,6 +247,23 @@ class HarnessAdapterTest(unittest.TestCase):
                         else:
                             self.assertEqual(records[item_id]["project"], expected)
 
+    def test_decision_only_project_is_a_known_role_prefix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            (state / "lead-decision").mkdir()
+            (state / "lead-decision/log.tsv").write_text(
+                "2026-11-05 06:10 JST\towner\t-\tnurockplayer/gteki\t-\t-\tx\n")
+            (state / "lead-inbox").mkdir()
+            (state / "lead-inbox/gteki-art-director.tsv").write_text(
+                "inbox\t2026-11-05 06:10 JST\tjob\tunknown\tdone\tx\n")
+            (state / "owner-notify").mkdir()
+            (state / "owner-notify/log.tsv").write_text(
+                "2026-11-05 06:10 JST\tnotice\tgteki-art-director\tsent\tx\n")
+            records = by_id(harness.HarnessAdapter(state).scan(NOW).records)
+            self.assertEqual(records["decision.1"]["project"], "gteki")
+            self.assertEqual(records["inbox"]["project"], "gteki")
+            self.assertEqual(records["owner-notify.notice"]["project"], "gteki")
+
     def test_path_fallbacks(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

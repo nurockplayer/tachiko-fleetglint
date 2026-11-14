@@ -385,7 +385,7 @@ class HarnessAdapter:
         records.extend(jobs)
         records.extend(self._scan_ci(stats))
         records.extend(self._scan_orb_test(now, stats))
-        known = {r["project"] for r in records if r.get("project")}
+        known = {r["project"] for r in records + decisions if r.get("project")}
         records.extend(self._scan_inbox(set(jobs_by_id), stats, aliases, known))
         records.extend(self._scan_owner_notify(stats, aliases, known))
         records.extend(decisions)
