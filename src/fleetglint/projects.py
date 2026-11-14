@@ -51,10 +51,10 @@ def _is_boundary(path):
     parts = current.parts
     if parts == ("/",) or (parts[:2] == ("/", "Volumes") and len(parts) <= 3):
         return True
-    for root in (Path("/tmp"), Path("/private/tmp"), Path("/var/tmp")):
+    for root in (Path("/tmp"), Path("/private/tmp"), Path("/var/tmp"), Path("/private/var/tmp")):
         if current == root:
             return True
-        if root != Path("/var/tmp") and parts[:len(root.parts)] == root.parts:
+        if root.parent.name != "var" and parts[:len(root.parts)] == root.parts:
             if len(parts) > len(root.parts) and re.fullmatch(
                     r"claude-[0-9]+", parts[len(root.parts)]):
                 return True
@@ -69,12 +69,12 @@ def project_from_path(path):
     if review_repo:
         return _clip(review_repo, 200)
     name = _git_repo_name(path)
+    if not name and _is_boundary(path):
+        return None
     if not name:
         for component in reversed(Path(path).parts):
             match = re.fullmatch(r"(.+)-wt(?:-.+)?", component)
             if match:
                 name = match.group(1)
                 break
-    if not name and _is_boundary(path):
-        return None
     return _clip(name or os.path.basename(path.rstrip("/")), 200) or None

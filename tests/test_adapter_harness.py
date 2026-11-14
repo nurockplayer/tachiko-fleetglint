@@ -510,7 +510,10 @@ class HarnessAdapterTest(unittest.TestCase):
     def test_boundary_directories_have_no_project(self, git_repo_name):
         paths = ["/", "/Volumes", "/Volumes/KIOXIA", "/tmp", "/private/tmp", "/var/tmp",
                  "/tmp/claude-501", "/tmp/claude-501/-Users-x-Developer-app/abc/scratchpad",
-                 "/private/tmp/claude-501/tasks/abc", str(Path.home()),
+                 "/private/tmp/claude-501/tasks/abc", "/private/var/tmp",
+                 "/tmp/claude-501/app-wt-topic/src",
+                 "/private/tmp/claude-501/-Users-x-Developer-app-wt-topic/abc/scratchpad",
+                 str(Path.home()),
                  *(str(parent) for parent in Path.home().parents)]
         for path in paths:
             with self.subTest(path=path):
@@ -519,7 +522,7 @@ class HarnessAdapterTest(unittest.TestCase):
                                ("/tmp/plain", "plain"), ("/var/tmp/plain", "plain"),
                                ("/tmp/claude-other/scratchpad", "scratchpad"),
                                ("/tmp/nested/claude-501/scratchpad", "scratchpad"),
-                               ("/tmp/claude-501/app-wt-topic/src", "app")):
+                               ("/tmp/app-wt-topic/src", "app")):
             with self.subTest(path=path):
                 self.assertEqual(project_from_path(path), expected)
 
