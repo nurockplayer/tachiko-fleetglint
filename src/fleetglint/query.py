@@ -759,8 +759,18 @@ def _board_inbox(view, rows, cfg, now, viewer_roles, counts):
         ages = [item["age_s"] for _, item in pairs if item["age_s"] is not None]
         old = sum(1 for _, item in pairs
                   if item["age_s"] is not None and item["age_s"] > cfg.inbox_old_after_s)
+        by_project = {}
+        for _, item in pairs:
+            totals = by_project.setdefault(item["project"],
+                                           {"project": item["project"], "open": 0, "old": 0, "action_required": 0})
+            totals["open"] += 1
+            totals["old"] += int(item["age_s"] is not None
+                                 and item["age_s"] > cfg.inbox_old_after_s)
+            totals["action_required"] += int(item["action_required"])
         roles.append({
             "role_id": role_id,
+            "by_project": [by_project[key] for key in sorted(
+                by_project, key=lambda key: (key is None, key or ""))],
             "open": len(pairs),
             "old": old,
             "oldest_age_s": max(ages) if ages else None,

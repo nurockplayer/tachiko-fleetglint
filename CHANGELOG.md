@@ -21,6 +21,9 @@ All notable changes to Fleetglint are recorded here. The format follows
   count as ci-watch errors.
 - orb-test labels containing only environment assignments use a safe `orb-test`
   command summary so their job records remain valid.
+- Untitled work on project cards uses record IDs, with job commands shown quietly.
+- Project pages use backend inbox totals even when messages are truncated, and
+  omit links to more content on the same project page.
 
 ## [0.1.1] - 2026-11-08
 
