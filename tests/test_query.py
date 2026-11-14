@@ -837,17 +837,24 @@ class BoardTest(unittest.TestCase):
         role = self.board()["lead_inbox"][0]
         self.assertEqual(role["open"], 8)
         self.assertEqual(len(role["items"]), 5)
-        self.assertEqual(role["by_project"]["alpha"],
-                         {"open": 8, "old": 4, "action_required": 1})
+        self.assertEqual(role["by_project"],
+                         [{"project": "alpha", "open": 8, "old": 4, "action_required": 1}])
         self.write([
             inbox("beta", role_id="lead", project="beta"),
             inbox("global", role_id="lead"),
         ])
         role = self.board()["lead_inbox"][0]
-        self.assertEqual(role["by_project"]["beta"],
-                         {"open": 1, "old": 0, "action_required": 0})
-        self.assertEqual(role["by_project"][""],
-                         {"open": 1, "old": 0, "action_required": 0})
+        self.assertEqual(role["by_project"], [
+            {"project": "beta", "open": 1, "old": 0, "action_required": 0},
+            {"project": None, "open": 1, "old": 0, "action_required": 0},
+        ])
+
+    def test_lead_inbox_project_name_is_redacted(self):
+        secret = "ghp_" + "A" * 36
+        self.write([inbox("secret", role_id="lead", project=secret)])
+        entry = self.board()["lead_inbox"][0]["by_project"][0]
+        self.assertNotIn(secret, entry["project"])
+        self.assertIn("[redacted]", entry["project"])
 
     def test_rule3_waiting_run(self):
         self.write([run("wait-run", state="waiting", started_at=stamp(minutes=-7),

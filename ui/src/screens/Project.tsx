@@ -10,7 +10,7 @@ export function Project({ board, name }: { board: Board; name: string | null }) 
   const project = board.projects.find(p => p.project === name);
   if (!project) return <main className="screen"><p>No activity for {name ?? "Global"} in the window</p><a href="/">Back to overview</a></main>;
   const roles = board.lead_inbox.flatMap(role => {
-    const totals = role.by_project[name ?? ""];
+    const totals = role.by_project.find(entry => entry.project === name);
     if (!totals) return [];
     const items = role.items.filter(item => item.project === name);
     return [{ ...role, items, ...totals }];

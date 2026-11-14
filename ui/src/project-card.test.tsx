@@ -71,7 +71,7 @@ describe("project board", () => {
     }));
     const pageBoard = { ...board, projects: [{ ...project, project: "alpha" }], lead_inbox: [{
       ...role, open: 10, old: 6, action_required: 2, items,
-      by_project: { alpha: { open: 8, old: 4, action_required: 1 }, beta: { open: 2, old: 2, action_required: 1 } },
+      by_project: [{ project: "alpha", open: 8, old: 4, action_required: 1 }, { project: "beta", open: 2, old: 2, action_required: 1 }],
     }] };
     const { container, rerender } = render(<Project board={pageBoard} name="alpha" />);
     expect(screen.getByRole("region", { name: "Lead inbox" })).toHaveTextContent("8 open · 4 waiting");
@@ -80,6 +80,11 @@ describe("project board", () => {
     rerender(<Project board={{ ...pageBoard, lead_inbox: [{ ...pageBoard.lead_inbox[0], items: [] }] }} name="alpha" />);
     expect(screen.getByRole("region", { name: "Lead inbox" })).toHaveTextContent("8 open");
     expect(container.querySelector(".group-count")).toHaveTextContent("8");
+  });
+  it("omits roles without a matching project even for prototype names", () => {
+    const pageBoard = { ...board, projects: [{ ...project, project: "constructor" }] };
+    const { container } = render(<Project board={pageBoard} name="constructor" />);
+    expect(container.querySelector(".group-count")).toBeNull();
   });
   it("omits more links on full cards even when all sections are truncated", () => {
     const truncated = { needs_you: true, in_progress: true, decisions: true, recent: { done: true, failed: true } };
