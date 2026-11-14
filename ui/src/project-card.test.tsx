@@ -74,11 +74,11 @@ describe("project board", () => {
       by_project: { alpha: { open: 8, old: 4, action_required: 1 }, beta: { open: 2, old: 2, action_required: 1 } },
     }] };
     const { container, rerender } = render(<Project board={pageBoard} name="alpha" />);
-    expect(screen.getByRole("button", { name: /Lead inbox/ })).toHaveTextContent("8 open · 4 waiting");
+    expect(screen.getByRole("region", { name: "Lead inbox" })).toHaveTextContent("8 open · 4 waiting");
     expect(container.querySelector(".group-count")).toHaveTextContent("8");
     expect(container.querySelectorAll(".inbox-line")).toHaveLength(5);
     rerender(<Project board={{ ...pageBoard, lead_inbox: [{ ...pageBoard.lead_inbox[0], items: [] }] }} name="alpha" />);
-    expect(screen.getByRole("button", { name: /Lead inbox/ })).toHaveTextContent("8 open");
+    expect(screen.getByRole("region", { name: "Lead inbox" })).toHaveTextContent("8 open");
     expect(container.querySelector(".group-count")).toHaveTextContent("8");
   });
   it("omits more links on full cards even when all sections are truncated", () => {
