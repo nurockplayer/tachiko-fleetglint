@@ -81,6 +81,18 @@ describe("project board", () => {
     expect(screen.getByRole("region", { name: "Lead inbox" })).toHaveTextContent("8 open");
     expect(container.querySelector(".group-count")).toHaveTextContent("8");
   });
+  it("shows a quiet repeat count after the title only for repeated work", () => {
+    const job = project.in_progress[0].jobs![0];
+    const base = { ...project, needs_you: [{ ...job, repeat_count: 3 }], in_progress: [], recent: { done: [], failed: [] } };
+    const { rerender } = render(<ProjectCard project={base} now={0} />);
+    const count = screen.getByText("×3");
+    expect(count).toHaveClass("quiet");
+    expect(count.previousElementSibling).toHaveAttribute("href", screen.getByRole("link", { name: job.ref.id }).getAttribute("href"));
+    rerender(<ProjectCard project={{ ...base, needs_you: [job] }} now={0} />);
+    expect(screen.queryByText(/×\d+/)).toBeNull();
+    rerender(<ProjectCard project={{ ...base, needs_you: [{ ...job, repeat_count: 1 }] }} now={0} />);
+    expect(screen.queryByText(/×\d+/)).toBeNull();
+  });
   it("omits roles without a matching project even for prototype names", () => {
     const pageBoard = { ...board, projects: [{ ...project, project: "constructor" }] };
     const { container } = render(<Project board={pageBoard} name="constructor" />);

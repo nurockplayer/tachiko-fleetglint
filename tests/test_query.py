@@ -692,7 +692,7 @@ class BoardTest(unittest.TestCase):
             job("job-failed", state="failed", project="alpha", cwd="/work/a", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
             job("job-other-role", state="failed", project="alpha", cwd="/work/b", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
             job("job-done", state="done", project="alpha", cwd="/work/a", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
-            job("cwd-role-a", state="failed", project="alpha", cwd="/work/c", kind="wait-worker", role_id="a-lead", title="task-a", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
+            job("cwd-role-a", state="failed", project="alpha", cwd="/work/c", kind="wait-worker", role_id="a-lead", title="task-a", command_summary="cwd-worker", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
             job("cwd-role-b", state="done", project="alpha", cwd="/work/c", kind="wait-worker", role_id="b-lead", title="task-b", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
             job("wait-failed", state="failed", project="alpha", kind="wait-worker", role_id="worker", title="first", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
             job("wait-other", state="failed", project="alpha", kind="wait-worker", role_id="worker", title="other", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
@@ -712,6 +712,93 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(alpha["needs_you_total"], 6)
         self.assertIn("gha-failed", self.by_id(alpha["recent"]["failed"]))
         self.assertIn("job-failed", self.by_id(alpha["recent"]["failed"]))
+
+    def test_project_unknown_oracle_dot_ci_stays_only_in_global_exceptions(self):
+        self.write([
+            run("dot-ci-title", state="unknown", project="alpha", agent="oracle", title="dot-ci"),
+            run("dot-ci-worker", state="unknown", project="alpha", agent="oracle", title="review", worker="dot-ci"),
+            run("cx", state="unknown", project="alpha", agent="cx", title="dot-ci"),
+            run("oracle-other", state="unknown", project="alpha", agent="oracle", title="review"),
+        ])
+        board = self.board()
+        alpha = next(p for p in board["projects"] if p["project"] == "alpha")
+        self.assertEqual(set(self.by_id(alpha["needs_you"])), {"cx", "oracle-other"})
+        self.assertEqual(set(self.by_id(board["exceptions"]["unverified_recent"])),
+                         {"dot-ci-title", "dot-ci-worker", "cx", "oracle-other"})
+
+    def test_project_gha_failure_superseded_by_any_newer_state(self):
+        for state in ("running", "queued", "unknown", "failed", "done"):
+            with self.subTest(state=state):
+                project = f"alpha-{state}"
+                self.write([
+                    job(f"old-{state}", state="failed", project=project, kind="github-actions",
+                        command_summary="CI · main · push", exit_code=1,
+                        updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
+                    job(f"new-{state}", state=state, project=project, kind="github-actions",
+                        command_summary="CI · main · push", exit_code=2 if state == "failed" else None,
+                        updated_at=stamp(minutes=-1), observed_at=stamp(minutes=-1),
+                        **({"ended_at": stamp(minutes=-1)} if state in ("failed", "done") else {})),
+                ])
+                card = next(p for p in self.board()["projects"] if p["project"] == project)
+                expected = {f"new-{state}"} if state in ("unknown", "failed") else set()
+                self.assertEqual(set(self.by_id(card["needs_you"])), expected)
+
+    def test_project_gha_new_failure_and_separate_branches(self):
+        self.write([
+            job("done-main", state="done", project="alpha", kind="github-actions",
+                command_summary="CI · main · push", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
+            job("failed-main", state="failed", project="alpha", kind="github-actions",
+                command_summary="CI · main · push", exit_code=1,
+                updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
+            job("failed-dev", state="failed", project="alpha", kind="github-actions",
+                command_summary="CI · dev · push", exit_code=2, ended_at=stamp()),
+        ])
+        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
+        # Different exits keep these as separate failure classes when repeats collapse.
+        self.assertEqual(set(self.by_id(alpha["needs_you"])), {"failed-main", "failed-dev"})
+
+    def test_project_gha_old_in_progress_and_poll_lines(self):
+        self.write([
+            job("old-running", project="alpha", kind="github-actions", updated_at=stamp(hours=-26),
+                command_summary="CI · main · push"),
+            job("recent-failed", state="failed", project="alpha", kind="github-actions",
+                command_summary="CI · main · push", ended_at=stamp()),
+            job("failed.poll", state="unknown", project="alpha", kind="github-actions",
+                command_summary="ci-watch poll", updated_at=stamp(hours=-1)),
+            job("other.poll", state="done", project="alpha", kind="github-actions",
+                command_summary="ci-watch poll", ended_at=stamp()),
+        ])
+        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
+        self.assertEqual(set(self.by_id(alpha["needs_you"])), {"recent-failed", "failed.poll"})
+
+    def test_project_needs_you_collapses_repeats_before_inbox_and_totals(self):
+        self.cfg.viewer_roles = ["owner"]
+        self.write([
+            job("first", state="failed", project="alpha", command_summary="orb-test -- a",
+                exit_code=5, updated_at=stamp(hours=-3), ended_at=stamp(hours=-3)),
+            job("different-exit", state="failed", project="alpha", command_summary="orb-test -- d",
+                exit_code=1, updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
+            job("middle", state="failed", project="alpha", command_summary="orb-test -- b",
+                exit_code=5, updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
+            job("newest", state="failed", project="alpha", command_summary="orb-test -- c",
+                exit_code=5, ended_at=stamp()),
+        ])
+        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
+        items = self.by_id(alpha["needs_you"])
+        self.assertEqual(set(items), {"newest", "different-exit"})
+        self.assertEqual(items["newest"]["repeat_count"], 3)
+        self.assertNotIn("repeat_count", items["different-exit"])
+        self.assertEqual(alpha["needs_you_total"], 2)
+        self.assertEqual(len(alpha["recent"]["failed"]), 4)
+
+        self.write([inbox(id, project="alpha", role_id="owner", action_required=True)
+                    for id in ("inbox-1", "inbox-2")])
+        board = self.board()
+        alpha = next(p for p in board["projects"] if p["project"] == "alpha")
+        self.assertEqual(alpha["needs_you_total"], 4)
+        self.assertEqual(set(self.by_id(board["needs_you"])), {"inbox-1", "inbox-2"})
+        for item in alpha["needs_you"][2:] + board["needs_you"]:
+            self.assertNotIn("repeat_count", item)
 
     def test_project_orphan_jobs_unknown_and_global(self):
         self.write([

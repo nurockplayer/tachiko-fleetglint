@@ -866,6 +866,8 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
                 return (project(record), "run", record["role_id"], record.get("agent"), record["title"])
             return None
         if record.get("kind") == "github-actions":
+            if record["id"].endswith(".poll"):
+                return (project(record), "gha-poll", record["id"])
             return (project(record), "gha", record.get("command_summary"))
         if record.get("cwd"):
             return (project(record), "job", record["cwd"], record.get("role_id"), record.get("kind"),
@@ -875,12 +877,17 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
         return None
 
     done_lines = {}
+    newest_gha_lines = {}
     for row in rows["run"] + rows["job"]:
-        if row["updated_ts"] < window_start:
+        if _board_excluded(row, window_start):
             continue
         record = view.record(row)
+        key = line_key(record)
+        if record.get("kind") == "github-actions" and not record["id"].endswith(".poll"):
+            newest_gha_lines[key] = max(newest_gha_lines.get(key, row["updated_ts"]), row["updated_ts"])
+        if row["updated_ts"] < window_start:
+            continue
         if view.display(record, row["source_id"]).state == "done":
-            key = line_key(record)
             if key is not None:
                 done_lines[key] = max(done_lines.get(key, row["updated_ts"]), row["updated_ts"])
 
@@ -920,14 +927,38 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
             else:
                 state = view.display(record, row["source_id"]).state
                 key = line_key(record)
+                superseded = (newest_gha_lines.get(key, row["updated_ts"]) > row["updated_ts"]
+                    if record.get("kind") == "github-actions" and not record["id"].endswith(".poll")
+                    else key is not None and done_lines.get(key, row["updated_ts"]) > row["updated_ts"])
+                oracle_dot_ci = (kind == "run" and state == "unknown" and record.get("agent") == "oracle"
+                    and (record.get("title") == "dot-ci" or record.get("worker") == "dot-ci"))
                 if (state in ("stale", "lost", "failed", "unknown")
                         and row["updated_ts"] >= window_start
-                        and (key is None or done_lines.get(key, row["updated_ts"]) <= row["updated_ts"])):
+                        and not superseded and not oracle_dot_ci):
                     reason = (record.get("summary") or (f"exit {record['exit_code']}" if record.get("exit_code") is not None else "failed")) if state == "failed" else "unverified" if state == "unknown" else state
                     g["needs_you"].append(_work_item(view, row, reason, now))
                 if (state in ("done", "failed") and row["updated_ts"] >= window_start
                         and not (record.get("kind") == "github-actions" and record["id"].endswith(".poll"))):
                     g["recent"][state].append(_work_item(view, row, None, now))
+    for g in groups.values():
+        repeats = {}
+        for item in g["needs_you"]:
+            command = (item.get("command_summary") or "").split()
+            key = (item["ref"]["type"], item.get("kind"), item.get("agent"),
+                   item["display_state"], item["section_reason"], command[0] if command else None)
+            if key not in repeats:
+                repeats[key] = (item, 1)
+            else:
+                newest, count = repeats[key]
+                if _epoch(item["updated_at"]) > _epoch(newest["updated_at"]):
+                    newest = item
+                repeats[key] = (newest, count + 1)
+        g["needs_you"] = []
+        for item, count in repeats.values():
+            if count > 1:
+                item["repeat_count"] = count
+            g["needs_you"].append(item)
+
     for item in needs_you:
         ref = item["ref"]
         row = view.latest(ref["source_id"], ref["type"], ref["id"])
