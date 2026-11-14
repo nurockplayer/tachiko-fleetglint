@@ -904,14 +904,47 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(alpha["needs_you_total"], 2)
         self.assertEqual(len(alpha["recent"]["failed"]), 4)
 
-        self.write([inbox(id, project="alpha", role_id="owner", action_required=True)
-                    for id in ("inbox-1", "inbox-2")])
+        self.write([inbox(f"inbox-{i}", project="alpha", role_id="owner", action_required=True,
+                          created_at=stamp(minutes=i - 3))
+                    for i in (1, 2)])
         board = self.board()
         alpha = next(p for p in board["projects"] if p["project"] == "alpha")
         self.assertEqual(alpha["needs_you_total"], 4)
         self.assertEqual(set(self.by_id(board["needs_you"])), {"inbox-1", "inbox-2"})
-        for item in alpha["needs_you"][2:] + board["needs_you"]:
+        self.assertEqual([item["ref"]["id"] for item in alpha["needs_you"]],
+                         ["inbox-2", "inbox-1", "newest", "different-exit"])
+        for item in alpha["needs_you"][:2] + board["needs_you"]:
             self.assertNotIn("repeat_count", item)
+
+    def test_project_needs_you_prioritizes_owner_inbox_over_five_failures(self):
+        self.cfg.viewer_roles = ["owner"]
+        self.write([
+            job(f"failure-{i}", state="failed", project="alpha",
+                command_summary=f"command-{i}", updated_at=stamp(minutes=-i),
+                ended_at=stamp(minutes=-i))
+            for i in range(1, 6)
+        ] + [inbox("owner-action", project="alpha", role_id="owner", action_required=True,
+                   created_at=stamp(hours=-1), updated_at=stamp(hours=-1))])
+        board = self.board()
+        alpha = next(p for p in board["projects"] if p["project"] == "alpha")
+        self.assertEqual(alpha["needs_you"][0]["ref"]["id"], "owner-action")
+        self.assertEqual(alpha["needs_you_total"], 6)
+        self.assertEqual([item["ref"]["id"] for item in alpha["needs_you"]],
+                         ["owner-action"] + [f"failure-{i}" for i in range(1, 6)])
+        self.assertEqual([item["ref"]["id"] for item in board["needs_you"]], ["owner-action"])
+
+    def test_project_needs_you_work_is_newest_first_across_runs_and_jobs(self):
+        self.write([
+            run("older-run", state="failed", project="alpha",
+                updated_at=stamp(minutes=-3), ended_at=stamp(minutes=-3)),
+            job("newest-job", state="failed", project="alpha", command_summary="build",
+                updated_at=stamp(minutes=-1), ended_at=stamp(minutes=-1)),
+            job("middle-job", state="failed", project="alpha", command_summary="test",
+                updated_at=stamp(minutes=-2), ended_at=stamp(minutes=-2)),
+        ])
+        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
+        self.assertEqual([item["ref"]["id"] for item in alpha["needs_you"]],
+                         ["newest-job", "middle-job", "older-run"])
 
     def test_project_orphan_jobs_unknown_and_global(self):
         self.write([

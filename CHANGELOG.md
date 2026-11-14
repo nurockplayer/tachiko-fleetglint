@@ -16,6 +16,7 @@ All notable changes to Fleetglint are recorded here. The format follows
 
 ### Fixed
 
+- Project needs-you lists show owner inbox items first, followed by collapsed work exceptions newest first.
 - Overview project cards show at most five needs-you items and link to the project page for the remaining total.
 - Project cards no longer come from the `~/Developer` folder itself or duplicate records of adapter sources whose host name changed.
 - Project needs-you cards omit unknown oracle dot-ci runs and superseded GitHub

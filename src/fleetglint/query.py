@@ -961,10 +961,12 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
                 item["repeat_count"] = count
             g["needs_you"].append(item)
 
+    inbox_by_project = {}
     for item in needs_you:
         ref = item["ref"]
         row = view.latest(ref["source_id"], ref["type"], ref["id"])
-        group(project(view.record(row)))["needs_you"].append(item)
+        g = group(project(view.record(row)))
+        inbox_by_project.setdefault(g["project"], []).append(item)
 
     live_runs = []
     for row in rows["run"]:
@@ -995,6 +997,10 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
             group(project(record))["in_progress"].append(_work_item(view, row, None, now))
 
     for g in groups.values():
+        g["needs_you"] = inbox_by_project.get(g["project"], []) + sorted(
+            g["needs_you"], key=lambda item: (
+                _epoch(item["updated_at"]) is not None, _epoch(item["updated_at"]) or 0),
+            reverse=True)
         g["needs_you_total"] = len(g["needs_you"])
         g["decisions"].sort(key=lambda x: _epoch(x["decided_at"]), reverse=True)
         for items in g["recent"].values():
