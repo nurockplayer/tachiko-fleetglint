@@ -40,7 +40,7 @@ BOARD_COUNT_KEYS = {"needs_you", "queued", "waiting", "running", "lead_inbox_ope
                     "process_gone", "out_of_date", "unverified_recent", "failed_recent",
                     "older_unverified", "sessions_recent"}
 BOARD_TRUNCATED_KEYS = {"queued", "waiting", "running", "exceptions", "recent", "lead_inbox"}
-LEAD_INBOX_KEYS = {"role_id", "open", "old", "oldest_age_s", "action_required", "items"}
+LEAD_INBOX_KEYS = {"role_id", "open", "old", "oldest_age_s", "action_required", "items", "by_project"}
 WORK_BOARD_KEYS = RUN_KEYS | {"started_age_s", "section_reason"}
 JOB_BOARD_KEYS = JOB_KEYS | {"started_age_s", "section_reason"}
 INBOX_BOARD_KEYS = INBOX_KEYS | {"age_s"}
@@ -827,6 +827,27 @@ class BoardTest(unittest.TestCase):
         self.assertEqual((board["counts"]["lead_inbox_open"],
                           board["counts"]["lead_inbox_old"]), (8, 1))
         self.assertTrue(board["truncated"]["lead_inbox"])
+
+    def test_lead_inbox_project_totals_include_truncated_items(self):
+        self.write([
+            inbox(f"alpha-{age}", role_id="lead", project="alpha",
+                  created_at=stamp(hours=-age), action_required=(age == 8))
+            for age in range(1, 9)
+        ])
+        role = self.board()["lead_inbox"][0]
+        self.assertEqual(role["open"], 8)
+        self.assertEqual(len(role["items"]), 5)
+        self.assertEqual(role["by_project"]["alpha"],
+                         {"open": 8, "old": 4, "action_required": 1})
+        self.write([
+            inbox("beta", role_id="lead", project="beta"),
+            inbox("global", role_id="lead", project=None),
+        ])
+        role = self.board()["lead_inbox"][0]
+        self.assertEqual(role["by_project"]["beta"],
+                         {"open": 1, "old": 0, "action_required": 0})
+        self.assertEqual(role["by_project"][""],
+                         {"open": 1, "old": 0, "action_required": 0})
 
     def test_rule3_waiting_run(self):
         self.write([run("wait-run", state="waiting", started_at=stamp(minutes=-7),
