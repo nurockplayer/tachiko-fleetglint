@@ -376,7 +376,7 @@ class HarnessAdapter:
             ledger_text = _text(ledger)
         except OSError as exc:
             return ScanResult("unavailable", f"cannot read {ledger}: {exc}")
-        decisions, aliases = self._scan_decisions(stats)
+        decisions, aliases, named = self._scan_decisions(stats)
         records = self._scan_runs(ledger_text, now, stats, aliases)
         jobs, jobs_by_id, workers = self._scan_jobs(now, stats)
         self._link_waits(jobs_by_id, stats)
@@ -385,7 +385,7 @@ class HarnessAdapter:
         records.extend(jobs)
         records.extend(self._scan_ci(stats))
         records.extend(self._scan_orb_test(now, stats))
-        known = {r["project"] for r in records if r.get("project")}
+        known = {r["project"] for r in records if r.get("project")} | named
         records.extend(self._scan_inbox(set(jobs_by_id), stats, aliases, known))
         records.extend(self._scan_owner_notify(stats, aliases, known))
         records.extend(decisions)
@@ -1116,14 +1116,15 @@ class HarnessAdapter:
     def _scan_decisions(self, stats):
         path = self.state_dir / "lead-decision" / "log.tsv"
         if not path.exists():
-            return [], {}
+            return [], {}, set()
         try:
             text = _text(path)
         except OSError:
             stats.unreadable += 1
-            return [], {}
+            return [], {}, set()
         records = []
         aliases = {}
+        named = set()
         ambiguous = set()
         for line in text.splitlines():
             fields = line.split("\t")
@@ -1157,6 +1158,9 @@ class HarnessAdapter:
             project = os.path.basename(repo.rstrip("/")) if _clean(repo) else aliases.get(key, key)
             if project:
                 record["project"] = _clip(project, 200)
+                # A project guessed from the role alone must not become a known prefix.
+                if _clean(repo) or _clean(fields[2]) or key in aliases:
+                    named.add(record["project"])
             links = []
             if url.startswith(("http://", "https://")):
                 links.append({"label": "decision", "url": url[:2000]})
@@ -1165,4 +1169,4 @@ class HarnessAdapter:
             if links:
                 record["links"] = links
             records.append(record)
-        return records, aliases
+        return records, aliases, named
