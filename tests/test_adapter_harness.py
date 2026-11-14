@@ -506,7 +506,8 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertEqual(project_from_path("/gone/.local/other/review/owner/repo/bundle"),
                          "bundle")
 
-    def test_boundary_directories_have_no_project(self):
+    @mock.patch("fleetglint.projects._git_repo_name", return_value=None)
+    def test_boundary_directories_have_no_project(self, git_repo_name):
         paths = ["/", "/Volumes", "/Volumes/KIOXIA", "/tmp", "/private/tmp", "/var/tmp",
                  "/tmp/claude-501", "/tmp/claude-501/-Users-x-Developer-app/abc/scratchpad",
                  "/private/tmp/claude-501/tasks/abc", str(Path.home()),
