@@ -845,6 +845,7 @@ class BoardTest(unittest.TestCase):
         ])
         role = self.board()["lead_inbox"][0]
         self.assertEqual(role["by_project"], [
+            {"project": "alpha", "open": 8, "old": 4, "action_required": 1},
             {"project": "beta", "open": 1, "old": 0, "action_required": 0},
             {"project": None, "open": 1, "old": 0, "action_required": 0},
         ])
