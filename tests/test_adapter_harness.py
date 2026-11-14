@@ -208,6 +208,45 @@ class HarnessAdapterTest(unittest.TestCase):
             self.assertEqual(records["dup-lead"]["project"], "dup")
             self.assertEqual(records["owner-notify.a"]["project"], "eddington-1919")
 
+    def test_longest_role_project_prefix_for_inbox_and_notifications(self):
+        cases = (
+            ("gteki-art-director", ("gteki",), False, "gteki"),
+            ("fleetglint-lead", ("gteki",), False, "fleetglint"),
+            ("gteki-art-director", ("gteki",), True, "gteki-repo"),
+            ("gteki-art-director", ("gteki", "gteki-art"), False, "gteki-art"),
+            ("gteki-art-director", ("gteki", "gteki-art-director"), False, "gteki"),
+            ("owner", ("owner",), False, None),
+        )
+        for role, projects, alias, expected in cases:
+            with self.subTest(role=role, projects=projects, alias=alias):
+                with tempfile.TemporaryDirectory() as tmp:
+                    state = make_state(tmp)
+                    (state / "worker-ledger/runs.tsv").write_text(
+                        LEDGER_HEADER + "".join(
+                            f"2026-11-05 06:00 JST\t2026-11-05 06:01 JST\tcx\t{project}\t"
+                            f"worker-{i}\tmodel\t-\t0\tdone\t/tmp/run-{i}.log\n"
+                            for i, project in enumerate(projects)))
+                    if alias:
+                        (state / "lead-decision").mkdir()
+                        (state / "lead-decision/log.tsv").write_text(
+                            "2026-11-05 06:10 JST\tgteki-art-lead\tgteki-art\t"
+                            "nurockplayer/gteki-repo\t-\t-\tx\n")
+                    (state / "lead-inbox").mkdir()
+                    (state / f"lead-inbox/{role}.tsv").write_text(
+                        "inbox\t2026-11-05 06:10 JST\tjob\tunknown\tdone\tx\n")
+                    (state / "owner-notify").mkdir()
+                    (state / "owner-notify/log.tsv").write_text(
+                        f"2026-11-05 06:10 JST\tnotice\t{role}\tsent\tx\n")
+                    records = by_id(harness.HarnessAdapter(state).scan(NOW).records)
+                    for project in projects:
+                        self.assertTrue(any(r["type"] == "run" and r.get("project") == project
+                                            for r in records.values()))
+                    for item_id in ("inbox", "owner-notify.notice"):
+                        if expected is None:
+                            self.assertNotIn("project", records[item_id])
+                        else:
+                            self.assertEqual(records[item_id]["project"], expected)
+
     def test_path_fallbacks(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
