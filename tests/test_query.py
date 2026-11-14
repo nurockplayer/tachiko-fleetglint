@@ -841,7 +841,7 @@ class BoardTest(unittest.TestCase):
                          {"open": 8, "old": 4, "action_required": 1})
         self.write([
             inbox("beta", role_id="lead", project="beta"),
-            inbox("global", role_id="lead", project=None),
+            inbox("global", role_id="lead"),
         ])
         role = self.board()["lead_inbox"][0]
         self.assertEqual(role["by_project"]["beta"],
