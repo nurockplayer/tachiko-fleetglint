@@ -385,8 +385,9 @@ class HarnessAdapter:
         records.extend(jobs)
         records.extend(self._scan_ci(stats))
         records.extend(self._scan_orb_test(now, stats))
-        records.extend(self._scan_inbox(set(jobs_by_id), stats, aliases))
-        records.extend(self._scan_owner_notify(stats, aliases))
+        known = {r["project"] for r in records if r.get("project")}
+        records.extend(self._scan_inbox(set(jobs_by_id), stats, aliases, known))
+        records.extend(self._scan_owner_notify(stats, aliases, known))
         records.extend(decisions)
         return ScanResult("ok", stats.detail(), records)
 
@@ -938,9 +939,20 @@ class HarnessAdapter:
     def _role_project(role):
         return role.rsplit("-", 1)[0] if "-" in role else None
 
+    def _role_project_for(self, role, aliases, known):
+        prefix = self._role_project(role)
+        while prefix is not None:
+            if prefix in aliases:
+                return aliases[prefix]
+            if prefix in known:
+                return prefix
+            prefix = self._role_project(prefix)
+        prefix = self._role_project(role)
+        return aliases.get(prefix, prefix)
+
     # -- lead-inbox -------------------------------------------------------
 
-    def _scan_inbox(self, job_ids, stats, aliases):
+    def _scan_inbox(self, job_ids, stats, aliases, known):
         records = []
         root = self.state_dir / "lead-inbox"
         if not root.is_dir():
@@ -963,12 +975,12 @@ class HarnessAdapter:
             for number, line in enumerate(text.splitlines(), start=1):
                 if not line.strip() or (number == 1 and line.startswith("id\t")):
                     continue
-                record = self._inbox_record(role, line, job_ids, stats, aliases)
+                record = self._inbox_record(role, line, job_ids, stats, aliases, known)
                 if record is not None:
                     records.append(record)
         return records
 
-    def _inbox_record(self, role, line, job_ids, stats, aliases):
+    def _inbox_record(self, role, line, job_ids, stats, aliases, known):
         fields = line.split("\t", 6)
         if len(fields) < 6:
             stats.malformed += 1
@@ -995,8 +1007,7 @@ class HarnessAdapter:
             "created_at": _iso(created),
         })
         if "-" in role:
-            prefix = self._role_project(role)
-            record["project"] = aliases.get(prefix, prefix)
+            record["project"] = self._role_project_for(role, aliases, known)
         if acked is not None:
             record["acked_at"] = _iso(acked)
         outcome = outcome.strip()
@@ -1041,7 +1052,7 @@ class HarnessAdapter:
 
     # -- owner-notify -----------------------------------------------------
 
-    def _scan_owner_notify(self, stats, aliases):
+    def _scan_owner_notify(self, stats, aliases, known):
         """One open item per key of owner-notify's log; the log has no acknowledged state."""
         path = self.state_dir / "owner-notify" / "log.tsv"
         if not path.exists():
@@ -1098,8 +1109,7 @@ class HarnessAdapter:
                 "detail": _clip(message.strip(), 4000),
             })
             if "-" in role.strip():
-                prefix = self._role_project(role.strip())
-                record["project"] = aliases.get(prefix, prefix)
+                record["project"] = self._role_project_for(role.strip(), aliases, known)
             records.append(record)
         return records
 
