@@ -782,6 +782,16 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(alpha["needs_you"], [])
         self.assertEqual(alpha["recent"]["done"], [])
 
+    def test_project_needs_you_gha_lines_keep_owners_apart(self):
+        self.write([
+            job("gha.one.alpha.1", state="failed", project="alpha", kind="github-actions",
+                command_summary="CI · main · push", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
+            job("gha.two.alpha.2", state="done", project="alpha", kind="github-actions",
+                command_summary="CI · main · push", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
+        ])
+        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
+        self.assertEqual(set(self.by_id(alpha["needs_you"])), {"gha.one.alpha.1"})
+
     def test_project_needs_you_ages_out_and_drops_superseded_lines(self):
         self.write([
             job("gha-failed", state="failed", project="alpha", kind="github-actions", command_summary="CI · main · push", updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),

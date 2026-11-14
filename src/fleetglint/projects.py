@@ -54,7 +54,7 @@ def _is_boundary(path):
     for root in (Path("/tmp"), Path("/private/tmp"), Path("/var/tmp"), Path("/private/var/tmp")):
         if current == root:
             return True
-        if root.parent.name != "var" and parts[:len(root.parts)] == root.parts:
+        if parts[:len(root.parts)] == root.parts:
             if len(parts) > len(root.parts) and re.fullmatch(
                     r"claude-[0-9]+", parts[len(root.parts)]):
                 return True
