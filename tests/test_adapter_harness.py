@@ -513,12 +513,13 @@ class HarnessAdapterTest(unittest.TestCase):
                  "/private/tmp/claude-501/tasks/abc", "/private/var/tmp",
                  "/tmp/claude-501/app-wt-topic/src",
                  "/private/tmp/claude-501/-Users-x-Developer-app-wt-topic/abc/scratchpad",
-                 str(Path.home()),
+                 str(Path.home()), str(Path.home() / "Developer"),
                  *(str(parent) for parent in Path.home().parents)]
         for path in paths:
             with self.subTest(path=path):
                 self.assertIsNone(project_from_path(path))
         for path, expected in (("/Volumes/KIOXIA/app", "app"),
+                               (str(Path.home() / "Developer" / "some-folder"), "some-folder"),
                                ("/tmp/plain", "plain"), ("/var/tmp/plain", "plain"),
                                ("/tmp/claude-other/scratchpad", "scratchpad"),
                                ("/tmp/nested/claude-501/scratchpad", "scratchpad"),

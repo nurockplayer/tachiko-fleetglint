@@ -652,6 +652,78 @@ class BoardTest(unittest.TestCase):
 
     # --- shape ------------------------------------------------------------
 
+    def test_board_prefers_latest_scanned_source(self):
+        self.write([job("shared", source_id="harness@old", project="scratchpad",
+                        observed_at=stamp())], source_id="harness@old")
+        self.write([job("shared", source_id="harness@new", state="done", project="gteki",
+                        observed_at=stamp(minutes=-1), ended_at=stamp())],
+                   source_id="harness@new")
+        self.conn.execute("UPDATE sources SET last_scan_at = ? WHERE source_id = ?",
+                          (stamp(days=-3), "harness@old"))
+        self.conn.commit()
+
+        board = self.board()
+        self.assertEqual(board["running"], [])
+        self.assertEqual(board["counts"]["running"], 0)
+        self.assertEqual([item["ref"]["source_id"] for item in board["recent"]],
+                         ["harness@new"])
+        self.assertEqual([p["project"] for p in board["projects"]], ["gteki"])
+
+    def test_board_keeps_different_adapters_and_record_types(self):
+        for source_id in ("claude-code@h", "codex-cli@h"):
+            self.write([job("shared", source_id=source_id)], source_id=source_id)
+        self.write([run("shared", source_id="claude-code@h")], source_id="claude-code@h")
+
+        board = self.board()
+        self.assertEqual({(item["ref"]["source_id"], item["ref"]["type"])
+                          for item in board["running"]},
+                         {("claude-code@h", "job"), ("codex-cli@h", "job"),
+                          ("claude-code@h", "run")})
+        self.assertEqual(board["counts"]["running"], 3)
+
+    def test_board_keeps_records_unique_to_old_source(self):
+        self.write([job("old-only", source_id="harness@old")], source_id="harness@old")
+        self.write([job("new-only", source_id="harness@new")], source_id="harness@new")
+        self.conn.execute("UPDATE sources SET last_scan_at = ? WHERE source_id = ?",
+                          (stamp(days=-3), "harness@old"))
+        self.conn.commit()
+
+        board = self.board()
+        self.assertEqual(set(self.by_id(board["running"])), {"old-only", "new-only"})
+        self.assertEqual(board["counts"]["running"], 2)
+
+    def test_board_source_scan_ties_and_missing_values(self):
+        self.write([job("shared", source_id="harness@old", observed_at=stamp())],
+                   source_id="harness@old")
+        self.write([job("shared", source_id="harness@new", observed_at=stamp(minutes=-1))],
+                   source_id="harness@new")
+        for old_scan, new_scan, expected in (
+                (stamp(), stamp(), "harness@old"),
+                (None, stamp(), "harness@new"),
+                (stamp(), None, "harness@old"),
+                (None, None, "harness@old")):
+            with self.subTest(old_scan=old_scan, new_scan=new_scan):
+                self.conn.executemany("UPDATE sources SET last_scan_at = ? WHERE source_id = ?",
+                                      [(old_scan, "harness@old"), (new_scan, "harness@new")])
+                self.conn.commit()
+                self.assertEqual([item["ref"]["source_id"]
+                                  for item in self.board()["running"]], [expected])
+
+    def test_board_deduplicates_sessions_before_window_filter(self):
+        self.write([session("shared", source_id="claude-code@old", observed_at=stamp())],
+                   source_id="claude-code@old")
+        self.write([session("shared", source_id="claude-code@new",
+                            observed_at=stamp(hours=-30), last_activity_at=stamp(hours=-30),
+                            updated_at=stamp(hours=-30))], source_id="claude-code@new")
+        self.conn.execute("UPDATE sources SET last_scan_at = ? WHERE source_id = ?",
+                          (stamp(days=-3), "claude-code@old"))
+        self.conn.commit()
+
+        board = self.board()
+        self.assertEqual(board["sessions"], [])
+        self.assertEqual(board["sessions_total"], 0)
+        self.assertEqual(board["counts"]["sessions_recent"], 0)
+
     def test_project_board_groups_waiting_job_and_recent_decisions(self):
         self.write([
             run("waiting-run", state="waiting", project="alpha", waits_on=[{"type": "job", "id": "job1"}]),

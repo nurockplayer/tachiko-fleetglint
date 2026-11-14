@@ -1010,10 +1010,26 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
     return sorted(groups.values(), key=lambda g: (not bool(g["needs_you"]), g["project"] is None and not g["needs_you"], -(_epoch(g["last_activity_at"]) or 0), g["project"] or ""))
 
 
+def _board_rows(conn):
+    """Prefer the latest-scanned host for each adapter's record identity."""
+    scans = {}
+    for source in conn.execute("SELECT source_id, last_scan_at FROM sources"):
+        scanned_at = _epoch(source["last_scan_at"])
+        scans[source["source_id"]] = scanned_at if scanned_at is not None else float("-inf")
+    rows = {}
+    for row in store.iter_latest(conn):
+        key = (row["source_id"].partition("@")[0], row["type"], row["id"])
+        rank = (scans.get(row["source_id"], float("-inf")), row["observed_ts"])
+        previous = rows.get(key)
+        if previous is None or rank > previous[0]:
+            rows[key] = (rank, row)
+    return [row for _, row in rows.values()]
+
+
 def _board_data(view, cfg, now, server):
     window_start = now.timestamp() - cfg.window_hours * 3600
     rows = {"run": [], "job": [], "inbox_item": [], "session": [], "decision": []}
-    for row in store.iter_latest(view.conn):
+    for row in _board_rows(view.conn):
         if row["type"] == "session":
             if row["observed_ts"] >= window_start:
                 rows["session"].append(row)

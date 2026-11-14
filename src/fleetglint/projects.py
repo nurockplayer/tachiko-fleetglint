@@ -46,7 +46,7 @@ def _review_repo_name(path):
 def _is_boundary(path):
     current = Path(path)
     home = Path.home()
-    if current == home or current in home.parents:
+    if current == home or current in home.parents or current == home / "Developer":
         return True
     parts = current.parts
     if parts == ("/",) or (parts[:2] == ("/", "Volumes") and len(parts) <= 3):

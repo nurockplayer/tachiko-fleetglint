@@ -16,6 +16,7 @@ All notable changes to Fleetglint are recorded here. The format follows
 
 ### Fixed
 
+- Project cards no longer come from the `~/Developer` folder itself or duplicate records of a source whose host name changed.
 - Project needs-you cards omit unknown oracle dot-ci runs and superseded GitHub
   Actions failures, and collapse repeated work failures with a quiet repeat count.
 - Review bundles use their repository's project name; filesystem boundaries and
