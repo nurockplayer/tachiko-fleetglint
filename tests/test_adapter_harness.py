@@ -808,7 +808,7 @@ class HarnessAdapterTest(unittest.TestCase):
             self.assertEqual(poll["updated_at"], poll["observed_at"])
             (ci / "runs.tsv").write_text(header + row("1", "in_progress", "-"))
             poll = by_id(adapter.scan(NOW).records)["gha.nurockplayer.gteki.poll"]
-            self.assertEqual((poll["state"], poll["summary"]), ("cancelled", "ci-watch polled this repo"))
+            self.assertEqual((poll["state"], poll["summary"]), ("done", "ci-watch polled this repo"))
             self.assertEqual(poll["updated_at"], poll["ended_at"])
             job = next(r for r in result.records if r.get("kind") == "orb-test")
             self.assertEqual((job["state"], job["summary"]), ("queued", "waiting for lock"))
@@ -838,12 +838,27 @@ class HarnessAdapterTest(unittest.TestCase):
                 return (f"2026-11-05T{time}:00Z\towner/repo\t-\tci\tmain\tpush\t"
                         f"{status}\t-\t-\t-\t-\tfalse\n")
             adapter = harness.HarnessAdapter(state, hostname="h")
-            for first, second, expected in (("error", "completed", "cancelled"),
+            for first, second, expected in (("error", "completed", "done"),
                                             ("completed", "error", "unknown")):
                 (ci / "runs.tsv").write_text(header + row("03:00", first) + row("04:00", second))
                 poll = by_id(adapter.scan(NOW).records)["gha.owner.repo.poll"]
                 self.assertEqual(poll["state"], expected)
                 self.assertEqual(poll["updated_at"], "2026-11-05T04:00:00+00:00")
+
+    def test_ci_successful_empty_poll_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            ci = state / "ci-watch"
+            ci.mkdir()
+            (ci / "runs.tsv").write_text(
+                "polled_at\trepo\trun_id\tworkflow\tbranch\tevent\tstatus\tconclusion\tcreated_at\tupdated_at\turl\ttruncated\n"
+                "2026-11-05T03:00:00Z\towner/repo\t-\tci\tmain\tpush\tcompleted\t-\t-\t-\t-\tfalse\n")
+            result = harness.HarnessAdapter(state, hostname="h").scan(NOW)
+        self.assertNotIn("ci-watch errors=", result.detail or "")
+        self.assertIsNone(result.detail)
+        self.assertEqual(len(result.records), 1)
+        self.assertEqual(result.records[0]["state"], "done")
+        self.assertEqual(schema.validate(result.records[0]), [])
 
     def test_command_summary_redacts_authorization_and_user_password(self):
         for header in ("Authorization: Basic dXNlcjpwYXNz", "authorization: baretoken",
@@ -885,6 +900,19 @@ class HarnessAdapterTest(unittest.TestCase):
                 "demo\t123\tThu Nov  5 02:00:00 2026\t512\tpnpm test :: pnpm test --token=s3cr3t\n")
             records = harness.HarnessAdapter(state, hostname="h").scan(NOW).records
             self.assertEqual([r["command_summary"] for r in records], ["pnpm test"])
+
+    def test_orb_all_assignment_label_has_valid_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            orb = state / "orb-test"
+            (orb / "active").mkdir(parents=True)
+            (orb / "runs.tsv").write_text("")
+            (orb / "active" / "123").write_text(
+                "demo\t123\tThu Nov  5 02:00:00 2026\t512\tTOKEN=x A=b\n")
+            records = harness.HarnessAdapter(state, hostname="h").scan(NOW).records
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["command_summary"], "orb-test")
+        self.assertEqual(schema.validate(records[0]), [])
 
     def test_orb_without_finish_log(self):
         with tempfile.TemporaryDirectory() as tmp:

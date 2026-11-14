@@ -915,7 +915,8 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
                         and (key is None or done_lines.get(key, row["updated_ts"]) <= row["updated_ts"])):
                     reason = (record.get("summary") or (f"exit {record['exit_code']}" if record.get("exit_code") is not None else "failed")) if state == "failed" else "unverified" if state == "unknown" else state
                     g["needs_you"].append(_work_item(view, row, reason, now))
-                if state in ("done", "failed") and row["updated_ts"] >= window_start:
+                if (state in ("done", "failed") and row["updated_ts"] >= window_start
+                        and not (record.get("kind") == "github-actions" and record["id"].endswith(".poll"))):
                     g["recent"][state].append(_work_item(view, row, None, now))
     for item in needs_you:
         ref = item["ref"]

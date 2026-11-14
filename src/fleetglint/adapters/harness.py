@@ -417,8 +417,10 @@ class HarnessAdapter:
                 previous = polls.get(repo)
                 if previous is None or poll_time >= previous[0]:
                     polls[repo] = (poll_time, status == "error")
-            if status == "error" or run_id == "-":
+            if status == "error":
                 stats.ci_errors += 1
+                continue
+            if run_id == "-":
                 continue
             times = [_parse_rfc3339(t) for t in (polled, created, updated)]
             record_id = f"gha.{repo.replace('/', '.')}.{run_id}"
@@ -456,7 +458,7 @@ class HarnessAdapter:
             record = self._base("job", f"gha.{repo.replace('/', '.')}.poll", timestamp)
             record.update(kind="github-actions", project=_clip(repo.split("/")[1], 200),
                           command_summary="ci-watch poll", started_at=timestamp,
-                          state="unknown" if failed else "cancelled",
+                          state="unknown" if failed else "done",
                           summary="ci-watch could not read this repo's runs" if failed else "ci-watch polled this repo")
             if failed:
                 record["observed_at"] = timestamp
@@ -493,7 +495,7 @@ class HarnessAdapter:
             except ValueError:
                 argv = label.split()
             record.update(kind="orb-test", project=_clip(project, 200),
-                          command_summary=_command_summary(argv), started_at=_iso(started))
+                          command_summary=_command_summary(argv) or "orb-test", started_at=_iso(started))
             return record
 
         # Later sources override earlier ones: active beats holder and queue.
