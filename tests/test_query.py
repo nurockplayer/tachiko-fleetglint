@@ -889,11 +889,11 @@ class BoardTest(unittest.TestCase):
         self.write([
             job("first", state="failed", project="alpha", command_summary="orb-test -- a",
                 exit_code=5, updated_at=stamp(hours=-3), ended_at=stamp(hours=-3)),
-            job("different-exit", state="failed", project="alpha", command_summary="orb-test -- d",
+            job("different-exit", state="failed", project="alpha", command_summary="orb-test -- a",
                 exit_code=1, updated_at=stamp(hours=-2), ended_at=stamp(hours=-2)),
-            job("middle", state="failed", project="alpha", command_summary="orb-test -- b",
+            job("middle", state="failed", project="alpha", command_summary="orb-test -- a",
                 exit_code=5, updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
-            job("newest", state="failed", project="alpha", command_summary="orb-test -- c",
+            job("newest", state="failed", project="alpha", command_summary="orb-test -- a",
                 exit_code=5, ended_at=stamp()),
         ])
         alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
@@ -915,6 +915,88 @@ class BoardTest(unittest.TestCase):
                          ["inbox-2", "inbox-1", "newest", "different-exit"])
         for item in alpha["needs_you"][:2] + board["needs_you"]:
             self.assertNotIn("repeat_count", item)
+
+    def test_project_needs_you_job_repeats_use_full_command(self):
+        for project, commands, count in (
+                ("distinct", ("sh -c 'a'", "sh -c 'b'"), 2),
+                ("identical", ("sh -c 'a'", "sh -c 'a'"), 1)):
+            with self.subTest(project=project):
+                self.write([
+                    job(f"{project}-{i}", state="failed", project=project,
+                        command_summary=command, ended_at=stamp())
+                    for i, command in enumerate(commands)
+                ])
+                card = next(p for p in self.board()["projects"] if p["project"] == project)
+                self.assertEqual(len(card["needs_you"]), count)
+                self.assertEqual(card["needs_you_total"], count)
+                for item in card["needs_you"]:
+                    if count == 1:
+                        self.assertEqual(item["repeat_count"], 2)
+                    else:
+                        self.assertNotIn("repeat_count", item)
+
+    def test_project_needs_you_job_repeats_use_work_line(self):
+        for project, second_cwd, second_role, count in (
+                ("different", "/p/web", "frontend-worker", 2),
+                ("identical", "/p/api", "backend-worker", 1)):
+            with self.subTest(project=project):
+                self.write([
+                    job(f"{project}-first", state="failed", project=project,
+                        command_summary="pnpm test", cwd="/p/api", role_id="backend-worker",
+                        updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
+                    job(f"{project}-second", state="failed", project=project,
+                        command_summary="pnpm test", cwd=second_cwd, role_id=second_role,
+                        updated_at=stamp(), ended_at=stamp()),
+                ])
+                card = next(p for p in self.board()["projects"] if p["project"] == project)
+                items = self.by_id(card["needs_you"])
+                expected = {f"{project}-second"}
+                if count == 2:
+                    expected.add(f"{project}-first")
+                self.assertEqual(set(items), expected)
+                self.assertEqual(card["needs_you_total"], count)
+                for item in items.values():
+                    if count == 1:
+                        self.assertEqual(item["repeat_count"], 2)
+                        self.assertEqual(set(item), JOB_BOARD_KEYS | {"repeat_count"})
+                    else:
+                        self.assertNotIn("repeat_count", item)
+                        self.assertEqual(set(item), JOB_BOARD_KEYS)
+
+    def test_project_needs_you_job_repeats_fall_back_to_title(self):
+        # Ingest requires a command summary; exercise stored records without one.
+        for record in [
+            job("first", state="failed", project="alpha", command_summary=None,
+                title="first task", ended_at=stamp()),
+            job("second", state="failed", project="alpha", command_summary=None,
+                title="second task", ended_at=stamp()),
+            job("second-repeat", state="failed", project="alpha", command_summary=None,
+                title="second task", updated_at=stamp(), ended_at=stamp()),
+        ]:
+            del record["command_summary"]
+            self.put_raw(record)
+        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
+        items = self.by_id(alpha["needs_you"])
+        self.assertEqual(set(items), {"first", "second-repeat"})
+        self.assertNotIn("repeat_count", items["first"])
+        self.assertEqual(items["second-repeat"]["repeat_count"], 2)
+
+    def test_project_needs_you_run_repeats_use_title(self):
+        self.write([
+            run("foot", state="unknown", project="alpha", title="#1285 (foot)"),
+            run("other", state="unknown", project="alpha", title="another task"),
+            run("oracle-first", state="failed", project="alpha", agent="oracle",
+                title="dot-ci", updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
+            run("oracle-newest", state="failed", project="alpha", agent="oracle",
+                title="dot-ci", updated_at=stamp(), ended_at=stamp()),
+        ])
+        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
+        items = self.by_id(alpha["needs_you"])
+        self.assertEqual(set(items), {"foot", "other", "oracle-newest"})
+        self.assertEqual(alpha["needs_you_total"], 3)
+        for id in ("foot", "other"):
+            self.assertNotIn("repeat_count", items[id])
+        self.assertEqual(items["oracle-newest"]["repeat_count"], 2)
 
     def test_project_needs_you_prioritizes_owner_inbox_over_five_failures(self):
         self.cfg.viewer_roles = ["owner"]
