@@ -7,7 +7,40 @@ import { ProjectCard } from "./components/ProjectCard";
 import { parseRoute } from "./router";
 
 const project = board.projects[1];
+const sevenNeedsProject = {
+  ...project,
+  needs_you: Array.from({ length: 7 }, (_, i) => ({
+    ...project.in_progress[0],
+    ref: { ...project.in_progress[0].ref, id: `needs-${i + 1}` },
+    title: `Needs item ${i + 1}`,
+    display_state: "waiting" as const,
+  })),
+  needs_you_total: 7,
+};
 describe("project board", () => {
+  it("caps needs-you items at five and links to the remaining total", () => {
+    render(<ProjectCard project={sevenNeedsProject} now={0} />);
+    expect(screen.getAllByRole("link", { name: /^Needs item / })).toHaveLength(5);
+    expect(screen.queryByRole("link", { name: "Needs item 6" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Needs item 7" })).toBeNull();
+    expect(screen.getByRole("link", { name: "2 more on the project page" })).toHaveAttribute("href", "/project?name=fleetglint");
+  });
+  it("shows all seven needs-you items on full cards without a more link", () => {
+    render(<ProjectCard project={sevenNeedsProject} now={0} full />);
+    expect(screen.getAllByRole("link", { name: /^Needs item / })).toHaveLength(7);
+    expect(screen.queryByRole("link", { name: /on the project page/i })).toBeNull();
+  });
+  it("shows all three needs-you items without a more link", () => {
+    render(<ProjectCard project={{ ...sevenNeedsProject, needs_you: sevenNeedsProject.needs_you.slice(0, 3), needs_you_total: 3 }} now={0} />);
+    expect(screen.getAllByRole("link", { name: /^Needs item / })).toHaveLength(3);
+    expect(screen.queryByRole("link", { name: /on the project page/i })).toBeNull();
+  });
+  it("uses a failed seventh needs-you item for the card band", () => {
+    const needs_you = sevenNeedsProject.needs_you.map((item, i) => i === 6 ? { ...item, display_state: "failed" as const } : item);
+    const { container } = render(<ProjectCard project={{ ...sevenNeedsProject, needs_you }} now={0} />);
+    expect(screen.queryByRole("link", { name: "Needs item 7" })).toBeNull();
+    expect(container.querySelector("article")).toHaveAttribute("data-band", "failed");
+  });
   it("orders global last and nests jobs", () => {
     const { container } = render(<Overview board={board} />);
     const cards = container.querySelectorAll(".project-card");
