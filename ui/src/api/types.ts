@@ -226,7 +226,7 @@ export interface BoardInboxItem extends InboxSummary {
 
 export interface BoardInboxRole {
   role_id: string;
-  by_project: Record<string, { open: number; old: number; action_required: number }>;
+  by_project: { project: string | null; open: number; old: number; action_required: number }[];
   open: number;
   old: number;
   oldest_age_s: number | null;
