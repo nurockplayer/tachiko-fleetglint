@@ -963,6 +963,17 @@ class BoardTest(unittest.TestCase):
                         self.assertNotIn("repeat_count", item)
                         self.assertEqual(set(item), JOB_BOARD_KEYS)
 
+    def test_project_needs_you_job_repeats_keep_roles_apart(self):
+        self.write([
+            job(f"role-{role}", state="failed", project="alpha", command_summary="pnpm test",
+                role_id=role, ended_at=stamp())
+            for role in ("backend-worker", "frontend-worker")
+        ])
+        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
+        self.assertEqual(set(self.by_id(alpha["needs_you"])), {"role-backend-worker", "role-frontend-worker"})
+        for item in alpha["needs_you"]:
+            self.assertNotIn("repeat_count", item)
+
     def test_project_needs_you_job_repeats_fall_back_to_title(self):
         # Ingest requires a command summary; exercise stored records without one.
         for record in [

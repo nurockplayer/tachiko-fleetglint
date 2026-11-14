@@ -938,7 +938,7 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
                         and not superseded and not oracle_dot_ci):
                     reason = (record.get("summary") or (f"exit {record['exit_code']}" if record.get("exit_code") is not None else "failed")) if state == "failed" else "unverified" if state == "unknown" else state
                     item = _work_item(view, row, reason, now)
-                    work_line_keys[id(item)] = key
+                    work_line_keys[id(item)] = (key, record.get("role_id"))
                     g["needs_you"].append(item)
                 if (state in ("done", "failed") and row["updated_ts"] >= window_start
                         and not (record.get("kind") == "github-actions" and record["id"].endswith(".poll"))):
