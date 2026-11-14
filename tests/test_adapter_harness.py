@@ -491,6 +491,41 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertEqual(project_from_path("/gone/repo/.claude/worktrees/x"), "repo")
         self.assertEqual(project_from_path("/gone/plain"), "plain")
 
+    def test_project_comes_from_review_bundle(self):
+        bundle = Path.home() / ".local/state/review/nurockplayer/gteki/pr1253-1757c9397c72"
+        for path in (bundle, bundle / "src" / "nested"):
+            with self.subTest(path=path):
+                self.assertEqual(project_from_path(str(path)), "gteki")
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp) / ".local/state/review/owner/app/bundle"
+            (bundle / ".git").mkdir(parents=True)
+            self.assertEqual(project_from_path(str(bundle)), "app")
+        self.assertEqual(project_from_path(
+            "/gone/.local/state/review/owner/" + "r" * 201 + "/bundle"), "r" * 200)
+        self.assertEqual(project_from_path("/gone/.local/state/review/owner/repo"), "repo")
+        self.assertEqual(project_from_path("/gone/.local/other/review/owner/repo/bundle"),
+                         "bundle")
+
+    @mock.patch("fleetglint.projects._git_repo_name", return_value=None)
+    def test_boundary_directories_have_no_project(self, git_repo_name):
+        paths = ["/", "/Volumes", "/Volumes/KIOXIA", "/tmp", "/private/tmp", "/var/tmp",
+                 "/tmp/claude-501", "/tmp/claude-501/-Users-x-Developer-app/abc/scratchpad",
+                 "/private/tmp/claude-501/tasks/abc", "/private/var/tmp",
+                 "/tmp/claude-501/app-wt-topic/src",
+                 "/private/tmp/claude-501/-Users-x-Developer-app-wt-topic/abc/scratchpad",
+                 str(Path.home()),
+                 *(str(parent) for parent in Path.home().parents)]
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertIsNone(project_from_path(path))
+        for path, expected in (("/Volumes/KIOXIA/app", "app"),
+                               ("/tmp/plain", "plain"), ("/var/tmp/plain", "plain"),
+                               ("/tmp/claude-other/scratchpad", "scratchpad"),
+                               ("/tmp/nested/claude-501/scratchpad", "scratchpad"),
+                               ("/tmp/app-wt-topic/src", "app")):
+            with self.subTest(path=path):
+                self.assertEqual(project_from_path(path), expected)
+
     def test_git_repo_name_with_nested_worktrees_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

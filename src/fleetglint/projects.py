@@ -35,11 +35,42 @@ def _git_repo_name(path):
     return None
 
 
+def _review_repo_name(path):
+    parts = Path(path).parts
+    for index in range(len(parts) - 5):
+        if parts[index:index + 3] == (".local", "state", "review"):
+            return parts[index + 4]
+    return None
+
+
+def _is_boundary(path):
+    current = Path(path)
+    home = Path.home()
+    if current == home or current in home.parents:
+        return True
+    parts = current.parts
+    if parts == ("/",) or (parts[:2] == ("/", "Volumes") and len(parts) <= 3):
+        return True
+    for root in (Path("/tmp"), Path("/private/tmp"), Path("/var/tmp"), Path("/private/var/tmp")):
+        if current == root:
+            return True
+        if root.parent.name != "var" and parts[:len(root.parts)] == root.parts:
+            if len(parts) > len(root.parts) and re.fullmatch(
+                    r"claude-[0-9]+", parts[len(root.parts)]):
+                return True
+    return False
+
+
 def project_from_path(path):
     if not isinstance(path, str) or not path:
         return None
     path = path.split("/.claude/", 1)[0]
+    review_repo = _review_repo_name(path)
+    if review_repo:
+        return _clip(review_repo, 200)
     name = _git_repo_name(path)
+    if not name and _is_boundary(path):
+        return None
     if not name:
         for component in reversed(Path(path).parts):
             match = re.fullmatch(r"(.+)-wt(?:-.+)?", component)
