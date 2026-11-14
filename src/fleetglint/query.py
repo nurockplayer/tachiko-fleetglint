@@ -943,11 +943,10 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
     for g in groups.values():
         repeats = {}
         for item in g["needs_you"]:
-            command = (item.get("command_summary") or "").split()
-            # A GHA summary is `workflow · branch · event`: each branch is its own failure.
-            head = item.get("command_summary") if item.get("kind") == "github-actions" else command[0] if command else None
+            head = item.get("command_summary") or (item.get("title") if item["ref"]["type"] == "job" else None)
             key = (item["ref"]["type"], item.get("kind"), item.get("agent"),
-                   item["display_state"], item["section_reason"], head)
+                   item["display_state"], item["section_reason"], head,
+                   item.get("title") if item["ref"]["type"] == "run" else None)
             if key not in repeats:
                 repeats[key] = (item, 1)
             else:
