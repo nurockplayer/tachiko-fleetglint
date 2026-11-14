@@ -14,6 +14,14 @@ All notable changes to Fleetglint are recorded here. The format follows
 
 - Role-based project inference removes the last hyphen segment.
 
+### Fixed
+
+- Successful ci-watch polls are marked done and clear earlier poll errors without
+  appearing in project cards' recent results. Empty successful polls no longer
+  count as ci-watch errors.
+- orb-test labels containing only environment assignments use a safe `orb-test`
+  command summary so their job records remain valid.
+
 ## [0.1.1] - 2026-11-08
 
 ### Changed

@@ -656,6 +656,8 @@ class BoardTest(unittest.TestCase):
         self.write([
             run("waiting-run", state="waiting", project="alpha", waits_on=[{"type": "job", "id": "job1"}]),
             job("job1", project="alpha"),
+            job("gha-done", state="done", project="alpha", kind="github-actions", ended_at=stamp()),
+            job("gha.o.alpha.poll", state="done", project="alpha", kind="github-actions", command_summary="ci-watch poll", ended_at=stamp()),
             run("failed", state="failed", project="beta", summary="broken", ended_at=stamp()),
             {"v": 1, "type": "decision", "id": "new", "source_id": "work@mbp", "updated_at": stamp(), "role_id": "alpha-lead", "project": "alpha", "text": "ship", "decided_at": stamp()},
             {"v": 1, "type": "decision", "id": "old", "source_id": "work@mbp", "updated_at": stamp(days=-8), "role_id": "alpha-lead", "project": "alpha", "text": "old", "decided_at": stamp(days=-8)},
@@ -666,7 +668,20 @@ class BoardTest(unittest.TestCase):
         self.assertEqual([i["ref"]["id"] for i in alpha["in_progress"]], ["waiting-run"])
         self.assertEqual(alpha["in_progress"][0]["jobs"][0]["ref"]["id"], "job1")
         self.assertEqual([d["ref"]["id"] for d in alpha["decisions"]], ["new"])
+        self.assertEqual(set(self.by_id(alpha["recent"]["done"])), {"gha-done"})
+        self.assertEqual(alpha["needs_you"], [])
         self.assertEqual(projects[0]["needs_you"][0]["section_reason"], "broken")
+
+    def test_project_ci_poll_recovery_clears_needs_you(self):
+        self.write([job("gha.o.alpha.poll", state="unknown", project="alpha", kind="github-actions",
+                        command_summary="ci-watch poll", updated_at=stamp(hours=-1), observed_at=stamp(hours=-1))])
+        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
+        self.assertEqual(set(self.by_id(alpha["needs_you"])), {"gha.o.alpha.poll"})
+        self.write([job("gha.o.alpha.poll", state="done", project="alpha", kind="github-actions",
+                        command_summary="ci-watch poll", ended_at=stamp())])
+        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
+        self.assertEqual(alpha["needs_you"], [])
+        self.assertEqual(alpha["recent"]["done"], [])
 
     def test_project_needs_you_ages_out_and_drops_superseded_lines(self):
         self.write([
