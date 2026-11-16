@@ -16,9 +16,7 @@ export function fingerprint(item: Item): string {
     "command_summary" in item ? item.command_summary ?? null : null]);
 }
 
-/** One frozen baseline per visit; saving a poll never changes its markers. */
-export function createSeen(): { mark: Mark; save: () => void } {
-  let baseline: Map<string, string> | null = null;
+function readStored(): Map<string, string> | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw !== null) {
@@ -26,12 +24,16 @@ export function createSeen(): { mark: Mark; save: () => void } {
       if (typeof stored.saved_at === "string" && stored.items &&
           typeof stored.items === "object" && !Array.isArray(stored.items) &&
           Object.values(stored.items).every(value => typeof value === "string")) {
-        baseline = new Map(Object.entries(stored.items));
+        return new Map(Object.entries(stored.items));
       }
     }
   } catch { /* Unavailable storage is a first visit. */ }
+  return null;
+}
 
-  const running = new Map(baseline ?? []);
+/** Markers use a frozen visit baseline; saves merge this tab's rendered items into current storage. */
+export function createSeen(): { mark: Mark; save: () => void } {
+  const baseline = readStored();
   const rendered = new Map<string, string>();
 
   return {
@@ -45,13 +47,14 @@ export function createSeen(): { mark: Mark; save: () => void } {
     },
     save() {
       try {
+        const current = readStored() ?? new Map();
         for (const [k, fp] of rendered) {
-          if (!running.has(k) || running.get(k) !== fp) running.set(k, fp);
+          if (current.get(k) !== fp) current.set(k, fp);
         }
         rendered.clear();
-        while (running.size > LIMIT) running.delete(running.keys().next().value!);
+        while (current.size > LIMIT) current.delete(current.keys().next().value!);
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
-          saved_at: new Date().toISOString(), items: Object.fromEntries(running),
+          saved_at: new Date().toISOString(), items: Object.fromEntries(current),
         }));
       } catch { /* Storage must never interrupt the board. */ }
     },

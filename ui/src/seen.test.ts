@@ -118,6 +118,26 @@ describe("seen visit", () => {
     seen.save();
     expect(stored().items[key(other)]).toBe(fingerprint(other));
   });
+  it("keeps another tab's saved items when a stale tab saves without rendering", () => {
+    const a = createSeen();
+    const b = createSeen();
+    a.mark(item);
+    a.save();
+    b.save();
+    expect(stored().items).toEqual({ [key(item)]: fingerprint(item) });
+  });
+  it("merges a stale tab's rendered items with another tab's saved items", () => {
+    const a = createSeen();
+    const b = createSeen();
+    a.mark(item);
+    a.save();
+    b.mark(other);
+    b.save();
+    expect(stored().items).toEqual({
+      [key(item)]: fingerprint(item),
+      [key(other)]: fingerprint(other),
+    });
+  });
   it.each(["{broken", "null", "{}", '{"saved_at":"now","items":[]}'])("treats broken storage as a first visit: %s", raw => {
     localStorage.setItem(storageKey, raw);
     const seen = createSeen();
