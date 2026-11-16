@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { defaultFetcher, type Fetcher } from "./api/client";
 import { useBoard } from "./api/useSnapshot";
 import { useRoute } from "./router";
@@ -10,6 +10,7 @@ import { Project } from "./screens/Project";
 import { Overview } from "./screens/Overview";
 import { History } from "./screens/History";
 import { RunDetail } from "./screens/RunDetail";
+import { createSeen } from "./seen";
 
 export interface AppProps {
   fetcher?: Fetcher;
@@ -17,11 +18,18 @@ export interface AppProps {
 }
 
 export function App({ fetcher = defaultFetcher, pollMs = 15000 }: AppProps) {
+  const [seen] = useState(createSeen);
   const route = useRoute();
   const state = useBoard(fetcher, pollMs);
   const board = state.data;
   const unavailable = state.status === "unavailable";
   const firstLoad = state.status === "loading";
+
+  useEffect(() => {
+    if (state.status === "ok" && board) {
+      seen.save([...board.needs_you, ...board.projects.flatMap(project => project.needs_you)]);
+    }
+  }, [seen, board, state.status, state.receivedAt]);
 
   // `/attention` is retired; keep old bookmarks working without a page load.
   useEffect(() => {
@@ -49,7 +57,7 @@ export function App({ fetcher = defaultFetcher, pollMs = 15000 }: AppProps) {
   } else if (board) {
     content = (
       <div className={`stale-data${unavailable ? " is-stale" : ""}`}>
-        {route.kind === "project" ? <Project board={board} name={route.name} /> : <Overview board={board} />}
+        {route.kind === "project" ? <Project board={board} name={route.name} mark={seen.mark} /> : <Overview board={board} mark={seen.mark} />}
       </div>
     );
   } else {
