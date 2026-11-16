@@ -27,7 +27,7 @@ export function App({ fetcher = defaultFetcher, pollMs = 15000 }: AppProps) {
 
   useEffect(() => {
     if (state.status === "ok" && board) {
-      seen.save([...board.needs_you, ...board.projects.flatMap(project => project.needs_you)]);
+      seen.save();
     }
   }, [seen, board, state.status, state.receivedAt]);
 
