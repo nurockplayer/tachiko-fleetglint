@@ -6,6 +6,7 @@ import { Notified } from "../components/Notified";
 import { LeadInbox } from "../components/LeadInbox";
 import { SessionsOnly } from "../components/Sessions";
 import { EmptyState } from "../components/EmptyState";
+import type { Mark } from "../seen";
 
 type SectionKey = "lead_inbox" | "exceptions" | "recent" | "sessions";
 
@@ -22,7 +23,7 @@ const SUMMARY_SECTIONS: Record<string, SectionKey> = {
   "#exceptions": "exceptions",
 };
 
-export function Overview({ board }: { board: Board }) {
+export function Overview({ board, mark }: { board: Board; mark?: Mark }) {
   const [open, setOpen] = useState<Record<SectionKey, boolean>>(INITIAL_OPEN);
   const toggle = (key: SectionKey) => () =>
     setOpen((previous) => ({ ...previous, [key]: !previous[key] }));
@@ -56,7 +57,7 @@ export function Overview({ board }: { board: Board }) {
     <main className="screen">
       <SummaryLine board={board} />
       <div className="project-grid">
-        {[...board.projects.filter(p => p.project !== null), ...board.projects.filter(p => p.project === null)].map(project => <ProjectCard key={project.project ?? "__global"} project={project} now={Date.parse(board.generated_at)} />)}
+        {[...board.projects.filter(p => p.project !== null), ...board.projects.filter(p => p.project === null)].map(project => <ProjectCard key={project.project ?? "__global"} project={project} now={Date.parse(board.generated_at)} mark={mark} />)}
       </div>
     </main>
   );

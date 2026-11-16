@@ -5,6 +5,8 @@ import { Overview } from "./screens/Overview";
 import { Project } from "./screens/Project";
 import { ProjectCard } from "./components/ProjectCard";
 import { parseRoute } from "./router";
+import type { BoardInboxItem } from "./api/types";
+import { formatAbsolute } from "./format";
 
 const project = board.projects[1];
 const sevenNeedsProject = {
@@ -18,6 +20,37 @@ const sevenNeedsProject = {
   needs_you_total: 7,
 };
 describe("project board", () => {
+  const inbox = { ...board.lead_inbox[0].items[0], role_id: "fleetglint-lead", age_s: 3840 };
+  it("shows the inbox ask, recipient and waiting duration with a zoned tooltip", () => {
+    render(<ProjectCard project={{ ...project, needs_you: [inbox] }} now={0} />);
+    expect(screen.getByText(inbox.detail!)).toBeTruthy();
+    expect(screen.getByText(/→ fleetglint-lead/)).toHaveClass("quiet");
+    expect(screen.getByText("waiting 1h 4m")).toHaveAttribute("title", formatAbsolute(inbox.created_at));
+  });
+  it("omits null metadata parts independently", () => {
+    const row = { ...inbox, role_id: null, age_s: null } as unknown as BoardInboxItem;
+    const { rerender } = render(<ProjectCard project={{ ...project, needs_you: [row] }} now={0} />);
+    expect(screen.queryByText(/→|waiting \d/)).toBeNull();
+    rerender(<ProjectCard project={{ ...project, needs_you: [{ ...row, age_s: 0 }] }} now={0} />);
+    expect(screen.getByText("waiting 0s")).toBeTruthy();
+    expect(screen.queryByText(/→|· waiting/)).toBeNull();
+    rerender(<ProjectCard project={{ ...project, needs_you: [{ ...inbox, age_s: null }] }} now={0} />);
+    expect(screen.getByText("→ fleetglint-lead")).toBeTruthy();
+    expect(screen.queryByText(/waiting \d/)).toBeNull();
+  });
+  it("does not label run or job started ages as waiting", () => {
+    render(<ProjectCard project={{ ...project, needs_you: [
+      { ...project.in_progress[0], started_age_s: 3840 },
+      { ...project.in_progress[0].jobs![0], started_age_s: 3840 },
+    ] }} now={0} />);
+    expect(screen.queryByText(/waiting \d|→/)).toBeNull();
+  });
+  it.each(["new", "changed"] as const)("renders a %s pill before the title", marker => {
+    render(<ProjectCard project={{ ...project, needs_you: [inbox] }} now={0} mark={() => marker} />);
+    const pill = screen.getByText(marker);
+    expect(pill).toHaveClass("seen-marker");
+    expect(pill.nextElementSibling).toBe(screen.getByRole("link", { name: inbox.title ?? inbox.ref.id }));
+  });
   it("caps needs-you items at five and links to the remaining total", () => {
     render(<ProjectCard project={sevenNeedsProject} now={0} />);
     expect(screen.getAllByRole("link", { name: /^Needs item / })).toHaveLength(5);

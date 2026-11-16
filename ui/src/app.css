@@ -1372,3 +1372,16 @@ pre,
 .project-card h3 { margin: 0 0 8px; }
 .project-item { padding: 5px 0; }
 .project-job { margin: 6px 0 0 20px; }
+
+.seen-marker {
+  display: inline-block;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-small);
+  font-size: var(--type-meta-size);
+  color: var(--state-waiting-fg);
+  background: var(--state-waiting-bg);
+}
+.seen-marker[data-mark="changed"] {
+  color: var(--state-needs-fg);
+  background: var(--state-needs-bg);
+}
