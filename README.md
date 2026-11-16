@@ -98,6 +98,8 @@ heartbeats, Python examples and the exact file layout.
 
 ## Adapters
 
+See [adapter capabilities and accuracy](docs/adapters.md) for inputs, display signals and gaps.
+
 Fleetglint ships three read-only adapters. Each one is enabled automatically
 when the files it reads are present. Set `enabled` to `"auto"` (default),
 `"true"` or `"false"` in `config.toml` to change that.

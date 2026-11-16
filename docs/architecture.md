@@ -386,6 +386,8 @@ and at start.
 
 ## 6. Adapters
 
+See [adapter capabilities and accuracy](adapters.md) for the current readers and their evidence limits.
+
 ```python
 class Adapter(Protocol):
     source_id: str                       # e.g. "tachiko-harness@<hostname -s>"
