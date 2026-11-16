@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 import unittest
@@ -526,9 +527,6 @@ class KillMidBatchGateTest(GateTest):
     """§10 item 5: SIGKILL mid-ingest, restart, and compare with an uninterrupted run."""
 
     TOTAL = 20000
-    # Kill once this many of the 20,000 lines are committed: the ingest is still running
-    # and the rest of the segment is left for the restarted server.
-    THRESHOLD = 15000
 
     def payload(self, source):
         record_stamp = stamp()
@@ -545,6 +543,8 @@ class KillMidBatchGateTest(GateTest):
                              default=0)
 
     def test_kill_during_ingest_loses_nothing(self):
+        from fleetglint.ingest import Ingestor
+
         source = source_for("kill")
         data = self.payload(source)
         control = self.new_gate()
@@ -559,12 +559,63 @@ class KillMidBatchGateTest(GateTest):
                          + result.stderr.decode("utf-8", "replace"))
         self.assertEqual(self.count(control, source), self.TOTAL)
 
+        pause_dir = killed.base / "pause"
+        pause_dir.mkdir()
+        marker = pause_dir / "transaction-open"
+        pause_after = 2
+        (pause_dir / "sitecustomize.py").write_text(textwrap.dedent("""\
+            import os
+
+            if marker := os.environ.get("FLEETGLINT_GATE_PAUSE"):
+                import time
+                from pathlib import Path
+                from fleetglint.ingest import Ingestor
+
+                original_commit_batch = Ingestor._commit_batch
+                completed_batches = 0
+                pause_after = int(os.environ["FLEETGLINT_GATE_PAUSE_AFTER"])
+
+                def paused_commit_batch(self, source_id, seq, batch, position,
+                                        stat, prefix, compressed):
+                    conn = self.conn
+
+                    class ConnectionProxy:
+                        def __getattr__(self, name):
+                            return getattr(conn, name)
+
+                        def execute(self, sql, *args, **kwargs):
+                            global completed_batches
+                            if (sql == "COMMIT" and batch
+                                    and completed_batches >= pause_after):
+                                assert conn.in_transaction
+                                Path(marker).write_text("transaction open", encoding="utf-8")
+                                while True:
+                                    time.sleep(1)
+                            result = conn.execute(sql, *args, **kwargs)
+                            if sql == "COMMIT" and batch:
+                                completed_batches += 1
+                            return result
+
+                    self.conn = ConnectionProxy()
+                    try:
+                        return original_commit_batch(
+                            self, source_id, seq, batch, position, stat, prefix, compressed)
+                    finally:
+                        self.conn = conn
+
+                Ingestor._commit_batch = paused_commit_batch
+            """), encoding="utf-8")
+        killed.env["PYTHONPATH"] = str(pause_dir) + os.pathsep + killed.env["PYTHONPATH"]
+        killed.env["FLEETGLINT_GATE_PAUSE"] = str(marker)
+        killed.env["FLEETGLINT_GATE_PAUSE_AFTER"] = str(pause_after)
         killed.start()
-        killed.wait(
-            "a partially ingested segment",
-            lambda: self.THRESHOLD <= self.count(killed, source) < self.TOTAL,
-            timeout=14, interval=0.1)
+        killed.wait("an open ingest transaction before COMMIT", marker.exists, timeout=14)
+        committed = self.count(killed, source)
+        self.assertLess(committed, self.TOTAL)
+        self.assertEqual(committed, pause_after * Ingestor.MAX_BATCH_LINES)
         killed.kill()
+        killed.env.pop("FLEETGLINT_GATE_PAUSE")
+        killed.env.pop("FLEETGLINT_GATE_PAUSE_AFTER")
         killed.start()
         killed.wait("the rest of the segment after the restart",
                     lambda: self.count(killed, source) == self.TOTAL, timeout=14)
