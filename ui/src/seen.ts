@@ -11,11 +11,13 @@ export function key(item: Item): string {
 
 export function fingerprint(item: Item): string {
   return JSON.stringify([item.state, item.display_state, item.title,
-    ("detail" in item ? item.detail : item.section_reason) ?? null]);
+    ("detail" in item ? item.detail : item.section_reason) ?? null,
+    "role_id" in item ? item.role_id ?? null : null,
+    "command_summary" in item ? item.command_summary ?? null : null]);
 }
 
 /** One frozen baseline per visit; saving a poll never changes its markers. */
-export function createSeen(): { mark: Mark; save: (items: Item[]) => void } {
+export function createSeen(): { mark: Mark; save: () => void } {
   let baseline: Map<string, string> | null = null;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -29,19 +31,27 @@ export function createSeen(): { mark: Mark; save: (items: Item[]) => void } {
     }
   } catch { /* Unavailable storage is a first visit. */ }
 
+  const running = new Map(baseline ?? []);
+  const rendered = new Map<string, string>();
+
   return {
     mark(item) {
+      const k = key(item);
+      const fp = fingerprint(item);
+      rendered.set(k, fp);
       if (baseline === null) return null;
-      const previous = baseline.get(key(item));
-      return previous === undefined ? "new" : previous !== fingerprint(item) ? "changed" : null;
+      const previous = baseline.get(k);
+      return previous === undefined ? "new" : previous !== fp ? "changed" : null;
     },
-    save(items) {
+    save() {
       try {
-        const merged = new Map(baseline);
-        for (const item of items) merged.set(key(item), fingerprint(item));
-        const entries = [...merged].slice(-LIMIT);
+        for (const [k, fp] of rendered) {
+          if (!running.has(k) || running.get(k) !== fp) running.set(k, fp);
+        }
+        rendered.clear();
+        while (running.size > LIMIT) running.delete(running.keys().next().value!);
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
-          saved_at: new Date().toISOString(), items: Object.fromEntries(entries),
+          saved_at: new Date().toISOString(), items: Object.fromEntries(running),
         }));
       } catch { /* Storage must never interrupt the board. */ }
     },

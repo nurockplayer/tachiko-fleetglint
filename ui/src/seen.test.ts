@@ -15,7 +15,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("seen visit", () => {
   it("wires successful board polls through overview and project screens", async () => {
-    createSeen().save([]);
+    createSeen().save();
     const pageBoard = { ...board, projects: [{ ...board.projects[1], needs_you: [item] }] };
     const fetcher = vi.fn(async () => new Response(JSON.stringify(pageBoard)));
     window.history.replaceState(null, "", "/");
@@ -25,43 +25,63 @@ describe("seen visit", () => {
     expect(screen.getByText("new")).toBeTruthy();
     expect(stored().items[key(item)]).toBe(fingerprint(item));
     unmount();
+    const otherProjectAsk = { ...other, project: "edd" };
+    fetcher.mockImplementation(async () => new Response(JSON.stringify({
+      ...pageBoard,
+      needs_you: [...pageBoard.needs_you, otherProjectAsk],
+      projects: [...pageBoard.projects, { ...board.projects[2], needs_you: [otherProjectAsk] }],
+    })));
     window.history.replaceState(null, "", "/project?name=fleetglint");
     render(createElement(App, { fetcher, pollMs: 100000 }));
     expect(await screen.findByRole("heading", { name: "fleetglint" })).toBeTruthy();
     expect(screen.queryByText("new")).toBeNull();
+    expect(stored().items[key(otherProjectAsk)]).toBeUndefined();
     window.history.replaceState(null, "", "/");
   });
   it("has no markers throughout the first visit and saves a zoned timestamp", () => {
     const seen = createSeen();
-    seen.save([item]);
     expect(seen.mark(item)).toBeNull();
-    seen.save([item, other]);
+    seen.save();
+    expect(seen.mark(item)).toBeNull();
     expect(seen.mark(other)).toBeNull();
+    seen.save();
     expect(stored().saved_at).toMatch(/Z$/);
     expect(stored().items[key(item)]).toBe(fingerprint(item));
   });
   it("marks new and changed asks after a reload, preserving the baseline across two polls", () => {
-    createSeen().save([item]);
+    const initial = createSeen();
+    initial.mark(item);
+    initial.save();
     const seen = createSeen();
     const changed = { ...item, detail: "A different ask" };
     expect(seen.mark(item)).toBeNull();
-    seen.save([changed, other]);
     expect(seen.mark(changed)).toBe("changed");
     expect(seen.mark(other)).toBe("new");
-    seen.save([changed, other]);
+    seen.save();
+    expect(seen.mark(changed)).toBe("changed");
+    expect(seen.mark(other)).toBe("new");
+    seen.save();
     expect(seen.mark(changed)).toBe("changed");
     expect(seen.mark(other)).toBe("new");
     const nextVisit = createSeen();
     expect(nextVisit.mark(changed)).toBeNull();
     expect(nextVisit.mark(other)).toBeNull();
   });
-  it.each(["state", "display_state", "title", "detail"] as const)("detects changed %s", field => {
-    createSeen().save([item]);
-    expect(createSeen().mark({ ...item, [field]: "different" })).toBe("changed");
+  it.each([
+    ...(["state", "display_state", "title", "detail", "role_id"] as const).map(field => ({ field, original: item })),
+    { field: "command_summary" as const, original: { ...board.projects[1].in_progress[0].jobs![0], title: null } },
+  ])("detects changed $field", ({ field, original }) => {
+    const initial = createSeen();
+    initial.mark(original);
+    initial.save();
+    expect(createSeen().mark({ ...original, [field]: "different" })).toBe("changed");
   });
   it("ignores timestamps, age and repeat count, including for run items", () => {
     const run = board.projects[1].in_progress[0];
-    createSeen().save([item, run]);
+    const initial = createSeen();
+    initial.mark(item);
+    initial.mark(run);
+    initial.save();
     const seen = createSeen();
     expect(seen.mark({ ...item, created_at: "2026-11-16T01:00:00Z", age_s: 9999,
       updated_at: "2026-11-16T01:00:00Z", observed_at: "2026-11-16T01:00:00Z" })).toBeNull();
@@ -69,28 +89,56 @@ describe("seen visit", () => {
     expect(seen.mark({ ...run, section_reason: "A different reason" })).toBe("changed");
   });
   it("keeps baseline items missing from the current poll", () => {
-    createSeen().save([item]);
-    createSeen().save([other]);
+    const initial = createSeen();
+    initial.mark(item);
+    initial.save();
+    const seen = createSeen();
+    seen.mark(other);
+    seen.save();
     expect(Object.keys(stored().items)).toEqual([key(item), key(other)]);
+  });
+  it("stores only items passed to mark", () => {
+    const seen = createSeen();
+    seen.mark(item);
+    seen.save();
+    expect(stored().items).toEqual({ [key(item)]: fingerprint(item) });
+    expect(stored().items[key(other)]).toBeUndefined();
+  });
+  it("keeps items first rendered in poll 1 when absent from poll 2", () => {
+    createSeen().save();
+    const seen = createSeen();
+    seen.mark(item);
+    seen.mark(other);
+    seen.save();
+    seen.mark(item);
+    seen.save();
+    expect(stored().items[key(other)]).toBe(fingerprint(other));
   });
   it.each(["{broken", "null", "{}", '{"saved_at":"now","items":[]}'])("treats broken storage as a first visit: %s", raw => {
     localStorage.setItem(storageKey, raw);
     const seen = createSeen();
     expect(seen.mark(item)).toBeNull();
-    expect(() => seen.save([item])).not.toThrow();
+    expect(() => seen.save()).not.toThrow();
   });
   it("does not crash when localStorage access or writes throw", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota"); });
-    expect(() => createSeen().save([item])).not.toThrow();
+    const writable = createSeen();
+    writable.mark(item);
+    expect(() => writable.save()).not.toThrow();
     vi.stubGlobal("localStorage", { getItem() { throw new Error("blocked"); } });
     const seen = createSeen();
     expect(seen.mark(item)).toBeNull();
-    expect(() => seen.save([item])).not.toThrow();
+    expect(() => seen.save()).not.toThrow();
   });
   it("caps at 2000 entries by oldest insertion, without moving updated entries", () => {
     const items = Array.from({ length: 2000 }, (_, n) => ({ ...item, ref: { ...item.ref, id: String(n) } }));
-    createSeen().save(items);
-    createSeen().save([{ ...items[0], detail: "updated" }, other]);
+    const initial = createSeen();
+    items.forEach(initial.mark);
+    initial.save();
+    const seen = createSeen();
+    seen.mark({ ...items[0], detail: "updated" });
+    seen.mark(other);
+    seen.save();
     const entries = Object.keys(stored().items);
     expect(entries).toHaveLength(2000);
     expect(entries).not.toContain(key(items[0]));
