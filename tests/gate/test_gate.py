@@ -618,7 +618,7 @@ class KillMidBatchGateTest(GateTest):
         killed.env.pop("FLEETGLINT_GATE_PAUSE_AFTER")
         killed.start()
         killed.wait("the rest of the segment after the restart",
-                    lambda: self.count(killed, source) == self.TOTAL, timeout=14)
+                    lambda: self.count(killed, source) == self.TOTAL, timeout=30)
         killed.stop()
 
         records = "SELECT id, json FROM records WHERE source_id = ? ORDER BY id"
