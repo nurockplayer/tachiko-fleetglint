@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { App } from "./App";
 
-const storageKey = "fleetglint.seen.v1";
+const storageKey = "fleetglint.seen.v2";
 const item = board.lead_inbox[0].items[0];
 const other = { ...item, ref: { ...item.ref, id: "another-ask" } };
 const stored = () => JSON.parse(localStorage.getItem(storageKey)!);
@@ -37,6 +37,10 @@ describe("seen visit", () => {
     expect(screen.queryByText("new")).toBeNull();
     expect(stored().items[key(otherProjectAsk)]).toBeUndefined();
     window.history.replaceState(null, "", "/");
+  });
+  it("ignores the v1 baseline, whose fingerprints have fewer fields", () => {
+    localStorage.setItem("fleetglint.seen.v1", JSON.stringify({ saved_at: "2026-11-16T10:00:00Z", items: { [key(item)]: "[]" } }));
+    expect(createSeen().mark(item)).toBeNull();
   });
   it("has no markers throughout the first visit and saves a zoned timestamp", () => {
     const seen = createSeen();

@@ -2,7 +2,7 @@ import type { BoardInboxItem, BoardWork } from "./api/types";
 
 type Item = BoardWork | BoardInboxItem;
 export type Mark = (item: Item) => "new" | "changed" | null;
-const STORAGE_KEY = "fleetglint.seen.v1";
+const STORAGE_KEY = "fleetglint.seen.v2";
 const LIMIT = 2000;
 
 export function key(item: Item): string {
