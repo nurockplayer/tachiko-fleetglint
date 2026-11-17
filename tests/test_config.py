@@ -30,6 +30,35 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg.viewer_roles, ["owner"])
         self.assertEqual(cfg.needs_you_hours, 24)
         self.assertEqual(cfg.inbox_old_after_s, 14400)
+        self.assertEqual(cfg.harness.role_projects, {})
+        self.assertEqual(cfg.harness.path_projects, {})
+
+    def test_harness_project_tables(self):
+        cfg = config.load(self.write(
+            '[adapters.tachiko_harness]\nrole_projects = { aw = "acme-web" }\n'
+            'path_projects = { "~/scratch/acme-web-" = "acme-web", '
+            '"/Volumes/scratch/" = "acme" }\n'))
+        self.assertEqual(cfg.harness.role_projects, {"aw": "acme-web"})
+        self.assertEqual(cfg.harness.path_projects, {
+            str(Path.home() / "scratch/acme-web-"): "acme-web",
+            "/Volumes/scratch/": "acme"})
+
+    def test_rejects_bad_harness_project_tables(self):
+        for key in ("role_projects", "path_projects"):
+            for value in ('[]', '"acme-web"', '1', 'true',
+                          '{ "/scratch/" = 1 }', '{ "/scratch/" = false }',
+                          '{ "/scratch/" = [] }', '{ "/scratch/" = {} }',
+                          '{ "/scratch/" = "" }', '{ "/scratch/" = "  " }'):
+                with self.subTest(key=key, value=value):
+                    with self.assertRaisesRegex(
+                            config.ConfigError, rf"^adapters\.tachiko_harness\.{key}:"):
+                        config.load(self.write(f'[adapters.tachiko_harness]\n{key} = {value}\n'))
+
+    def test_rejects_relative_harness_path_prefix(self):
+        with self.assertRaisesRegex(config.ConfigError,
+                                    r"^adapters\.tachiko_harness\.path_projects:"):
+            config.load(self.write('[adapters.tachiko_harness]\n'
+                                   'path_projects = { "scratch/" = "acme-web" }\n'))
 
     def test_ui_values_are_read(self):
         cfg = config.load(self.write('[ui]\nviewer_roles = ["owner", "lead"]\n'

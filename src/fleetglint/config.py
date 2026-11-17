@@ -26,6 +26,8 @@ def expand(path):
 class HarnessAdapterConfig:
     enabled: str = "auto"  # auto | true | false
     state_dir: Path = field(default_factory=lambda: expand("~/.local/state"))
+    role_projects: dict[str, str] = field(default_factory=dict)
+    path_projects: dict[str, str] = field(default_factory=dict)
 
 
 def _env_dir(env, sub, fallback):
@@ -141,4 +143,17 @@ def load(path=None):
         target.enabled = enabled
         if dir_key in table:
             setattr(target, dir_key, expand(_get(table, dir_key, str, "")))
+        if name == "tachiko_harness":
+            for key in ("role_projects", "path_projects"):
+                value = table.get(key, {})
+                label = f"adapters.{name}.{key}"
+                if not isinstance(value, dict) or any(
+                        not isinstance(prefix, str) or not isinstance(project, str)
+                        or not project.strip() for prefix, project in value.items()):
+                    raise ConfigError(f"{label}: expected a table of strings to non-empty strings")
+                if key == "path_projects":
+                    value = {os.path.expanduser(prefix): project for prefix, project in value.items()}
+                    if any(not os.path.isabs(prefix) for prefix in value):
+                        raise ConfigError(f"{label}: expected absolute path prefixes")
+                setattr(target, key, value)
     return cfg

@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from fleetglint.adapters import harness
-from fleetglint import liveness, schema
+from fleetglint import config, doctor, ingest, liveness, schema
 
 FIXTURES = Path(__file__).parent / "fixtures" / "harness" / "state"
 JST = timezone(timedelta(hours=9))
@@ -152,6 +152,81 @@ class HarnessAdapterTest(unittest.TestCase):
     def setUp(self):
         self.adapter = harness.HarnessAdapter(FIXTURES, hostname="fixture-host")
         self.result = self.adapter.scan(NOW)
+
+    def test_configured_role_projects_reach_ingest_and_doctor(self):
+        for decision_log in (False, True):
+            with self.subTest(decision_log=decision_log), tempfile.TemporaryDirectory() as tmp:
+                state = make_state(tmp)
+                roles = ("aw-lead", "aw-art-director", "acme-web-art-director")
+                (state / "lead-inbox").mkdir()
+                for role in roles:
+                    (state / f"lead-inbox/{role}.tsv").write_text(
+                        f"{role}\t2026-11-05 06:10 JST\tjob\tunknown\tdone\tx\n")
+                (state / "owner-notify").mkdir()
+                (state / "owner-notify/log.tsv").write_text(
+                    "2026-11-05 06:10 JST\tnotice\taw-art-director\tsent\tx\n")
+                if decision_log:
+                    (state / "lead-decision").mkdir()
+                    (state / "lead-decision/log.tsv").write_text(
+                        "2026-11-05 06:10 JST\taw-lead\t\t\t-\t-\tx\n"
+                        "2026-11-05 06:11 JST\taw-art-lead\taw-art\towner/legacy-web\t-\t-\tx\n")
+                path = Path(tmp) / "config.toml"
+                path.write_text('[adapters.tachiko_harness]\n'
+                                f'state_dir = "{state}"\nrole_projects = {{ aw = "acme-web" }}\n'
+                                '[adapters.claude_code]\nenabled = false\n'
+                                '[adapters.codex]\nenabled = false\n')
+                cfg = config.load(path)
+                adapters = (ingest.default_adapters(cfg)[0], doctor._adapter_specs(cfg)[0][3])
+                for adapter in adapters:
+                    records = by_id(adapter.scan(NOW).records)
+                    for item_id in (*roles, "owner-notify.notice"):
+                        self.assertEqual(records[item_id]["project"], "acme-web")
+                    if decision_log:
+                        self.assertEqual(records["decision.1"]["project"], "acme-web")
+                        self.assertEqual(records["decision.2"]["project"], "legacy-web")
+
+    def test_most_specific_configured_role_prefix_wins(self):
+        adapter = harness.HarnessAdapter(FIXTURES, role_projects={
+            "aw": "acme-web", "aw-art": "acme-art"})
+        self.assertEqual(adapter._role_project_for(
+            "aw-art-director", {"aw-art": "legacy-web"}, {"aw-art"}), "acme-art")
+
+    def test_job_project_file_and_configured_path_prefixes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            removed = Path(tmp) / "deleted-cwd"
+            removed.mkdir()
+            removed.rmdir()
+            cases = (
+                (str(removed), " acme-web \n", "acme-web"),
+                ("/Volumes/scratch/acme-web-1117", "explicit-web\n", "explicit-web"),
+                (None, "acme-web\n", "acme-web"),
+                (None, "p" * 201 + "\n", "p" * 200),
+                ("/Volumes/scratch/acme-web-1117", None, "acme-web"),
+                ("/Volumes/scratch/other", None, "acme"),
+                ("/gone/unmapped-web", None, "unmapped-web"),
+                ("/Volumes/scratch/acme-web-1117", " \n", "acme-web"),
+                (str(Path.home() / "scratch/acme-web-1117"), None, "acme-web"),
+            )
+            for i, (cwd, project, _) in enumerate(cases):
+                directory = write_job(state, f"job-{i}", ["true"])
+                if cwd is not None:
+                    (directory / "cwd").write_text(cwd + "\n")
+                if project is not None:
+                    (directory / "project").write_text(project)
+            path = Path(tmp) / "config.toml"
+            path.write_text('[adapters.tachiko_harness]\n'
+                            f'state_dir = "{state}"\n'
+                            'path_projects = { "/Volumes/scratch/" = "acme", '
+                            '"/Volumes/scratch/acme-web-" = "acme-web", '
+                            '"~/scratch/acme-web-" = "acme-web" }\n'
+                            '[adapters.claude_code]\nenabled = false\n'
+                            '[adapters.codex]\nenabled = false\n')
+            adapter = ingest.default_adapters(config.load(path))[0]
+            records = by_id(adapter.scan(NOW).records)
+            for i, (_, _, expected) in enumerate(cases):
+                with self.subTest(job=i):
+                    self.assertEqual(records[f"job-{i}"]["project"], expected)
 
     def test_decisions_titles_and_notification_projects(self):
         with tempfile.TemporaryDirectory() as tmp:

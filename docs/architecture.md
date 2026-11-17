@@ -437,13 +437,23 @@ automatically when `<state_dir>/worker-ledger/runs.tsv` exists. Sources
   needed to keep pids unique over time. `process = {host, pid,
   start_time}` for live ones so §8.2 checks liveness. Model, project,
   worker, lead pane, log path from the columns.
-- `job-run/<name>/` (`cmd`, `cwd`, `log`, `pid`, `result.json`) → `job`
+- `job-run/<name>/` (`cmd`, `cwd`, `project`, `log`, `pid`, `result.json`) → `job`
   records; `command_summary` = first word of `cmd` + at most the next two
-  arguments, never the full argv.
+  arguments, never the full argv. The optional `project` file is the producer
+  contract written by harness's `job-run`: one line containing the project name,
+  stripped and clipped to 200 characters. It wins even if the cwd was deleted.
+  Otherwise the longest configured `path_projects` prefix matching `cwd` wins,
+  using plain string `startswith` (including name prefixes such as
+  `/Volumes/scratch/acme-web-`); unmatched paths use the existing path inference.
 - `ci-watch/runs.tsv` → GitHub Actions jobs, including all repositories in the poll.
 - `orb-test/` → jobs identified by PID and process start time; live entries are
   emitted only when `runs.tsv` exists, and recent finish rows override live entries.
-- Role-based project inference removes the last hyphen segment.
+- Role-based project inference removes the last hyphen segment. Configured
+  `role_projects` prefixes win over decision-log aliases and known prefixes;
+  the most specific configured prefix wins. Configured project names also count
+  as known prefixes, so `aw-lead` and `acme-web-art-director` can both resolve to
+  `acme-web`. Decision rows without an explicit project/repo use this mapping;
+  explicit project/repo fields retain their existing precedence.
 - `lead-wait/<role>/<job id>` markers → `job` records of kind `wait` with
   `role_id = <role>`.
 - `lead-inbox/<role>.tsv` → `inbox_item` records (`id`, `time` →
@@ -528,6 +538,8 @@ max_tail_kib = 64
 [adapters.tachiko_harness]
 enabled = "auto"           # auto | true | false
 state_dir = "~/.local/state"
+role_projects = { aw = "acme-web" }
+path_projects = { "/Volumes/scratch/acme-web-" = "acme-web" }
 
 [adapters.claude_code]
 enabled = "auto"           # auto = on when the projects dir exists
@@ -541,6 +553,10 @@ dir = "~/.codex"           # $CODEX_HOME when set
 Paths follow XDG on every platform (spec §6.2): state
 `$XDG_STATE_HOME/fleetglint/` (`sources/`, `fleetglint.sqlite`), config
 `$XDG_CONFIG_HOME/fleetglint/`.
+
+Harness `role_projects` and `path_projects` default to empty tables. Both map
+string prefixes to non-empty project names. Path prefixes must be absolute after
+`~` expansion; trailing separators and name prefixes are preserved as written.
 
 ## 8. CLI
 

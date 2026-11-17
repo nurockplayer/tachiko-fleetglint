@@ -946,7 +946,9 @@ def default_adapters(cfg):
     from fleetglint.adapters.harness import HarnessAdapter
 
     candidates = (
-        (cfg.harness.enabled, lambda: HarnessAdapter(cfg.harness.state_dir)),
+        (cfg.harness.enabled, lambda: HarnessAdapter(
+            cfg.harness.state_dir, role_projects=cfg.harness.role_projects,
+            path_projects=cfg.harness.path_projects)),
         (cfg.claude_code.enabled, lambda: ClaudeCodeAdapter(cfg.claude_code.dir)),
         (cfg.codex.enabled, lambda: CodexAdapter(cfg.codex.dir)),
     )
