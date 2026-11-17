@@ -183,6 +183,33 @@ class HarnessAdapterTest(unittest.TestCase):
             self.assertEqual(notices["first"]["project"], "b")
             self.assertNotIn("project", notices["second"])
 
+    def test_decision_placeholder_repos_keep_named_project_without_aliases(self):
+        for repo in ("(local, no remote)", "owner/repo name", "local", "owner/repo/extra",
+                     "https://github.com/owner/repo"):
+            with self.subTest(repo=repo), tempfile.TemporaryDirectory() as tmp:
+                state = make_state(tmp)
+                (state / "lead-decision").mkdir()
+                (state / "lead-decision/log.tsv").write_text(
+                    f"2026-11-05 06:10 JST\tsample-media-lead\tsample-media\t{repo}\t12\t-\tkeep\n"
+                    "2026-11-05 06:11 JST\twidget-lead\tlegacy-widget\towner/widget\t34\t-\tship\n"
+                    "2026-11-05 06:12 JST\twidget-lead\tlegacy-widget\t-\t-\t-\tkeep\n")
+                (state / "lead-inbox").mkdir()
+                (state / "lead-inbox/sample-media-art-director.tsv").write_text(
+                    "inbox\t2026-11-05 06:10 JST\tjob\tunknown\tdone\tx\n")
+                adapter = harness.HarnessAdapter(state)
+                decisions, aliases, named = adapter._scan_decisions(harness._Stats())
+                self.assertEqual(decisions[0]["project"], "sample-media")
+                self.assertNotIn("links", decisions[0])
+                self.assertIn("sample-media", named)
+                self.assertNotIn("sample-media", aliases)
+                self.assertEqual(decisions[1]["project"], "widget")
+                self.assertEqual(decisions[1]["links"], [
+                    {"label": "issue", "url": "https://github.com/owner/widget/issues/34"}])
+                self.assertEqual(decisions[2]["project"], "widget")
+                self.assertEqual(aliases["legacy-widget"], "widget")
+                records = by_id(adapter.scan(NOW).records)
+                self.assertEqual(records["inbox"]["project"], "sample-media")
+
     def test_decision_aliases_for_inbox_and_notifications(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = make_state(tmp)

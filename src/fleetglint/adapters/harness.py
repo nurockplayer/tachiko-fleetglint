@@ -62,6 +62,11 @@ def _clean(value):
     return value if value and value != "-" else None
 
 
+def _repo_slug(value):
+    """A repository column is usable only as an owner/name slug."""
+    return value if value and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value) else None
+
+
 def _iso(moment):
     return moment.isoformat(timespec="seconds")
 
@@ -1131,7 +1136,8 @@ class HarnessAdapter:
             if len(fields) < 7 or not _parse_harness_time(fields[0]) or not _clean(fields[1]):
                 continue
             role, project, repo = fields[1:4]
-            if not _clean(repo):
+            repo = _repo_slug(repo)
+            if not repo:
                 continue
             name = os.path.basename(repo.rstrip("/"))
             for key in {_clean(project), self._role_project(role)} - {None, ""}:
@@ -1148,6 +1154,7 @@ class HarnessAdapter:
                 stats.malformed += 1
                 continue
             when, role, project, repo, ref, url, decision_text = fields[:7]
+            repo = _repo_slug(repo)
             moment = _parse_harness_time(when)
             if moment is None or not _clean(role):
                 stats.malformed += 1
@@ -1155,16 +1162,16 @@ class HarnessAdapter:
             record = self._base("decision", f"decision.{number}", _iso(moment))
             record.update(role_id=_clip(role.strip(), 200), text=_clip(decision_text, 1000), decided_at=_iso(moment))
             key = _clean(project) or self._role_project(role)
-            project = os.path.basename(repo.rstrip("/")) if _clean(repo) else aliases.get(key, key)
+            project = os.path.basename(repo) if repo else aliases.get(key, key)
             if project:
                 record["project"] = _clip(project, 200)
                 # A project guessed from the role alone must not become a known prefix.
-                if _clean(repo) or _clean(fields[2]) or key in aliases:
+                if repo or _clean(fields[2]) or key in aliases:
                     named.add(record["project"])
             links = []
             if url.startswith(("http://", "https://")):
                 links.append({"label": "decision", "url": url[:2000]})
-            if ref.isdigit() and _clean(repo):
+            if ref.isdigit() and repo:
                 links.append({"label": "issue", "url": f"https://github.com/{repo}/issues/{ref}"})
             if links:
                 record["links"] = links
