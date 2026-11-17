@@ -186,7 +186,7 @@ The viewer's first screen: a small answer organised by what the viewer asks,
 instead of one list per record type. Same safety, ETag and redaction rules as
 §4.5; the empty-database response has the same shape with empty lists and
 zeros. `[ui]` settings: `viewer_roles` (default `["owner"]`),
-`needs_you_hours` (24) and `inbox_old_after_s` (14400).
+`needs_you_hours` (24), `unowned_failure_hours` (4) and `inbox_old_after_s` (14400).
 
 ```json
 {
@@ -219,7 +219,18 @@ false when the store has no run/job (resp. inbox) row at all, so the UI can
 say "not observable" instead of 0. Lists are capped at 200 (exceptions 50
 each, `recent` 20, `sessions` 30); counts reflect the full set.
 
-Each run or job lands in exactly one place, in this order; `older` means
+Project cards also show in-window failed/stale/lost/unknown work in
+`needs_you` unless superseded by a later success on the same work line
+(detached jobs match cwd, role, kind, title and command; the existing GitHub
+Actions rule also supersedes failures with any newer state on that line).
+A failed run or job without a `role_id` also leaves project `needs_you` when
+its `updated_ts` is strictly older than `now - unowned_failure_hours * 3600`.
+It stays in project `recent.failed` within the window. Every project
+`recent.failed` item has `unresolved: true` unless superseded; done items
+omit the field. Age alone does not resolve a failure. Stale/lost/unknown
+work and the inbox rules below are unchanged.
+
+Outside the project cards, each run or job lands in exactly one place, in this order; `older` means
 `updated_ts` before `now - window_hours`.
 
 1. An open inbox item with `action_required` and a `role_id` in
@@ -514,6 +525,7 @@ window_hours = 24
 [ui]
 viewer_roles = ["owner"]   # inbox items for these roles are "You were notified"
 needs_you_hours = 24
+unowned_failure_hours = 4
 inbox_old_after_s = 14400
 
 [retention]

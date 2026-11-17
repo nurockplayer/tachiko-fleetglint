@@ -936,16 +936,21 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
                     else key is not None and done_lines.get(key, row["updated_ts"]) > row["updated_ts"])
                 oracle_dot_ci = (kind == "run" and state == "unknown" and record.get("agent") == "oracle"
                     and (record.get("title") == "dot-ci" or record.get("worker") == "dot-ci"))
+                old_unowned_failure = (state == "failed" and not record.get("role_id")
+                    and row["updated_ts"] < now.timestamp() - cfg.unowned_failure_hours * 3600)
                 if (state in ("stale", "lost", "failed", "unknown")
                         and row["updated_ts"] >= window_start
-                        and not superseded and not oracle_dot_ci):
+                        and not superseded and not oracle_dot_ci and not old_unowned_failure):
                     reason = (record.get("summary") or (f"exit {record['exit_code']}" if record.get("exit_code") is not None else "failed")) if state == "failed" else "unverified" if state == "unknown" else state
                     item = _work_item(view, row, reason, now)
                     work_line_keys[id(item)] = (key, record.get("role_id"))
                     g["needs_you"].append(item)
                 if (state in ("done", "failed") and row["updated_ts"] >= window_start
                         and not (record.get("kind") == "github-actions" and record["id"].endswith(".poll"))):
-                    g["recent"][state].append(_work_item(view, row, None, now))
+                    item = _work_item(view, row, None, now)
+                    if state == "failed":
+                        item["unresolved"] = not superseded
+                    g["recent"][state].append(item)
     for g in groups.values():
         repeats = {}
         for item in g["needs_you"]:

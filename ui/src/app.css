@@ -333,6 +333,13 @@ pre,
   overflow-wrap: anywhere;
 }
 
+.row-tag {
+  margin-left: var(--space-8);
+  color: var(--text-meta);
+  font-size: var(--type-meta-size);
+  font-weight: var(--type-meta-weight);
+}
+
 .row-model,
 .row-check,
 .row-what {

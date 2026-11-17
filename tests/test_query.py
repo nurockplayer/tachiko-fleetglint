@@ -857,6 +857,73 @@ class BoardTest(unittest.TestCase):
         self.assertIn("gha-failed", self.by_id(alpha["recent"]["failed"]))
         self.assertIn("job-failed", self.by_id(alpha["recent"]["failed"]))
 
+    def test_project_unowned_failures_age_out_but_stay_unresolved(self):
+        for make in (job, run):
+            with self.subTest(kind=make.__name__):
+                project = make.__name__
+                self.write([
+                    make("old-" + project, state="failed", project=project, title="old", cwd="/work/old",
+                         updated_at=stamp(hours=-5), ended_at=stamp(hours=-5)),
+                    make("fresh-" + project, state="failed", project=project, title="fresh", cwd="/work/fresh",
+                         updated_at=stamp(hours=-1), ended_at=stamp(hours=-1)),
+                    make("owned-" + project, state="failed", project=project, role_id="lead", title="owned", cwd="/work/owned",
+                         updated_at=stamp(hours=-5), ended_at=stamp(hours=-5)),
+                    make("boundary-" + project, state="failed", project=project, title="boundary", cwd="/work/boundary",
+                         updated_at=stamp(hours=-4), ended_at=stamp(hours=-4)),
+                ])
+                card = next(p for p in self.board()["projects"] if p["project"] == project)
+                self.assertEqual(set(self.by_id(card["needs_you"])),
+                                 {"fresh-" + project, "owned-" + project, "boundary-" + project})
+                self.assertEqual(card["needs_you_total"], 3)
+                failed = self.by_id(card["recent"]["failed"])
+                self.assertEqual(set(failed), {prefix + project for prefix in
+                                              ("old-", "fresh-", "owned-", "boundary-")})
+                for item in failed.values():
+                    self.assertIs(item["unresolved"], True)
+
+    def test_project_unowned_failure_hours_from_config(self):
+        path = self.dir / "config.toml"
+        path.write_text('[ui]\nunowned_failure_hours = 1\n')
+        self.cfg.unowned_failure_hours = config.load(path).unowned_failure_hours
+        self.write([job("one-hour-old", state="failed", project="alpha",
+                        updated_at=stamp(hours=-1, seconds=-1), ended_at=stamp(hours=-1))])
+        card = self.board()["projects"][0]
+        self.assertEqual(card["needs_you"], [])
+        self.assertIs(card["recent"]["failed"][0]["unresolved"], True)
+
+    def test_project_detached_job_success_resolves_same_line_failure(self):
+        for hours in (1, 5):
+            with self.subTest(hours=hours):
+                project = f"age-{hours}"
+                self.write([
+                    job("failed-" + project, state="failed", project=project,
+                        cwd="/work/alpha", title="unit tests", command_summary="pnpm test",
+                        updated_at=stamp(hours=-hours), ended_at=stamp(hours=-hours)),
+                    job("done-" + project, state="done", project=project,
+                        cwd="/work/alpha", title="unit tests", command_summary="pnpm test",
+                        updated_at=stamp(minutes=-30), ended_at=stamp(minutes=-30)),
+                ])
+                card = next(p for p in self.board()["projects"] if p["project"] == project)
+                self.assertEqual(card["needs_you"], [])
+                self.assertIs(card["recent"]["failed"][0]["unresolved"], False)
+                self.assertNotIn("unresolved", card["recent"]["done"][0])
+
+    def test_project_old_unowned_non_failures_still_need_you(self):
+        self.write([
+            run("stale", project="alpha", updated_at=stamp(hours=-5), observed_at=stamp(hours=-5)),
+            job("lost", project="alpha", updated_at=stamp(hours=-5),
+                process={"host": "mbp", "pid": 424242}),
+            job("unknown", state="unknown", project="alpha", updated_at=stamp(hours=-5)),
+        ])
+
+        class Dead:
+            def check(self, process):
+                return False
+
+        card = self.board(query.QueryBackend(self.cfg, process_checker=Dead()))["projects"][0]
+        self.assertEqual({item["ref"]["id"]: item["display_state"] for item in card["needs_you"]},
+                         {"stale": "stale", "lost": "lost", "unknown": "unknown"})
+
     def test_project_unknown_oracle_dot_ci_stays_only_in_global_exceptions(self):
         self.write([
             run("dot-ci-title", state="unknown", project="alpha", agent="oracle", title="dot-ci"),

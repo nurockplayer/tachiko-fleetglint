@@ -12,7 +12,7 @@ function RecentRow({ work, now }: { work: BoardWork; now: number }) {
       className="recent-row"
       glyph={<StateBadge state={work.display_state} variant="glyph" />}
     >
-      <span className="row-title">{workTitle(work)}</span>
+      <span className="row-title">{workTitle(work)}{work.unresolved && <span className="row-tag">unresolved</span>}</span>
       {role ? <span className="row-role">{role}</span> : null}
       {age ? <span className="row-age">{age}</span> : null}
     </WorkRow>
