@@ -89,7 +89,8 @@ def _check_paths(cfg, out):
 def _adapter_specs(cfg):
     return (
         ("tachiko-harness", cfg.harness.enabled, cfg.harness.state_dir,
-         HarnessAdapter(cfg.harness.state_dir)),
+         HarnessAdapter(cfg.harness.state_dir, role_projects=cfg.harness.role_projects,
+                        path_projects=cfg.harness.path_projects)),
         ("claude-code", cfg.claude_code.enabled, cfg.claude_code.dir,
          ClaudeCodeAdapter(cfg.claude_code.dir)),
         ("codex-cli", cfg.codex.enabled, cfg.codex.dir, CodexAdapter(cfg.codex.dir)),

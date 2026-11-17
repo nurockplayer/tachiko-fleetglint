@@ -330,11 +330,21 @@ def _lead_wait_summary(wait):
     return _command_summary(wait["wrapped"])
 
 
-def _job_project(directory):
+def _job_project(directory, path_projects=None):
     try:
-        return project_from_path(_text(Path(directory) / "cwd").strip())
+        project = _text(Path(directory) / "project").strip().splitlines()
+        if project:
+            return _clip(project[0].strip(), 200)
+    except OSError:
+        pass
+    try:
+        cwd = _text(Path(directory) / "cwd").strip()
     except OSError:
         return None
+    for prefix in sorted(path_projects or {}, key=len, reverse=True):
+        if cwd.startswith(prefix):
+            return _clip(path_projects[prefix], 200)
+    return project_from_path(cwd)
 
 
 class _Stats:
@@ -362,8 +372,12 @@ class _Stats:
 class HarnessAdapter:
     """Adapter over tachiko-harness state (architecture §6.1)."""
 
-    def __init__(self, cfg_harness_state_dir: Path, hostname: str | None = None):
+    def __init__(self, cfg_harness_state_dir: Path, hostname: str | None = None,
+                 *, role_projects=None, path_projects=None):
         self.state_dir = Path(cfg_harness_state_dir)
+        self.role_projects = dict(role_projects or {})
+        self.path_projects = {os.path.expanduser(prefix): project
+                              for prefix, project in (path_projects or {}).items()}
         self.hostname = hostname or short_hostname()
         self.source_id = f"tachiko-harness@{self.hostname}"
         self.allowed_roots = [self.state_dir / name for name in ROOTS
@@ -747,7 +761,7 @@ class HarnessAdapter:
             record = self._running_job(directory, summary, now, stats)
         if record is None:
             return None
-        project = _job_project(directory)
+        project = _job_project(directory, self.path_projects)
         if project is not None:
             record["project"] = project
         try:
@@ -947,6 +961,11 @@ class HarnessAdapter:
     def _role_project_for(self, role, aliases, known):
         prefix = self._role_project(role)
         while prefix is not None:
+            if prefix in self.role_projects:
+                return self.role_projects[prefix]
+            prefix = self._role_project(prefix)
+        prefix = self._role_project(role)
+        while prefix is not None:
             if prefix in aliases:
                 return aliases[prefix]
             if prefix in known:
@@ -1119,17 +1138,17 @@ class HarnessAdapter:
         return records
 
     def _scan_decisions(self, stats):
+        named = set(self.role_projects.values())
         path = self.state_dir / "lead-decision" / "log.tsv"
         if not path.exists():
-            return [], {}, set()
+            return [], {}, named
         try:
             text = _text(path)
         except OSError:
             stats.unreadable += 1
-            return [], {}, set()
+            return [], {}, named
         records = []
         aliases = {}
-        named = set()
         ambiguous = set()
         for line in text.splitlines():
             fields = line.split("\t")
@@ -1163,6 +1182,8 @@ class HarnessAdapter:
             record.update(role_id=_clip(role.strip(), 200), text=_clip(decision_text, 1000), decided_at=_iso(moment))
             key = _clean(project) or self._role_project(role)
             project = os.path.basename(repo) if repo else aliases.get(key, key)
+            if not repo and not _clean(fields[2]) and self.role_projects:
+                project = self._role_project_for(role, aliases, named)
             if project:
                 record["project"] = _clip(project, 200)
                 # A project guessed from the role alone must not become a known prefix.
