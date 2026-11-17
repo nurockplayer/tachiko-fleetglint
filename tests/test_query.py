@@ -652,6 +652,43 @@ class BoardTest(unittest.TestCase):
 
     # --- shape ------------------------------------------------------------
 
+    def test_board_drops_project_with_only_acknowledged_inbox(self):
+        self.write([inbox("ack", state="acked", project="alpha", acked_at=stamp())])
+        self.assertEqual(self.board()["projects"], [])
+
+    def test_board_drops_project_with_only_hidden_old_running_job(self):
+        self.write([job("old", project="alpha", updated_at=stamp(hours=-30),
+                        started_at=stamp(hours=-31),
+                        process={"host": "mbp", "pid": 424242})])
+
+        class Dead:
+            def check(self, process):
+                return False
+
+        board = self.board(query.QueryBackend(self.cfg, process_checker=Dead()))
+        self.assertEqual(board["projects"], [])
+        self.assertEqual(board["counts"]["older_unverified"], 1)
+
+    def test_board_keeps_projects_with_only_inbox_decision_or_recent_session(self):
+        self.write([
+            inbox("lead-only", project="inbox-only"),
+            inbox("owner-only", project="action-only", role_id="owner", action_required=True),
+            {"v": 1, "type": "decision", "id": "decision-only", "source_id": "work@mbp",
+             "updated_at": stamp(), "role_id": "lead", "project": "decision-only",
+             "text": "ship", "decided_at": stamp()},
+            session("session-only", project="session-only"),
+        ])
+        projects = {p["project"]: p for p in self.board()["projects"]}
+        self.assertEqual(set(projects), {"inbox-only", "action-only", "decision-only", "session-only"})
+        self.assertEqual(projects["inbox-only"]["lead_inbox_open"], 1)
+        self.assertEqual(projects["action-only"]["needs_you"][0]["ref"]["id"], "owner-only")
+        self.assertEqual(projects["decision-only"]["decisions"][0]["ref"]["id"], "decision-only")
+        self.assertEqual(projects["session-only"]["sessions_recent"], 1)
+
+    def test_board_keeps_empty_global_group(self):
+        self.write([inbox("ack", state="acked", acked_at=stamp())])
+        self.assertEqual([p["project"] for p in self.board()["projects"]], [None])
+
     def test_board_prefers_latest_scanned_source(self):
         self.write([job("shared", source_id="harness@old", project="scratchpad",
                         observed_at=stamp())], source_id="harness@old")
@@ -778,9 +815,7 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(set(self.by_id(alpha["needs_you"])), {"gha.o.alpha.poll"})
         self.write([job("gha.o.alpha.poll", state="done", project="alpha", kind="github-actions",
                         command_summary="ci-watch poll", ended_at=stamp())])
-        alpha = next(p for p in self.board()["projects"] if p["project"] == "alpha")
-        self.assertEqual(alpha["needs_you"], [])
-        self.assertEqual(alpha["recent"]["done"], [])
+        self.assertEqual(self.board()["projects"], [])
 
     def test_project_needs_you_gha_lines_keep_owners_apart(self):
         self.write([

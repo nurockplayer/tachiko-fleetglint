@@ -1019,7 +1019,11 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
         g["in_progress"] = g["in_progress"][:BOARD_LIST_LIMIT]
         g["decisions"] = g["decisions"][:10]
         g["recent"] = {key: items[:10] for key, items in g["recent"].items()}
-    return sorted(groups.values(), key=lambda g: (not bool(g["needs_you"]), g["project"] is None and not g["needs_you"], -(_epoch(g["last_activity_at"]) or 0), g["project"] or ""))
+    visible = [g for g in groups.values() if g["project"] is None or any((
+        g["needs_you"], g["in_progress"], g["decisions"],
+        g["recent"]["done"], g["recent"]["failed"],
+        g["lead_inbox_open"], g["sessions_recent"]))]
+    return sorted(visible, key=lambda g: (not bool(g["needs_you"]), g["project"] is None and not g["needs_you"], -(_epoch(g["last_activity_at"]) or 0), g["project"] or ""))
 
 
 def _board_rows(conn):
