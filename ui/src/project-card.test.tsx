@@ -4,6 +4,7 @@ import { board } from "./fixtures/board";
 import { Overview } from "./screens/Overview";
 import { Project } from "./screens/Project";
 import { ProjectCard } from "./components/ProjectCard";
+import { Recent } from "./components/Recent";
 import { parseRoute } from "./router";
 import type { BoardInboxItem } from "./api/types";
 import { formatAbsolute } from "./format";
@@ -20,6 +21,25 @@ const sevenNeedsProject = {
   needs_you_total: 7,
 };
 describe("project board", () => {
+  it.each([true, false, undefined])("marks recent failures only when unresolved is %s", unresolved => {
+    const failed = { ...project.recent.failed[0], unresolved };
+    const { rerender } = render(<ProjectCard project={{ ...project, needs_you: [],
+      recent: { done: project.recent.done, failed: [failed] } }} now={0} />);
+    if (unresolved) {
+      const tag = screen.getByText("unresolved");
+      expect(tag).toHaveClass("row-tag");
+      expect(tag.previousElementSibling).toBe(screen.getByRole("link", { name: failed.title! }));
+    } else {
+      expect(screen.queryByText("unresolved")).toBeNull();
+    }
+    rerender(<Recent board={{ ...board, recent: [failed, ...project.recent.done] }} open onToggle={() => {}} />);
+    expect(screen.queryAllByText("unresolved")).toHaveLength(unresolved ? 1 : 0);
+    if (unresolved) {
+      expect(screen.getByText("unresolved")).toHaveClass("row-tag");
+      expect(screen.getByText("unresolved").parentElement).toHaveClass("row-title");
+    }
+  });
+
   const inbox = { ...board.lead_inbox[0].items[0], role_id: "fleetglint-lead", age_s: 3840 };
   it("shows the inbox ask, recipient and waiting duration with a zoned tooltip", () => {
     render(<ProjectCard project={{ ...project, needs_you: [inbox] }} now={0} />);

@@ -29,18 +29,26 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg.db_path, self.dir / "state/fleetglint/fleetglint.sqlite")
         self.assertEqual(cfg.viewer_roles, ["owner"])
         self.assertEqual(cfg.needs_you_hours, 24)
+        self.assertEqual(cfg.unowned_failure_hours, 4)
         self.assertEqual(cfg.inbox_old_after_s, 14400)
 
     def test_ui_values_are_read(self):
         cfg = config.load(self.write('[ui]\nviewer_roles = ["owner", "lead"]\n'
-                                     'needs_you_hours = 6\ninbox_old_after_s = 60\n'))
+                                     'needs_you_hours = 6\nunowned_failure_hours = 1\ninbox_old_after_s = 60\n'))
         self.assertEqual(cfg.viewer_roles, ["owner", "lead"])
         self.assertEqual(cfg.needs_you_hours, 6)
+        self.assertEqual(cfg.unowned_failure_hours, 1)
         self.assertEqual(cfg.inbox_old_after_s, 60)
 
     def test_rejects_non_string_viewer_roles(self):
         with self.assertRaises(config.ConfigError):
             config.load(self.write('[ui]\nviewer_roles = [1]\n'))
+
+    def test_rejects_wrong_unowned_failure_hours_type(self):
+        for value in ('"1"', '1.5', 'true'):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                    config.ConfigError, 'unowned_failure_hours: expected int'):
+                config.load(self.write(f'[ui]\nunowned_failure_hours = {value}\n'))
 
     def test_values_are_read(self):
         cfg = config.load(self.write('[server]\nport = 9000\n[ingest]\nroots = ["/tmp/a"]\npoll_s = 1\n'

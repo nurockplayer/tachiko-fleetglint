@@ -55,6 +55,7 @@ class Config:
     window_hours: int = 24
     viewer_roles: list[str] = field(default_factory=lambda: ["owner"])
     needs_you_hours: int = 24
+    unowned_failure_hours: int = 4
     inbox_old_after_s: int = 14400
     segment_days: int = 30
     abandon_days: int = 90
@@ -115,6 +116,7 @@ def load(path=None):
     if any(not isinstance(role, str) for role in cfg.viewer_roles):
         raise ConfigError("ui.viewer_roles: expected a list of strings")
     cfg.needs_you_hours = _get(ui, "needs_you_hours", int, cfg.needs_you_hours)
+    cfg.unowned_failure_hours = _get(ui, "unowned_failure_hours", int, cfg.unowned_failure_hours)
     cfg.inbox_old_after_s = _get(ui, "inbox_old_after_s", int, cfg.inbox_old_after_s)
 
     retention = data.get("retention", {})

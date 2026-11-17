@@ -219,6 +219,7 @@ export type BoardWork = (RunSummary | JobSummary) & {
   started_age_s: number | null;
   section_reason: SectionReason | null;
   repeat_count?: number;
+  unresolved?: boolean;
 };
 
 export interface BoardInboxItem extends InboxSummary {
