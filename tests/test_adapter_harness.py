@@ -1022,23 +1022,38 @@ class HarnessAdapterTest(unittest.TestCase):
             poll = by_id(adapter.scan(NOW).records)["gha.nurockplayer.gteki.poll"]
             self.assertEqual((poll["state"], poll["summary"]), ("done", "ci-watch polled this repo"))
             self.assertEqual(poll["updated_at"], poll["ended_at"])
-            job = next(r for r in result.records if r.get("kind") == "orb-test")
+            job = next(r for r in result.records if r.get("kind") == "tachi-run")
             self.assertEqual((job["state"], job["summary"]), ("queued", "waiting for lock"))
             (orb / "active/123").write_text(f"demo\t123\t{start}\t512\ttests\n")
             result = adapter.scan(NOW)
-            jobs = [r for r in result.records if r.get("kind") == "orb-test"]
+            jobs = [r for r in result.records if r.get("kind") == "tachi-run"]
             self.assertEqual(len(jobs), 1)
             self.assertEqual(jobs[0]["state"], "running")
             end = int(NOW.timestamp())
             (orb / "runs.tsv").write_text(f"{end}\t123\t{start}\tdemo\ttests\t1\n"
                                           f"{end}\t124\t{start}\tdemo\tmore tests\t0\n")
             result = adapter.scan(NOW)
-            jobs = [r for r in result.records if r.get("kind") == "orb-test"]
+            jobs = [r for r in result.records if r.get("kind") == "tachi-run"]
             self.assertEqual(sorted((r["state"], r["exit_code"]) for r in jobs), [("done", 0), ("failed", 1)])
             for record in result.records:
                 self.assertEqual(check(record), [])
                 from fleetglint.schema import validate
                 self.assertEqual(validate(record), [])
+
+    def test_tachi_run_state_directories(self):
+        for directories in (("tachi-run",), ("orb-test",), ("orb-test", "tachi-run")):
+            with self.subTest(directories=directories), tempfile.TemporaryDirectory() as tmp:
+                state = make_state(tmp)
+                for name in directories:
+                    root = state / name
+                    (root / "active").mkdir(parents=True)
+                    (root / "runs.tsv").write_text("")
+                    (root / "active/123").write_text(
+                        "demo\t123\tThu Nov  5 02:00:00 2026\t512\ttests\n")
+                records = harness.HarnessAdapter(state, hostname="h").scan(NOW).records
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0]["kind"], "tachi-run")
+                self.assertEqual(records[0]["state"], "running")
 
     def test_ci_poll_latest_row_wins(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1123,7 +1138,7 @@ class HarnessAdapterTest(unittest.TestCase):
                 "demo\t123\tThu Nov  5 02:00:00 2026\t512\tTOKEN=x A=b\n")
             records = harness.HarnessAdapter(state, hostname="h").scan(NOW).records
         self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["command_summary"], "orb-test")
+        self.assertEqual(records[0]["command_summary"], "tachi-run")
         self.assertEqual(schema.validate(records[0]), [])
 
     def test_orb_without_finish_log(self):
@@ -1133,7 +1148,7 @@ class HarnessAdapterTest(unittest.TestCase):
             (state / "orb-test/active/123").write_text("demo\t123\tThu Nov  5 02:00:00 2026\t512\ttests\n")
             result = harness.HarnessAdapter(state, hostname="h").scan(NOW)
         self.assertEqual(result.records, [])
-        self.assertIn("orb-test: no finish log", result.detail)
+        self.assertIn("tachi-run: no finish log", result.detail)
 
     def test_role_project_inference(self):
         for role, project in (("harness-dot-observer", "harness-dot"),

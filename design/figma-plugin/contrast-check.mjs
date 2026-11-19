@@ -9,7 +9,7 @@
  *   - any text role is below 4.5:1 against any surface,
  *   - any provenance label is below 4.5:1.
  *
- * Run: orb-test --memory 1g --cpus 1 -- node design/figma-plugin/contrast-check.mjs
+ * Run: tachi-run --memory 1g --cpus 1 -- node design/figma-plugin/contrast-check.mjs
  */
 
 import { readFileSync } from "node:fs";
