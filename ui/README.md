@@ -20,7 +20,7 @@ pnpm -C ui test --run
 pnpm -C ui build      # writes ../src/fleetglint/web/
 ```
 
-Run them through `orb-test` in this repository, not on the host.
+Run them through `tachi-run` in this repository, not on the host.
 
 ## Fixtures
 

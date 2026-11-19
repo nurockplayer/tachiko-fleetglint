@@ -46,7 +46,7 @@ Edit the `TOKENS` object between the `// TOKENS-START` and `// TOKENS-END`
 markers in `code.js`, then run the contrast check from the repository root:
 
 ```
-orb-test --memory 1g --cpus 1 -- node design/figma-plugin/contrast-check.mjs
+tachi-run --memory 1g --cpus 1 -- node design/figma-plugin/contrast-check.mjs
 ```
 
 It reads the same object, so code and check cannot drift apart.

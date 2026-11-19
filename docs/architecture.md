@@ -602,7 +602,7 @@ times relative to now. Records of a source whose id starts with `demo@` set
 - Python tests use the standard library's `unittest` (no pytest), in
   `tests/`, one file per module (`tests/test_ingest.py`, …), fixtures under
   `tests/fixtures/`. Run: `python3 -m unittest discover -s tests -t .`
-  (locally: `orb-test -- sh -c 'PYTHONPATH=src python3 -m unittest discover -s tests -t .'`).
+  (locally: `tachi-run -- sh -c 'PYTHONPATH=src python3 -m unittest discover -s tests -t .'`).
 - `tests/test_schema_conformance.py` runs `schema.py` over
   `examples/v1/valid` and `invalid`; CI additionally runs
   `scripts/check_examples.py` (jsonschema) so the stdlib validator and the

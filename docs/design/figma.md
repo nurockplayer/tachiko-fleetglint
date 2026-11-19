@@ -185,10 +185,10 @@ discontinuity. The screens are read-only: no buttons that change a workflow.
 
 ## Checks
 
-- `orb-test --memory 1g --cpus 1 -- node design/figma-plugin/contrast-check.mjs`
+- `tachi-run --memory 1g --cpus 1 -- node design/figma-plugin/contrast-check.mjs`
   — reads the token object out of `code.js`, resolves aliases, prints the
   tables above, exits 1 on any failure.
-- `orb-test --memory 1g --cpus 1 -- node --check design/figma-plugin/code.js`
+- `tachi-run --memory 1g --cpus 1 -- node --check design/figma-plugin/code.js`
   — parses the plugin.
 - In Figma: run the plugin, then check the closing summary for warnings and
   each screen against brief §3–§6.
