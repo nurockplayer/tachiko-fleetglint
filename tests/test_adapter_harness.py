@@ -1147,8 +1147,24 @@ class HarnessAdapterTest(unittest.TestCase):
             (state / "orb-test/active").mkdir(parents=True)
             (state / "orb-test/active/123").write_text("demo\t123\tThu Nov  5 02:00:00 2026\t512\ttests\n")
             result = harness.HarnessAdapter(state, hostname="h").scan(NOW)
-        self.assertEqual(result.records, [])
+        self.assertEqual([r["state"] for r in result.records], ["running"])
         self.assertIn("tachi-run: no finish log", result.detail)
+
+    def test_tachi_run_writer_formats(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            root = state / "tachi-run"
+            (root / "waiting").mkdir(parents=True)
+            start = "Thu Nov  5 02:00:00 2026"
+            (root / "waiting/125").write_text(f"demo\t125\t{start}\t512\ttests\t1\tmemory\n")
+            end = int(NOW.timestamp())
+            (root / "runs.tsv").write_text(
+                "ended_epoch\tpid\tpstart\tproject\tlabel\texit_code\tqueued_epoch\tstarted_epoch\theavy\twhere\tpaused_s\n"
+                + f"{end}\t123\t{start}\tdemo\ttests\t0\t{end}\t{end}\t0\tmac\t0\n"
+                + f"{end}\t124\t{start}\tdemo\ttests\t1\t{end}\t{end}\t0\tmac\t0\n")
+            result = harness.HarnessAdapter(state, hostname="h").scan(NOW)
+        self.assertEqual(sorted(r["state"] for r in result.records), ["done", "failed", "queued"])
+        self.assertIsNone(result.detail)
 
     def test_role_project_inference(self):
         for role, project in (("harness-dot-observer", "harness-dot"),

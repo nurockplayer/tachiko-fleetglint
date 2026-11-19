@@ -501,12 +501,13 @@ class HarnessAdapter:
         finish = root / "runs.tsv"
         if not finish.exists():
             stats.orb_no_log = True
-            return []
-        try:
-            lines = _text(finish).splitlines()
-        except OSError:
-            stats.unreadable += 1
-            return []
+            lines = []
+        else:
+            try:
+                lines = _text(finish).splitlines()
+            except OSError:
+                stats.unreadable += 1
+                lines = []
         records = {}
 
         def build(pid, pstart, project, label):
@@ -546,7 +547,7 @@ class HarnessAdapter:
                         if name == "queue" and path.name != f"{int(ticket):06d}.{pid}":
                             raise ValueError
                     else:
-                        if len(fields) != (5 if name == "active" else 6):
+                        if len(fields) not in ((5,) if name == "active" else (6, 7)):
                             raise ValueError
                         project, pid, pstart, memory, label = fields[:5]
                         if path.name != pid or not memory.isdigit() or (name == "waiting" and not fields[5].isdigit()):
@@ -571,10 +572,12 @@ class HarnessAdapter:
                     stats.malformed += 1
         for line in lines:
             fields = line.split("\t")
-            if len(fields) != 6:
+            if fields[0] == "ended_epoch":
+                continue
+            if len(fields) not in (6, 11):
                 stats.malformed += 1
                 continue
-            ended_text, pid, pstart, project, label, exit_text = fields
+            ended_text, pid, pstart, project, label, exit_text = fields[:6]
             ended = _from_epoch(int(ended_text)) if ended_text.isdigit() else None
             record = build(pid, pstart, project, label)
             if ended is None or record is None or (exit_text != "-" and not re.fullmatch(r"-?\d+", exit_text)):
