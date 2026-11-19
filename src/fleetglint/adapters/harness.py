@@ -365,7 +365,7 @@ class _Stats:
         if self.ci_errors:
             parts.append(f"ci-watch errors={self.ci_errors}")
         if self.orb_no_log:
-            parts.append("orb-test: no finish log")
+            parts.append("tachi-run: no finish log")
         return "; ".join(parts) or None
 
 
@@ -488,18 +488,26 @@ class HarnessAdapter:
         return records
 
     def _scan_orb_test(self, now, stats):
-        root = self.state_dir / "orb-test"
+        records = {}
+        # Remove the legacy directory after 2026-12-08.
+        for name in ("orb-test", "tachi-run"):
+            for record in self._scan_test_root(self.state_dir / name, now, stats):
+                records[record["id"]] = record
+        return list(records.values())
+
+    def _scan_test_root(self, root, now, stats):
         if not root.is_dir():
             return []
         finish = root / "runs.tsv"
         if not finish.exists():
             stats.orb_no_log = True
-            return []
-        try:
-            lines = _text(finish).splitlines()
-        except OSError:
-            stats.unreadable += 1
-            return []
+            lines = []
+        else:
+            try:
+                lines = _text(finish).splitlines()
+            except OSError:
+                stats.unreadable += 1
+                lines = []
         records = {}
 
         def build(pid, pstart, project, label):
@@ -508,14 +516,14 @@ class HarnessAdapter:
                 return None
             record_id = f"orb-test.{int(pid)}.{int(started.timestamp())}"
             record = self._base("job", record_id, _iso(now))
-            # orb-test writes '<prefix> :: <command>'; only the prefix is meant to be read.
+            # tachi-run writes '<prefix> :: <command>'; only the prefix is meant to be read.
             label = label.split(" :: ", 1)[0]
             try:
                 argv = shlex.split(label)
             except ValueError:
                 argv = label.split()
-            record.update(kind="orb-test", project=_clip(project, 200),
-                          command_summary=_command_summary(argv) or "orb-test", started_at=_iso(started))
+            record.update(kind="tachi-run", project=_clip(project, 200),
+                          command_summary=_command_summary(argv) or "tachi-run", started_at=_iso(started))
             return record
 
         # Later sources override earlier ones: active beats holder and queue.
@@ -539,7 +547,7 @@ class HarnessAdapter:
                         if name == "queue" and path.name != f"{int(ticket):06d}.{pid}":
                             raise ValueError
                     else:
-                        if len(fields) != (5 if name == "active" else 6):
+                        if len(fields) not in ((5,) if name == "active" else (6, 7)):
                             raise ValueError
                         project, pid, pstart, memory, label = fields[:5]
                         if path.name != pid or not memory.isdigit() or (name == "waiting" and not fields[5].isdigit()):
@@ -564,10 +572,12 @@ class HarnessAdapter:
                     stats.malformed += 1
         for line in lines:
             fields = line.split("\t")
-            if len(fields) != 6:
+            if fields[0] == "ended_epoch":
+                continue
+            if len(fields) not in (6, 10, 11):  # 10 = rows written before paused_s
                 stats.malformed += 1
                 continue
-            ended_text, pid, pstart, project, label, exit_text = fields
+            ended_text, pid, pstart, project, label, exit_text = fields[:6]
             ended = _from_epoch(int(ended_text)) if ended_text.isdigit() else None
             record = build(pid, pstart, project, label)
             if ended is None or record is None or (exit_text != "-" and not re.fullmatch(r"-?\d+", exit_text)):
