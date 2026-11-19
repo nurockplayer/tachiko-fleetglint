@@ -1161,9 +1161,10 @@ class HarnessAdapterTest(unittest.TestCase):
             (root / "runs.tsv").write_text(
                 "ended_epoch\tpid\tpstart\tproject\tlabel\texit_code\tqueued_epoch\tstarted_epoch\theavy\twhere\tpaused_s\n"
                 + f"{end}\t123\t{start}\tdemo\ttests\t0\t{end}\t{end}\t0\tmac\t0\n"
-                + f"{end}\t124\t{start}\tdemo\ttests\t1\t{end}\t{end}\t0\tmac\t0\n")
+                + f"{end}\t124\t{start}\tdemo\ttests\t1\t{end}\t{end}\t0\tmac\t0\n"
+                + f"{end}\t126\t{start}\tdemo\ttests\t0\t{end}\t{end}\t0\tvm\n")
             result = harness.HarnessAdapter(state, hostname="h").scan(NOW)
-        self.assertEqual(sorted(r["state"] for r in result.records), ["done", "failed", "queued"])
+        self.assertEqual(sorted(r["state"] for r in result.records), ["done", "done", "failed", "queued"])
         self.assertIsNone(result.detail)
 
     def test_role_project_inference(self):
