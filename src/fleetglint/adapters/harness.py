@@ -412,7 +412,7 @@ class HarnessAdapter:
                           [(project_from_path(r["cwd"]), r["cwd"]) for r in jobs
                            if r.get("cwd") and project_from_path(r["cwd"])],
                           directory_jobs | {(r["type"], r["id"]) for r in records
-                                            if r["type"] == "run" or r.get("kind") == "tachi-run"})
+                                            if r.get("kind") == "tachi-run"})
 
     def _base(self, record_type, record_id, updated_at):
         return {"v": 1, "type": record_type, "id": record_id,

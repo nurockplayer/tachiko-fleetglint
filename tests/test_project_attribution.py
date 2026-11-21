@@ -100,6 +100,10 @@ class ProjectAttributionTest(unittest.TestCase):
                         continue
                     if record['type'] == 'run':
                         name = list(paths)[int(record['title'].split('-')[1])]
+                        # The saved ledger column cannot distinguish a directory default
+                        # from WORKER_LEDGER_PROJECT's explicit override.
+                        self.assertEqual(record['project'], name)
+                        continue
                     elif record['id'] == '22222222-2222-4222-8222-222222222222':
                         name = 'real-app'
                     elif record['type'] == 'session' or record.get('kind') == 'tachi-run':

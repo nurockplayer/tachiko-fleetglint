@@ -484,15 +484,17 @@ automatically when `<state_dir>/worker-ledger/runs.tsv` exists. Sources
 After scanning adapters, directory evidence is shared across their records. An
 existing cwd supports a project when its repository has a remote or host config
 names the project. Otherwise its directory-derived label is removed and the
-items appear on Global, including matching completed ledger and test-job labels.
+items appear on Global, including matching directory-derived test-job labels.
 Configured path prefixes can supply the canonical project. Verified repositories
 win over unrelated directories with the same name. Missing directories keep the
 producer's saved project so deleted worktrees retain their attribution. Corrections
-apply only to records derived from directory names (sessions, worker-ledger runs,
-local test jobs, and job-run records inferred from cwd). Explicit job-run project
-files, configured path assignments, CI repo slugs, and decision assignments win,
+apply only to records derived from directory names (sessions, local test jobs,
+and job-run records inferred from cwd). Explicit job-run project files,
+configured path assignments, CI repo slugs, and decision assignments win,
 even when their labels match an unrelated scratch directory. Git itself parses
-remote configuration, including repeated keys and Git-specific syntax.
+remote configuration, including repeated keys and Git-specific syntax. Saved
+worker-ledger project columns also retain their assignment: they do not record
+whether it came from a directory or an explicit producer override.
 
 ### 6.2 Claude Code transcripts (`adapters/claude_code.py`)
 
