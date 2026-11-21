@@ -177,6 +177,7 @@ class ClaudeCodeAdapter:
         without_time = 0
         mismatches = 0
         found = []
+        record_paths = {}
         states = {}
         for path, parent in self._candidates():
             try:
@@ -207,7 +208,9 @@ class ClaudeCodeAdapter:
             stem = path.stem
             if parent is None and agg.session_ids and any(s != stem for s in agg.session_ids):
                 mismatches += 1
-            found.append((st.st_mtime_ns, self._record(agg, stem, parent)))
+            record = self._record(agg, stem, parent)
+            record_paths[id(record)] = agg.cwd
+            found.append((st.st_mtime_ns, record))
         self._files = states
         unparseable = sum(state.errors for state in states.values())
         found.sort(key=lambda item: item[0], reverse=True)
@@ -216,7 +219,9 @@ class ClaudeCodeAdapter:
         return ScanResult("ok", _detail(unparseable, unreadable, without_time, mismatches, cut), records,
                           [(_project(state.agg.cwd), state.agg.cwd) for state in states.values()
                            if _project(state.agg.cwd)],
-                          {(r["type"], r["id"]) for r in records if r.get("project")})
+                          {(r["type"], r["id"]) for r in records if r.get("project")},
+                          record_paths={(r["type"], r["id"]): record_paths[id(r)] for r in records
+                                        if record_paths[id(r)] is not None})
 
     def _candidates(self):
         for project in _scandir(self.projects_dir):

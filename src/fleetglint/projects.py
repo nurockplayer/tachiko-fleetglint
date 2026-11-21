@@ -1,7 +1,7 @@
 """Resolve a working directory to its project name."""
 import os
 import re
-import subprocess
+import shlex
 from pathlib import Path
 
 
@@ -10,14 +10,21 @@ def _clip(value, limit):
 
 
 def _has_remote(git_dir):
-    result = subprocess.run(
-        ["git", "config", "--file", str(git_dir / "config"), "--includes",
-         "--name-only", "--get-regexp", r"^remote\..*\.url$"],
-        capture_output=True, text=True)
-    if result.returncode == 1:
-        return False
-    result.check_returncode()
-    return bool(result.stdout.strip())
+    remote = False
+    for line in (git_dir / "config").read_text(encoding="utf-8", errors="replace").replace("\\\n", "").splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            remote = bool(re.match(r'^\[\s*remote\s+"(?:\\.|[^"\\])+"\s*\]', line, re.I))
+        elif remote:
+            match = re.match(r"url\s*=\s*(.*)", line, re.I)
+            if match:
+                value = shlex.shlex(match[1], posix=True)
+                value.whitespace_split = True
+                value.commenters = "#;"
+                if "".join(value).strip():
+                    return True
+    return False
+
 
 
 def _git_repo_name(path, *, require_remote=False):
@@ -61,23 +68,27 @@ def directory_attributions(project_paths, *, role_projects, path_projects):
     configured = set(role_projects.values()) | set(path_projects.values())
     prefixes = {os.path.expanduser(prefix): name for prefix, name in path_projects.items()}
     candidates = {}
-    repo_labels = set()
+    repo_paths = set()
+    path_attributions = {}
     for project, path in set(project_paths):
+        if not Path(path).is_dir():
+            continue
         if _git_repo_name(path) == project:
-            repo_labels.add(project)
-        if project in configured or not Path(path).is_dir():
+            repo_paths.add((project, path))
+        if project in configured:
             continue
         resolved = next((prefixes[prefix] for prefix in sorted(prefixes, key=len, reverse=True)
                          if path.startswith(prefix)), None)
         if resolved is None:
             resolved = _git_repo_name(path, require_remote=True)
+        path_attributions[project, path] = resolved
         candidates.setdefault(project, set()).add(resolved)
     attributions = {}
     for project, values in candidates.items():
         values.discard(None)
         attributions[project] = project if project in values else (
             values.pop() if len(values) == 1 else None)
-    return attributions, repo_labels
+    return attributions, repo_paths, path_attributions
 
 
 def _review_repo_name(path):

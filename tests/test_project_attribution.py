@@ -1,8 +1,10 @@
 """Real producer shapes: directory labels shared by jobs, ledgers and sessions."""
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from fleetglint import config, ingest, store
 from tests.test_adapter_harness import LEDGER_HEADER, NOW, make_state, write_job
@@ -44,8 +46,12 @@ class ProjectAttributionTest(unittest.TestCase):
                     if name != "review-20261101":
                         (directory / "project").write_text(name + '\n')
             # Explicit project files win both inside another repo and without a remote.
+            build = root / 'build'
+            build.mkdir()
             for job_id, cwd in (("frontend-in-tools", paths["real-app"]),
-                                ("frontend-local", paths["ops-data"])):
+                                ("frontend-local", paths["ops-data"]),
+                                ("frontend-build", build),
+                                ("frontend-deleted", root / 'gone/frontend')):
                 directory = write_job(state, job_id, ["true"])
                 (directory / "cwd").write_text(str(cwd) + '\n')
                 (directory / "project").write_text('frontend\n')
@@ -84,21 +90,37 @@ class ProjectAttributionTest(unittest.TestCase):
                 'timestamp': '2026-11-05T06:00:00+09:00', 'type': 'session_meta',
                 'payload': {'id': '33333333-3333-4333-8333-333333333333',
                             'cwd': str(frontend)}}) + '\n')
+            (sessions / 'rollout-deleted.jsonl').write_text(json.dumps({
+                'timestamp': '2026-11-05T06:00:00+09:00', 'type': 'session_meta',
+                'payload': {'id': '44444444-4444-4444-8444-444444444444',
+                            'cwd': str(root / 'gone/frontend')}}) + '\n')
+            claude = root / 'claude/synthetic'
+            claude.mkdir(parents=True)
+            (claude / '55555555-5555-4555-8555-555555555555.jsonl').write_text(json.dumps({
+                'type': 'user', 'timestamp': '2026-11-05T06:00:00+09:00',
+                'sessionId': '55555555-5555-4555-8555-555555555555',
+                'cwd': str(root / 'gone/frontend')}) + '\n')
             cfg = config.Config()
             cfg.harness.state_dir = state
             cfg.harness.role_projects = {'local': 'configured-app'}
             cfg.harness.path_projects = {str(paths['mapped-20261101']): 'configured-app'}
-            cfg.claude_code.enabled = 'false'
+            cfg.claude_code.dir = root / 'claude'
             cfg.codex.dir = root / 'codex'
             cfg.db_path = root / 'board.sqlite'
             conn = store.open_db(cfg.db_path)
             try:
                 ingestor = ingest.Ingestor(conn, cfg, adapters=ingest.default_adapters(cfg),
                                            clock=lambda: NOW)
-                ingestor.scan_adapters()
+                # Runtime attribution must work with no Git executable available.
+                with mock.patch.dict(os.environ, {'PATH': ''}):
+                    ingestor.scan_adapters()
                 records = [json.loads(row[0]) for row in conn.execute('SELECT json FROM records')]
-                self.assertEqual(len(records), 2 * len(paths) + 8)
+                self.assertEqual(len(records), 2 * len(paths) + 12)
                 for record in records:
+                    if record['id'] in {'44444444-4444-4444-8444-444444444444',
+                                        '55555555-5555-4555-8555-555555555555'}:
+                        self.assertEqual(record['project'], 'frontend')
+                        continue
                     if record.get('title') == 'override':
                         self.assertEqual(record['project'], 'design-system')
                         continue
@@ -119,7 +141,8 @@ class ProjectAttributionTest(unittest.TestCase):
                             self.assertEqual(record['project'], name)
                             continue
                     elif record['id'] == '22222222-2222-4222-8222-222222222222':
-                        name = 'real-app'
+                        self.assertNotIn('project', record)
+                        continue
                     elif record['type'] == 'session' or record.get('kind') == 'tachi-run':
                         name = 'taskbox'
                     else:

@@ -491,13 +491,15 @@ producer's saved project so deleted worktrees retain their attribution. Correcti
 apply only to records derived from directory names (sessions, local test jobs,
 and job-run records inferred from cwd). A job-run project file or worker-ledger
 label also counts as directory-derived when it equals the main-repo basename of
-an evidenced directory under that label, using its own cwd or cross-producer
-directory evidence. A label differing from its cwd's main-repo basename remains
-an explicit assignment. Configured assignments, CI repo slugs, and decisions
+an evidenced directory under that label. A record with a cwd is judged only by
+that directory; a missing cwd preserves its saved project. A saved assignment
+whose cwd is not a repo or has a differing main-repo basename remains explicit.
+Cross-producer evidence applies only to records without a cwd, such as completed
+worker-ledger rows. Configured assignments, CI repo slugs, and decisions
 retain their precedence even when a scratch directory shares the label. To keep
 a local-only repository as a card, add its directory to `path_projects`.
-Git itself parses remote configuration, including repeated keys and Git-specific
-syntax.
+Remote detection reads a quoted remote section with a non-empty `url` directly
+from the config file, tolerates repeated keys, and does not require a Git binary.
 
 ### 6.2 Claude Code transcripts (`adapters/claude_code.py`)
 

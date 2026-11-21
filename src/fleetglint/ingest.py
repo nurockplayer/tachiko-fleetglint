@@ -16,7 +16,7 @@ from pathlib import Path
 
 from fleetglint import config, store
 from fleetglint.demo import SOURCE_ID as DEMO_SOURCE_ID
-from fleetglint.projects import _git_repo_name, directory_attributions
+from fleetglint.projects import directory_attributions
 
 _SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._-]*)?$")
 _SEGMENT_RE = re.compile(r"^(\d{10})\.ndjson(\.gz)?$")
@@ -422,23 +422,29 @@ class Ingestor:
                 self._set_adapter_state(source_id, "unavailable", result.detail or "adapter unavailable")
                 continue
             scans.append((adapter, result, now))
-        attributions, repo_labels = directory_attributions(
+        attributions, repo_paths, path_attributions = directory_attributions(
             [pair for _, result, _ in scans for pair in result.project_paths],
             role_projects=self.cfg.harness.role_projects,
             path_projects=self.cfg.harness.path_projects)
+        repo_labels = {project for project, _ in repo_paths}
         for adapter, result, now in scans:
             for record in result.records:
                 project = record.get("project")
                 key = (record["type"], record["id"])
-                repo_derived = key in result.repo_records and project in repo_labels
-                if repo_derived and record.get("cwd"):
-                    own_repo = _git_repo_name(record["cwd"])
-                    repo_derived = own_repo is None or own_repo == project
-                if (key in result.directory_records or repo_derived) and project in attributions:
-                    if attributions[project] is None:
+                cwd = record.get("cwd", result.record_paths.get(key))
+                if cwd is not None:
+                    derived = key in result.directory_records or (
+                        key in result.repo_records and (project, cwd) in repo_paths)
+                    resolved = path_attributions.get((project, cwd), project)
+                else:
+                    derived = key in result.directory_records or (
+                        key in result.repo_records and project in repo_labels)
+                    resolved = attributions.get(project, project)
+                if derived and resolved != project:
+                    if resolved is None:
                         record.pop("project")
                     else:
-                        record["project"] = attributions[project]
+                        record["project"] = resolved
             self._apply_adapter_scan(adapter, result, now)
 
     def _set_adapter_state(self, source_id, status, detail):
