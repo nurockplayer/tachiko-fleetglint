@@ -429,7 +429,7 @@ class Ingestor:
         for adapter, result, now in scans:
             for record in result.records:
                 project = record.get("project")
-                if project in attributions:
+                if (record["type"], record["id"]) in result.directory_records and project in attributions:
                     if attributions[project] is None:
                         record.pop("project")
                     else:

@@ -487,7 +487,12 @@ names the project. Otherwise its directory-derived label is removed and the
 items appear on Global, including matching completed ledger and test-job labels.
 Configured path prefixes can supply the canonical project. Verified repositories
 win over unrelated directories with the same name. Missing directories keep the
-producer's saved project so deleted worktrees retain their attribution.
+producer's saved project so deleted worktrees retain their attribution. Corrections
+apply only to records derived from directory names (sessions, worker-ledger runs,
+local test jobs, and job-run records inferred from cwd). Explicit job-run project
+files, configured path assignments, CI repo slugs, and decision assignments win,
+even when their labels match an unrelated scratch directory. Git itself parses
+remote configuration, including repeated keys and Git-specific syntax.
 
 ### 6.2 Claude Code transcripts (`adapters/claude_code.py`)
 

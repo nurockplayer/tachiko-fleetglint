@@ -1,12 +1,23 @@
 """Resolve a working directory to its project name."""
-import configparser
 import os
 import re
+import subprocess
 from pathlib import Path
 
 
 def _clip(value, limit):
     return value[:limit] if len(value) > limit else value
+
+
+def _has_remote(git_dir):
+    result = subprocess.run(
+        ["git", "config", "--file", str(git_dir / "config"), "--includes",
+         "--name-only", "--get-regexp", r"^remote\..*\.url$"],
+        capture_output=True, text=True)
+    if result.returncode == 1:
+        return False
+    result.check_returncode()
+    return bool(result.stdout.strip())
 
 
 def _git_repo_name(path, *, require_remote=False):
@@ -21,24 +32,16 @@ def _git_repo_name(path, *, require_remote=False):
                 return None
             entry = directory / ".git"
             if entry.is_dir():
-                if require_remote:
-                    config = configparser.ConfigParser(interpolation=None)
-                    config.read(entry / "config")
-                    if not any(section.startswith('remote "') and config.get(section, "url", fallback="")
-                               for section in config.sections()):
-                        continue
+                if require_remote and not _has_remote(entry):
+                    continue
                 return directory.name
             if entry.is_file():
                 with entry.open(encoding="utf-8", errors="replace") as handle:
                     line = handle.read(4096).strip()
                 if line.startswith("gitdir:") and "/worktrees/" in line:
                     common = line[len("gitdir:"):].strip().rsplit("/worktrees/", 1)[0]
-                    if require_remote:
-                        config = configparser.ConfigParser(interpolation=None)
-                        config.read(directory / common / "config")
-                        if not any(section.startswith('remote "') and config.get(section, "url", fallback="")
-                                   for section in config.sections()):
-                            continue
+                    if require_remote and not _has_remote(directory / common):
+                        continue
                     if common.endswith("/.git"):
                         common = common[:-len("/.git")]
                     return os.path.basename(common.removesuffix(".git").rstrip("/"))

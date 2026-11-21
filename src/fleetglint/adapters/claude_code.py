@@ -215,7 +215,8 @@ class ClaudeCodeAdapter:
         records = [record for _, record in found[:_MAX_SESSIONS]]
         return ScanResult("ok", _detail(unparseable, unreadable, without_time, mismatches, cut), records,
                           [(_project(state.agg.cwd), state.agg.cwd) for state in states.values()
-                           if _project(state.agg.cwd)])
+                           if _project(state.agg.cwd)],
+                          {(r["type"], r["id"]) for r in records if r.get("project")})
 
     def _candidates(self):
         for project in _scandir(self.projects_dir):

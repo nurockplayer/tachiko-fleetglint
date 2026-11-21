@@ -23,7 +23,9 @@ class ProjectAttributionTest(unittest.TestCase):
                     (path / ".git").mkdir()
                     (path / ".git/config").write_text('[core]\n\tbare = false\n')
             (paths["real-app"] / ".git/config").write_text(
-                '[remote "origin"]\n\turl = https://example.org/team/real-app.git\n')
+                '[remote "origin"]\n\turl = https://example.org/team/real-app.git\n'
+                '\tfetch = +refs/heads/*:refs/remotes/origin/*\n'
+                '\tfetch = +refs/notes/*:refs/notes/*\n\tpromisor\n')
             paths["deleted-app"] = root / "deleted-app"
             expected = {name: None for name in paths}
             expected.update({"real-app": "real-app", "configured-app": "configured-app",
@@ -41,6 +43,20 @@ class ProjectAttributionTest(unittest.TestCase):
                     (directory / "cwd").write_text(str(path) + '\n')
                     if name != "review-20261101":
                         (directory / "project").write_text(name + '\n')
+            # Explicit project files win both inside another repo and without a remote.
+            for job_id, cwd in (("frontend-in-tools", paths["real-app"]),
+                                ("frontend-local", paths["ops-data"])):
+                directory = write_job(state, job_id, ["true"])
+                (directory / "cwd").write_text(str(cwd) + '\n')
+                (directory / "project").write_text('frontend\n')
+            # A CI repo slug is explicit even when a scratch directory shares its name.
+            ci = state / 'ci-watch'
+            ci.mkdir()
+            (ci / 'runs.tsv').write_text('header\n' + '\t'.join([
+                '2026-11-05T06:01:00+09:00', 'team/taskbox', '42', 'Build', 'main',
+                'push', 'completed', 'success', '2026-11-05T06:00:00+09:00',
+                '2026-11-05T06:01:00+09:00',
+                'https://github.com/team/taskbox/actions/runs/42', '-']) + '\n')
             (state / 'worker-ledger/runs.tsv').write_text(LEDGER_HEADER + ''.join(rows))
             test_root = state / 'tachi-run'
             test_root.mkdir()
@@ -71,8 +87,17 @@ class ProjectAttributionTest(unittest.TestCase):
                                            clock=lambda: NOW)
                 ingestor.scan_adapters()
                 records = [json.loads(row[0]) for row in conn.execute('SELECT json FROM records')]
-                self.assertEqual(len(records), 2 * len(paths) + 2)
+                self.assertEqual(len(records), 2 * len(paths) + 6)
                 for record in records:
+                    if record['id'].startswith('frontend-'):
+                        self.assertEqual(record['project'], 'frontend')
+                        continue
+                    if record.get('kind') == 'github-actions':
+                        self.assertEqual(record['project'], 'taskbox')
+                        continue
+                    if record['type'] == 'job' and record['id'] in paths and record['id'] != 'review-20261101':
+                        self.assertEqual(record['project'], record['id'])
+                        continue
                     if record['type'] == 'run':
                         name = list(paths)[int(record['title'].split('-')[1])]
                     elif record['id'] == '22222222-2222-4222-8222-222222222222':

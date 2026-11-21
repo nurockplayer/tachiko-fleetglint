@@ -199,7 +199,8 @@ class CodexAdapter:
         detail = _detail(unparseable, unreadable, unsupported, without_meta, duplicates, cut)
         return ScanResult("ok", detail, result,
                           [(_project(state.agg.cwd), state.agg.cwd) for state in states.values()
-                           if _project(state.agg.cwd)])
+                           if _project(state.agg.cwd)],
+                          {(r["type"], r["id"]) for r in result if r.get("project")})
 
     def _candidates(self):
         for root in (self.codex_home / "sessions", self.codex_home / "archived_sessions"):
