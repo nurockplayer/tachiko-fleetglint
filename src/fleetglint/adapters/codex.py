@@ -157,6 +157,7 @@ class CodexAdapter:
         unsupported = 0
         without_meta = 0
         found = []
+        record_paths = {}
         states = {}
         for path in self._candidates():
             if not _is_rollout(path):
@@ -189,7 +190,9 @@ class CodexAdapter:
             if agg.session_id is None or agg.last is None:
                 without_meta += 1
                 continue
-            found.append((agg.last_dt, st.st_mtime_ns, self._record(agg)))
+            record = self._record(agg)
+            record_paths[id(record)] = agg.cwd
+            found.append((agg.last_dt, st.st_mtime_ns, record))
         self._files = states
         unparseable = sum(state.errors for state in states.values())
         records, duplicates = _newest_per_session(found)
@@ -197,7 +200,12 @@ class CodexAdapter:
         cut = max(0, len(records) - _MAX_SESSIONS)
         result = [record for _, record in records[:_MAX_SESSIONS]]
         detail = _detail(unparseable, unreadable, unsupported, without_meta, duplicates, cut)
-        return ScanResult("ok", detail, result)
+        return ScanResult("ok", detail, result,
+                          [(_project(state.agg.cwd), state.agg.cwd) for state in states.values()
+                           if _project(state.agg.cwd)],
+                          {(r["type"], r["id"]) for r in result if r.get("project")},
+                          record_paths={(r["type"], r["id"]): record_paths[id(r)] for r in result
+                                        if record_paths[id(r)] is not None})
 
     def _candidates(self):
         for root in (self.codex_home / "sessions", self.codex_home / "archived_sessions"):

@@ -334,17 +334,17 @@ def _job_project(directory, path_projects=None):
     try:
         project = _text(Path(directory) / "project").strip().splitlines()
         if project:
-            return _clip(project[0].strip(), 200)
+            return _clip(project[0].strip(), 200), False
     except OSError:
         pass
     try:
         cwd = _text(Path(directory) / "cwd").strip()
     except OSError:
-        return None
+        return None, False
     for prefix in sorted(path_projects or {}, key=len, reverse=True):
         if cwd.startswith(prefix):
-            return _clip(path_projects[prefix], 200)
-    return project_from_path(cwd)
+            return _clip(path_projects[prefix], 200), False
+    return project_from_path(cwd), True
 
 
 class _Stats:
@@ -397,7 +397,7 @@ class HarnessAdapter:
             return ScanResult("unavailable", f"cannot read {ledger}: {exc}")
         decisions, aliases, named = self._scan_decisions(stats)
         records = self._scan_runs(ledger_text, now, stats, aliases)
-        jobs, jobs_by_id, workers = self._scan_jobs(now, stats)
+        jobs, jobs_by_id, workers, directory_jobs = self._scan_jobs(now, stats)
         self._link_waits(jobs_by_id, stats)
         self._link_runs_to_jobs(records, jobs_by_id)
         self._link_run_roles(records, jobs_by_id, workers)
@@ -408,7 +408,13 @@ class HarnessAdapter:
         records.extend(self._scan_inbox(set(jobs_by_id), stats, aliases, known))
         records.extend(self._scan_owner_notify(stats, aliases, known))
         records.extend(decisions)
-        return ScanResult("ok", stats.detail(), records)
+        return ScanResult("ok", stats.detail(), records,
+                          [(project_from_path(r["cwd"]), r["cwd"]) for r in jobs
+                           if r.get("cwd") and project_from_path(r["cwd"])],
+                          directory_jobs | {(r["type"], r["id"]) for r in records
+                                            if r.get("kind") == "tachi-run"},
+                          {(r["type"], r["id"]) for r in records if r["type"] == "run"}
+                          | {(r["type"], r["id"]) for r in jobs})
 
     def _base(self, record_type, record_id, updated_at):
         return {"v": 1, "type": record_type, "id": record_id,
@@ -728,25 +734,28 @@ class HarnessAdapter:
     def _scan_jobs(self, now, stats):
         by_id = {}
         workers = {}
+        directory_records = set()
         root = self.state_dir / "job-run"
         if not root.is_dir():
-            return [], by_id, workers
+            return [], by_id, workers, directory_records
         try:
             entries = sorted(root.iterdir())
         except OSError:
             stats.unreadable += 1
-            return [], by_id, workers
+            return [], by_id, workers, directory_records
         for directory in entries:
             if not directory.is_dir() or directory.name.startswith("."):
                 continue
             built = self._job_record(directory, now, stats)
             if built is None:
                 continue
-            record, worker = built
+            record, worker, derived = built
+            if derived:
+                directory_records.add((record["type"], record["id"]))
             by_id[record["id"]] = record
             if worker:
                 workers[record["id"]] = worker
-        return list(by_id.values()), by_id, workers
+        return list(by_id.values()), by_id, workers, directory_records
 
     def _job_record(self, directory, now, stats):
         """The job record and, for a wait-worker job, the worker it runs (not a field)."""
@@ -771,7 +780,7 @@ class HarnessAdapter:
             record = self._running_job(directory, summary, now, stats)
         if record is None:
             return None
-        project = _job_project(directory, self.path_projects)
+        project, derived = _job_project(directory, self.path_projects)
         if project is not None:
             record["project"] = project
         try:
@@ -780,7 +789,7 @@ class HarnessAdapter:
                 record["cwd"] = _clip(cwd, 4096)
         except OSError:
             pass
-        return record, self._apply_lead_wait(record, wait) if wait is not None else None
+        return record, self._apply_lead_wait(record, wait) if wait is not None else None, derived
 
     def _apply_lead_wait(self, record, wait):
         """Kind, role, title and summary of a `lead-wait` job; returns its worker name."""

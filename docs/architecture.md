@@ -481,6 +481,26 @@ automatically when `<state_dir>/worker-ledger/runs.tsv` exists. Sources
   to quarantine if the field is required).
 - No links between records unless a file states them (spec §1.3).
 
+After scanning adapters, directory evidence is shared across their records. An
+existing cwd supports a project when its repository has a remote or host config
+names the project. Otherwise its directory-derived label is removed and the
+items appear on Global, including matching directory-derived test-job labels.
+Configured path prefixes can supply the canonical project. Verified repositories
+win over unrelated directories with the same name. Missing directories keep the
+producer's saved project so deleted worktrees retain their attribution. Corrections
+apply only to records derived from directory names (sessions, local test jobs,
+and job-run records inferred from cwd). A job-run project file or worker-ledger
+label also counts as directory-derived when it equals the main-repo basename of
+an evidenced directory under that label. A record with a cwd is judged only by
+that directory; a missing cwd preserves its saved project. A saved assignment
+whose cwd is not a repo or has a differing main-repo basename remains explicit.
+Cross-producer evidence applies only to records without a cwd, such as completed
+worker-ledger rows. Configured assignments, CI repo slugs, and decisions
+retain their precedence even when a scratch directory shares the label. To keep
+a local-only repository as a card, add its directory to `path_projects`.
+Remote detection reads a quoted remote section with a non-empty `url` directly
+from the config file, tolerates repeated keys, and does not require a Git binary.
+
 ### 6.2 Claude Code transcripts (`adapters/claude_code.py`)
 
 Source id `claude-code@<hostname -s>`. Reads
