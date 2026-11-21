@@ -27,7 +27,7 @@ class ProjectAttributionTest(unittest.TestCase):
             paths["deleted-app"] = root / "deleted-app"
             expected = {name: None for name in paths}
             expected.update({"real-app": "real-app", "configured-app": "configured-app",
-                             "mapped-20261101": "real-app", "deleted-app": "deleted-app"})
+                             "mapped-20261101": "configured-app", "deleted-app": "deleted-app"})
             rows = []
             for index, (name, path) in enumerate(paths.items()):
                 # A completed ledger row has a project label but no cwd.
@@ -52,10 +52,16 @@ class ProjectAttributionTest(unittest.TestCase):
                 'timestamp': '2026-11-05T06:00:00+09:00', 'type': 'session_meta',
                 'payload': {'id': '11111111-1111-4111-8111-111111111111',
                             'cwd': str(paths['taskbox'])}}) + '\n')
+            duplicate = root / 'scratch/real-app'
+            (duplicate / '.git').mkdir(parents=True)
+            (sessions / 'rollout-duplicate.jsonl').write_text(json.dumps({
+                'timestamp': '2026-11-05T06:00:00+09:00', 'type': 'session_meta',
+                'payload': {'id': '22222222-2222-4222-8222-222222222222',
+                            'cwd': str(duplicate)}}) + '\n')
             cfg = config.Config()
             cfg.harness.state_dir = state
             cfg.harness.role_projects = {'local': 'configured-app'}
-            cfg.harness.path_projects = {str(paths['mapped-20261101']): 'real-app'}
+            cfg.harness.path_projects = {str(paths['mapped-20261101']): 'configured-app'}
             cfg.claude_code.enabled = 'false'
             cfg.codex.dir = root / 'codex'
             cfg.db_path = root / 'board.sqlite'
@@ -65,10 +71,12 @@ class ProjectAttributionTest(unittest.TestCase):
                                            clock=lambda: NOW)
                 ingestor.scan_adapters()
                 records = [json.loads(row[0]) for row in conn.execute('SELECT json FROM records')]
-                self.assertEqual(len(records), 2 * len(paths) + 1)
+                self.assertEqual(len(records), 2 * len(paths) + 2)
                 for record in records:
                     if record['type'] == 'run':
                         name = list(paths)[int(record['title'].split('-')[1])]
+                    elif record['id'] == '22222222-2222-4222-8222-222222222222':
+                        name = 'real-app'
                     elif record['type'] == 'session' or record.get('kind') == 'tachi-run':
                         name = 'taskbox'
                     else:

@@ -66,8 +66,12 @@ def directory_attributions(project_paths, *, role_projects, path_projects):
         if resolved is None:
             resolved = _git_repo_name(path, require_remote=True)
         candidates.setdefault(project, set()).add(resolved)
-    return {project: values.pop() if len(values) == 1 else None
-            for project, values in candidates.items()}
+    attributions = {}
+    for project, values in candidates.items():
+        values.discard(None)
+        attributions[project] = project if project in values else (
+            values.pop() if len(values) == 1 else None)
+    return attributions
 
 
 def _review_repo_name(path):
