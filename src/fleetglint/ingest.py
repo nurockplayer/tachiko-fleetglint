@@ -16,6 +16,7 @@ from pathlib import Path
 
 from fleetglint import config, store
 from fleetglint.demo import SOURCE_ID as DEMO_SOURCE_ID
+from fleetglint.projects import directory_attributions
 
 _SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._-]*)?$")
 _SEGMENT_RE = re.compile(r"^(\d{10})\.ndjson(\.gz)?$")
@@ -403,6 +404,7 @@ class Ingestor:
 
     def scan_adapters(self):
         """Run every adapter once (architecture §6)."""
+        scans = []
         for adapter in self.adapters:
             source_id = adapter.source_id
             existing = store.get_source(self.conn, source_id)
@@ -419,6 +421,19 @@ class Ingestor:
             if result.status == "unavailable":
                 self._set_adapter_state(source_id, "unavailable", result.detail or "adapter unavailable")
                 continue
+            scans.append((adapter, result, now))
+        attributions = directory_attributions(
+            [pair for _, result, _ in scans for pair in result.project_paths],
+            role_projects=self.cfg.harness.role_projects,
+            path_projects=self.cfg.harness.path_projects)
+        for adapter, result, now in scans:
+            for record in result.records:
+                project = record.get("project")
+                if project in attributions:
+                    if attributions[project] is None:
+                        record.pop("project")
+                    else:
+                        record["project"] = attributions[project]
             self._apply_adapter_scan(adapter, result, now)
 
     def _set_adapter_state(self, source_id, status, detail):

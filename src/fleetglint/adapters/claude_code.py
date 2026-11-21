@@ -213,7 +213,9 @@ class ClaudeCodeAdapter:
         found.sort(key=lambda item: item[0], reverse=True)
         cut = max(0, len(found) - _MAX_SESSIONS)
         records = [record for _, record in found[:_MAX_SESSIONS]]
-        return ScanResult("ok", _detail(unparseable, unreadable, without_time, mismatches, cut), records)
+        return ScanResult("ok", _detail(unparseable, unreadable, without_time, mismatches, cut), records,
+                          [(_project(state.agg.cwd), state.agg.cwd) for state in states.values()
+                           if _project(state.agg.cwd)])
 
     def _candidates(self):
         for project in _scandir(self.projects_dir):

@@ -197,7 +197,9 @@ class CodexAdapter:
         cut = max(0, len(records) - _MAX_SESSIONS)
         result = [record for _, record in records[:_MAX_SESSIONS]]
         detail = _detail(unparseable, unreadable, unsupported, without_meta, duplicates, cut)
-        return ScanResult("ok", detail, result)
+        return ScanResult("ok", detail, result,
+                          [(_project(state.agg.cwd), state.agg.cwd) for state in states.values()
+                           if _project(state.agg.cwd)])
 
     def _candidates(self):
         for root in (self.codex_home / "sessions", self.codex_home / "archived_sessions"):

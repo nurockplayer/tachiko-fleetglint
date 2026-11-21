@@ -408,7 +408,9 @@ class HarnessAdapter:
         records.extend(self._scan_inbox(set(jobs_by_id), stats, aliases, known))
         records.extend(self._scan_owner_notify(stats, aliases, known))
         records.extend(decisions)
-        return ScanResult("ok", stats.detail(), records)
+        return ScanResult("ok", stats.detail(), records,
+                          [(r["project"], r["cwd"]) for r in jobs
+                           if r.get("project") and r.get("cwd")])
 
     def _base(self, record_type, record_id, updated_at):
         return {"v": 1, "type": record_type, "id": record_id,
