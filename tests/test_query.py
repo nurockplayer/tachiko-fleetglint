@@ -682,6 +682,17 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(len(next(r for r in board["lead_inbox"]
                                   if r["role_id"] == "alpha-lead")["items"]), 5)
 
+    def test_project_inbox_keeps_items_displaced_by_newer_other_projects(self):
+        self.write([inbox("alpha-old", project="alpha", role_id="lead",
+                          created_at=stamp(hours=-2))] + [
+            inbox(f"beta-{i}", project="beta", role_id="lead", created_at=stamp(minutes=-i))
+            for i in range(5)
+        ])
+        board = self.board()
+        self.assertNotIn("alpha-old", [item["ref"]["id"] for item in board["lead_inbox"][0]["items"]])
+        alpha = next(p for p in board["projects"] if p["project"] == "alpha")
+        self.assertEqual([item["ref"]["id"] for item in alpha["lead_inbox"]], ["alpha-old"])
+
     def test_board_drops_project_with_only_hidden_old_running_job(self):
         self.write([job("old", project="alpha", updated_at=stamp(hours=-30),
                         started_at=stamp(hours=-31),

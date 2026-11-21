@@ -179,22 +179,34 @@ describe("project board", () => {
     }
     expect(screen.getAllByText("· pnpm test --run")).toHaveLength(2);
   });
-  it("uses backend project inbox totals with only five returned items", () => {
+  it("shows all seven project inbox items even when the role list is capped at five", () => {
     const role = board.lead_inbox[0];
-    const items = Array.from({ length: 5 }, (_, i) => ({
-      ...role.items[0], project: "alpha", ref: { ...role.items[0].ref, id: `alpha-${i}` },
+    const items = Array.from({ length: 7 }, (_, i) => ({
+      ...role.items[0], project: "alpha", detail: `Alpha message ${i}`, ref: { ...role.items[0].ref, id: `alpha-${i}` },
     }));
-    const pageBoard = { ...board, projects: [{ ...project, project: "alpha" }], lead_inbox: [{
-      ...role, open: 10, old: 6, action_required: 2, items,
-      by_project: [{ project: "alpha", open: 8, old: 4, action_required: 1 }, { project: "beta", open: 2, old: 2, action_required: 1 }],
+    const pageBoard = { ...board, projects: [{ ...project, project: "alpha", lead_inbox: items, lead_inbox_open: 7 }], lead_inbox: [{
+      ...role, open: 7, old: 4, action_required: 1, items: items.slice(0, 5),
+      by_project: [{ project: "alpha", open: 7, old: 4, action_required: 1 }],
     }] };
-    const { container, rerender } = render(<Project board={pageBoard} name="alpha" />);
-    expect(screen.getByRole("region", { name: "Lead inbox" })).toHaveTextContent("8 open · 4 waiting");
-    expect(container.querySelector(".group-count")).toHaveTextContent("8");
-    expect(container.querySelectorAll(".inbox-line")).toHaveLength(5);
-    rerender(<Project board={{ ...pageBoard, lead_inbox: [{ ...pageBoard.lead_inbox[0], items: [] }] }} name="alpha" />);
-    expect(screen.getByRole("region", { name: "Lead inbox" })).toHaveTextContent("8 open");
-    expect(container.querySelector(".group-count")).toHaveTextContent("8");
+    const { container } = render(<Project board={pageBoard} name="alpha" />);
+    expect(screen.getByRole("region", { name: "Lead inbox" })).toHaveTextContent("7 open · 4 waiting");
+    expect(container.querySelectorAll(".inbox-line")).toHaveLength(7);
+    items.forEach(item => expect(screen.getByText(item.detail)).toBeInTheDocument());
+  });
+  it("shows project messages displaced by newer messages from another project and reports the cap", () => {
+    const role = board.lead_inbox[0];
+    const items = Array.from({ length: 2 }, (_, i) => ({ ...role.items[0], project: "alpha",
+      detail: `Alpha displaced ${i}`, ref: { ...role.items[0].ref, id: `alpha-${i}` } }));
+    const other = Array.from({ length: 5 }, (_, i) => ({ ...role.items[0], project: "beta",
+      detail: `Beta newer ${i}`, ref: { ...role.items[0].ref, id: `beta-${i}` } }));
+    const pageBoard = { ...board, projects: [{ ...project, project: "alpha", lead_inbox: items, lead_inbox_open: 3 }], lead_inbox: [{
+      ...role, open: 8, items: other, by_project: [{ project: "alpha", open: 3, old: 0, action_required: 0 },
+        { project: "beta", open: 5, old: 0, action_required: 0 }],
+    }] };
+    render(<Project board={pageBoard} name="alpha" />);
+    items.forEach(item => expect(screen.getByText(item.detail)).toBeInTheDocument());
+    expect(screen.queryByText("Beta newer 0")).toBeNull();
+    expect(screen.getByText("1 lead inbox message not shown.")).toBeInTheDocument();
   });
   it("shows a quiet repeat count after the title only for repeated work", () => {
     const job = project.in_progress[0].jobs![0];
