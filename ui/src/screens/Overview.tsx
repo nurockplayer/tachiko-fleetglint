@@ -44,6 +44,9 @@ export function Overview({ board, mark }: { board: Board; mark?: Mark }) {
     return (
       <main className="screen">
         <SummaryLine board={board} onOpenSection={openSection} />
+        {board.projects.some(project => project.lead_inbox_open > 0) && <div className="project-grid">
+          {board.projects.filter(project => project.lead_inbox_open > 0).map(project => <ProjectCard key={project.project ?? "__global"} project={project} now={Date.parse(board.generated_at)} mark={mark} />)}
+        </div>}
         {board.needs_you.length > 0 ? <Notified board={board} /> : null}
         {board.capabilities.requests ? (
           <LeadInbox board={board} open={open.lead_inbox} onToggle={toggle("lead_inbox")} />

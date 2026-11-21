@@ -220,6 +220,12 @@ say "not observable" instead of 0. Lists are capped at 200 (exceptions 50
 each, `recent` 20, `sessions` 30); counts reflect the full set.
 
 Project cards also show in-window failed/stale/lost/unknown work in
+`needs_you`. Each `projects[]` card also carries `lead_inbox`, an array of
+`InboxSummary + age_s` for its open non-viewer inbox items, newest first,
+capped at 200 independently of the role-level inbox caps. `lead_inbox_open`
+is the uncapped total. Overview cards show the newest five with their
+message, recipient role and age, linking to the project page for more.
+Acknowledged items are excluded. Cards show in-window failed/stale/lost/unknown work in
 `needs_you` unless superseded by a later success on the same work line
 (detached jobs match cwd, role, kind, title and command; the existing GitHub
 Actions rule also supersedes failures with any newer state on that line).

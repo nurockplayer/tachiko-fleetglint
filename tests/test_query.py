@@ -656,6 +656,43 @@ class BoardTest(unittest.TestCase):
         self.write([inbox("ack", state="acked", project="alpha", acked_at=stamp())])
         self.assertEqual(self.board()["projects"], [])
 
+    def test_project_card_carries_its_only_open_lead_inbox_item(self):
+        self.write([inbox("lead-only", project="alpha", title="Review the proposal",
+                          role_id="alpha-lead", created_at=stamp(hours=-2))])
+        board = self.board()
+        card = board["projects"][0]
+        self.assertEqual(card["lead_inbox"], board["lead_inbox"][0]["items"])
+        item = card["lead_inbox"][0]
+        self.assertEqual((item["title"], item["role_id"], item["age_s"]),
+                         ("Review the proposal", "alpha-lead", 7200))
+        self.assertEqual(card["lead_inbox_open"], 1)
+
+    def test_project_card_lists_open_inbox_independently_of_role_cap(self):
+        self.write([
+            inbox(f"open-{i}", project="alpha", role_id="alpha-lead",
+                  title=f"Proposal {i}", created_at=stamp(hours=-i)) for i in range(7)
+        ] + [inbox("acked", project="alpha", state="acked", acked_at=stamp()),
+             inbox("viewer", project="alpha", role_id="owner", action_required=True),
+             inbox("other-project", project="beta")])
+        board = self.board()
+        card = next(p for p in board["projects"] if p["project"] == "alpha")
+        self.assertEqual([item["ref"]["id"] for item in card["lead_inbox"]],
+                         [f"open-{i}" for i in range(7)])
+        self.assertEqual(card["lead_inbox_open"], 7)
+        self.assertEqual(len(next(r for r in board["lead_inbox"]
+                                  if r["role_id"] == "alpha-lead")["items"]), 5)
+
+    def test_project_inbox_keeps_items_displaced_by_newer_other_projects(self):
+        self.write([inbox("alpha-old", project="alpha", role_id="lead",
+                          created_at=stamp(hours=-2))] + [
+            inbox(f"beta-{i}", project="beta", role_id="lead", created_at=stamp(minutes=-i))
+            for i in range(5)
+        ])
+        board = self.board()
+        self.assertNotIn("alpha-old", [item["ref"]["id"] for item in board["lead_inbox"][0]["items"]])
+        alpha = next(p for p in board["projects"] if p["project"] == "alpha")
+        self.assertEqual([item["ref"]["id"] for item in alpha["lead_inbox"]], ["alpha-old"])
+
     def test_board_drops_project_with_only_hidden_old_running_job(self):
         self.write([job("old", project="alpha", updated_at=stamp(hours=-30),
                         started_at=stamp(hours=-31),
