@@ -60,7 +60,10 @@ export function Overview({ board, mark }: { board: Board; mark?: Mark }) {
     <main className="screen">
       <SummaryLine board={board} />
       <div className="project-grid">
-        {[...board.projects.filter(p => p.project !== null), ...board.projects.filter(p => p.project === null)].map(project => <ProjectCard key={project.project ?? "__global"} project={project} now={Date.parse(board.generated_at)} mark={mark} />)}
+        {[...board.projects.filter(p => p.project !== null && (
+          p.needs_you.length || p.in_progress.length || p.decisions.length ||
+          p.recent.done.length || p.recent.failed.length || p.lead_inbox.length
+        )), ...board.projects.filter(p => p.project === null)].map(project => <ProjectCard key={project.project ?? "__global"} project={project} now={Date.parse(board.generated_at)} mark={mark} />)}
       </div>
     </main>
   );

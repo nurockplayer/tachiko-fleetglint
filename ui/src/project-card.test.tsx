@@ -8,6 +8,8 @@ import { Recent } from "./components/Recent";
 import { parseRoute } from "./router";
 import type { BoardInboxItem } from "./api/types";
 import { formatAbsolute } from "./format";
+import { App } from "./App";
+import { jsonResponse, sequenceFetcher } from "./test-fetcher";
 
 const project = { ...board.projects[1], lead_inbox: [] };
 const sevenNeedsProject = {
@@ -21,6 +23,26 @@ const sevenNeedsProject = {
   needs_you_total: 7,
 };
 describe("project board", () => {
+  it("hides a session-only overview card and keeps its session on the project page", async () => {
+    const name = "tokyo-mogu-mogu";
+    const onlySession = { ...project, project: name, needs_you: [], needs_you_total: 0,
+      in_progress: [], decisions: [], recent: { done: [], failed: [] },
+      lead_inbox: [], lead_inbox_open: 0, sessions_recent: 1 };
+    const sessionBoard = { ...board, projects: [onlySession],
+      sessions: [{ ...board.sessions[0], project: name, title: "Session-only activity" }], sessions_total: 1 };
+    const { fetcher } = sequenceFetcher([() => jsonResponse(sessionBoard)]);
+    window.history.replaceState(null, "", "/");
+    const overview = render(<App fetcher={fetcher} />);
+    await screen.findByText(`${board.counts.running} running`);
+    expect(overview.container.querySelector(".project-card")).toBeNull();
+    overview.unmount();
+
+    window.history.replaceState(null, "", `/project?name=${name}`);
+    render(<App fetcher={fetcher} />);
+    expect(await screen.findByText("Session-only activity")).toBeInTheDocument();
+    window.history.replaceState(null, "", "/");
+  });
+
   it.each([true, false, undefined])("marks recent failures only when unresolved is %s", unresolved => {
     const failed = { ...project.recent.failed[0], unresolved };
     const { rerender } = render(<ProjectCard project={{ ...project, needs_you: [],
