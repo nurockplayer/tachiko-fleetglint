@@ -1167,6 +1167,25 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertEqual(sorted(r["state"] for r in result.records), ["done", "done", "failed", "queued"])
         self.assertIsNone(result.detail)
 
+    def test_tachi_run_waiting_reasons(self):
+        start = "Thu Nov  5 02:00:00 2026"
+        # tachi-run writes 'slot' or 'memory'; six-column markers come from before the reason column.
+        for tail, summary in (("\t1\tmemory", "waiting for memory"),
+                              ("\t1\tslot", "waiting for a run slot"),
+                              ("\t1\tdisk", "waiting"),
+                              ("\t1\t", "waiting"),
+                              ("\t1", "waiting for memory")):
+            with self.subTest(tail=tail), tempfile.TemporaryDirectory() as tmp:
+                root = make_state(tmp) / "tachi-run"
+                (root / "waiting").mkdir(parents=True)
+                (root / "runs.tsv").write_text("")
+                (root / "waiting/125").write_text(f"demo\t125\t{start}\t512\ttests{tail}\n")
+                result = harness.HarnessAdapter(root.parent, hostname="h").scan(NOW)
+                self.assertIsNone(result.detail)
+                [record] = result.records
+                self.assertEqual((record["state"], record["summary"]), ("queued", summary))
+                self.assertEqual(schema.validate(record), [])
+
     def test_role_project_inference(self):
         for role, project in (("harness-dot-observer", "harness-dot"),
                               ("fleetglint-lead", "fleetglint"), ("solo", None)):
