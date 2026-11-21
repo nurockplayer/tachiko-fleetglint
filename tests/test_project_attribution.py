@@ -58,6 +58,9 @@ class ProjectAttributionTest(unittest.TestCase):
                 '2026-11-05T06:01:00+09:00',
                 'https://github.com/team/taskbox/actions/runs/42', '-']) + '\n')
             (state / 'worker-ledger/runs.tsv').write_text(LEDGER_HEADER + ''.join(rows))
+            with (state / 'worker-ledger/runs.tsv').open('a') as ledger:
+                ledger.write('2026-11-05 06:00 JST\t2026-11-05 06:01 JST\tcx\tdesign-system\t'
+                             'override\tmodel\t-\t0\tdone\t-\n')
             test_root = state / 'tachi-run'
             test_root.mkdir()
             (test_root / 'runs.tsv').write_text(
@@ -74,6 +77,13 @@ class ProjectAttributionTest(unittest.TestCase):
                 'timestamp': '2026-11-05T06:00:00+09:00', 'type': 'session_meta',
                 'payload': {'id': '22222222-2222-4222-8222-222222222222',
                             'cwd': str(duplicate)}}) + '\n')
+            # Another repo named frontend must not rewrite the two explicit frontend jobs.
+            frontend = root / 'frontend'
+            (frontend / '.git').mkdir(parents=True)
+            (sessions / 'rollout-frontend.jsonl').write_text(json.dumps({
+                'timestamp': '2026-11-05T06:00:00+09:00', 'type': 'session_meta',
+                'payload': {'id': '33333333-3333-4333-8333-333333333333',
+                            'cwd': str(frontend)}}) + '\n')
             cfg = config.Config()
             cfg.harness.state_dir = state
             cfg.harness.role_projects = {'local': 'configured-app'}
@@ -87,23 +97,27 @@ class ProjectAttributionTest(unittest.TestCase):
                                            clock=lambda: NOW)
                 ingestor.scan_adapters()
                 records = [json.loads(row[0]) for row in conn.execute('SELECT json FROM records')]
-                self.assertEqual(len(records), 2 * len(paths) + 6)
+                self.assertEqual(len(records), 2 * len(paths) + 8)
                 for record in records:
+                    if record.get('title') == 'override':
+                        self.assertEqual(record['project'], 'design-system')
+                        continue
+                    if record['id'] == '33333333-3333-4333-8333-333333333333':
+                        self.assertNotIn('project', record)
+                        continue
                     if record['id'].startswith('frontend-'):
                         self.assertEqual(record['project'], 'frontend')
                         continue
                     if record.get('kind') == 'github-actions':
                         self.assertEqual(record['project'], 'taskbox')
                         continue
-                    if record['type'] == 'job' and record['id'] in paths and record['id'] != 'review-20261101':
-                        self.assertEqual(record['project'], record['id'])
-                        continue
                     if record['type'] == 'run':
                         name = list(paths)[int(record['title'].split('-')[1])]
-                        # The saved ledger column cannot distinguish a directory default
-                        # from WORKER_LEDGER_PROJECT's explicit override.
-                        self.assertEqual(record['project'], name)
-                        continue
+                        if name == 'review-20261101':
+                            # Without a repo basename, this saved assignment has no proof
+                            # of having been directory-derived.
+                            self.assertEqual(record['project'], name)
+                            continue
                     elif record['id'] == '22222222-2222-4222-8222-222222222222':
                         name = 'real-app'
                     elif record['type'] == 'session' or record.get('kind') == 'tachi-run':

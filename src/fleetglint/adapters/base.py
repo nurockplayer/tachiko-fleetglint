@@ -18,6 +18,7 @@ class ScanResult:
     records: list[dict] = field(default_factory=list)
     project_paths: list[tuple[str, str]] = field(default_factory=list)
     directory_records: set[tuple[str, str]] = field(default_factory=set)
+    repo_records: set[tuple[str, str]] = field(default_factory=set)
 
 
 class Adapter(Protocol):

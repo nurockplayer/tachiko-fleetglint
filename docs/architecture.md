@@ -489,12 +489,15 @@ Configured path prefixes can supply the canonical project. Verified repositories
 win over unrelated directories with the same name. Missing directories keep the
 producer's saved project so deleted worktrees retain their attribution. Corrections
 apply only to records derived from directory names (sessions, local test jobs,
-and job-run records inferred from cwd). Explicit job-run project files,
-configured path assignments, CI repo slugs, and decision assignments win,
-even when their labels match an unrelated scratch directory. Git itself parses
-remote configuration, including repeated keys and Git-specific syntax. Saved
-worker-ledger project columns also retain their assignment: they do not record
-whether it came from a directory or an explicit producer override.
+and job-run records inferred from cwd). A job-run project file or worker-ledger
+label also counts as directory-derived when it equals the main-repo basename of
+an evidenced directory under that label, using its own cwd or cross-producer
+directory evidence. A label differing from its cwd's main-repo basename remains
+an explicit assignment. Configured assignments, CI repo slugs, and decisions
+retain their precedence even when a scratch directory shares the label. To keep
+a local-only repository as a card, add its directory to `path_projects`.
+Git itself parses remote configuration, including repeated keys and Git-specific
+syntax.
 
 ### 6.2 Claude Code transcripts (`adapters/claude_code.py`)
 

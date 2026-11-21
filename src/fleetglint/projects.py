@@ -61,7 +61,10 @@ def directory_attributions(project_paths, *, role_projects, path_projects):
     configured = set(role_projects.values()) | set(path_projects.values())
     prefixes = {os.path.expanduser(prefix): name for prefix, name in path_projects.items()}
     candidates = {}
+    repo_labels = set()
     for project, path in set(project_paths):
+        if _git_repo_name(path) == project:
+            repo_labels.add(project)
         if project in configured or not Path(path).is_dir():
             continue
         resolved = next((prefixes[prefix] for prefix in sorted(prefixes, key=len, reverse=True)
@@ -74,7 +77,7 @@ def directory_attributions(project_paths, *, role_projects, path_projects):
         values.discard(None)
         attributions[project] = project if project in values else (
             values.pop() if len(values) == 1 else None)
-    return attributions
+    return attributions, repo_labels
 
 
 def _review_repo_name(path):
