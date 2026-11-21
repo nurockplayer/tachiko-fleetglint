@@ -3,7 +3,7 @@ import { formatAgo, formatOverThreshold } from "../format";
 import { refKey } from "./Refs";
 import { CollapsibleSection } from "./Section";
 
-function inboxMessage(item: BoardInboxItem): string {
+export function inboxMessage(item: BoardInboxItem): string {
   return item.detail ?? item.title ?? refKey(item.subject);
 }
 

@@ -898,7 +898,7 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
     def group(name):
         return groups.setdefault(name, {"project": name, "needs_you": [], "in_progress": [],
             "decisions": [], "recent": {"done": [], "failed": []},
-            "lead_inbox_open": 0, "sessions_recent": 0, "last_activity_at": None})
+            "lead_inbox": [], "lead_inbox_open": 0, "sessions_recent": 0, "last_activity_at": None})
 
     # Include live work and open inbox even if last updated before the window.
     for kind, entries in rows.items():
@@ -928,6 +928,7 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
             elif kind == "inbox_item":
                 if row["state"] == "open" and not (record.get("action_required") and record.get("role_id") in cfg.viewer_roles):
                     g["lead_inbox_open"] += 1
+                    g["lead_inbox"].append((row, _inbox_item(view, row, now)))
             else:
                 state = view.display(record, row["source_id"]).state
                 key = line_key(record)
@@ -1013,6 +1014,8 @@ def _board_projects(view, rows, needs_you, now, window_start, cfg):
                 _epoch(item["updated_at"]) is not None, _epoch(item["updated_at"]) or 0),
             reverse=True)
         g["needs_you_total"] = len(g["needs_you"])
+        g["lead_inbox"].sort(key=_inbox_order, reverse=True)
+        g["lead_inbox"] = [item for _, item in g["lead_inbox"][:BOARD_LIST_LIMIT]]
         g["decisions"].sort(key=lambda x: _epoch(x["decided_at"]), reverse=True)
         for items in g["recent"].values():
             items.sort(key=lambda x: _epoch(x["updated_at"]), reverse=True)

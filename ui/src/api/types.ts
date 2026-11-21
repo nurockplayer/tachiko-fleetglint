@@ -273,6 +273,7 @@ export interface ProjectCard {
   in_progress: (BoardWork & { jobs?: BoardWork[] })[];
   decisions: Decision[];
   recent: { done: BoardWork[]; failed: BoardWork[] };
+  lead_inbox: BoardInboxItem[];
   lead_inbox_open: number;
   sessions_recent: number;
   last_activity_at: string | null;
