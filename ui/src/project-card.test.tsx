@@ -9,7 +9,7 @@ import { parseRoute } from "./router";
 import type { BoardInboxItem } from "./api/types";
 import { formatAbsolute } from "./format";
 
-const project = board.projects[1];
+const project = { ...board.projects[1], lead_inbox: [] };
 const sevenNeedsProject = {
   ...project,
   needs_you: Array.from({ length: 7 }, (_, i) => ({
@@ -41,6 +41,35 @@ describe("project board", () => {
   });
 
   const inbox = { ...board.lead_inbox[0].items[0], role_id: "fleetglint-lead", age_s: 3840 };
+  it.each([true, false])("shows an inbox-only overview card with execution observable = %s", execution => {
+    const onlyInbox = { ...project, needs_you: [], needs_you_total: 0, in_progress: [],
+      decisions: [], recent: { done: [], failed: [] }, lead_inbox: [{ ...inbox, detail: null, title: "Review proposal" }], lead_inbox_open: 1 };
+    const acked = { ...inbox, state: "acked", display_state: "acked" as const, title: "Already acknowledged", detail: "Already acknowledged" };
+    const { container } = render(<Overview board={{ ...board, projects: [onlyInbox],
+      capabilities: { ...board.capabilities, execution },
+      lead_inbox: [{ ...board.lead_inbox[0], items: [inbox, acked] }] }} />);
+    const card = within(container.querySelector(".project-card")!);
+    expect(card.getByText("Review proposal")).toBeInTheDocument();
+    expect(card.getByText("fleetglint-lead · 1h 4m ago")).toBeInTheDocument();
+    expect(card.queryByText("Already acknowledged")).toBeNull();
+  });
+  it("caps open lead inbox items at five and links the remaining count", () => {
+    const items = Array.from({ length: 7 }, (_, i) => ({ ...inbox,
+      ref: { ...inbox.ref, id: `lead-${i}` }, detail: `Lead message ${i}`, role_id: `lead-${i}` }));
+    render(<ProjectCard project={{ ...project, needs_you: [], in_progress: [], decisions: [],
+      recent: { done: [], failed: [] }, lead_inbox: items, lead_inbox_open: 7 }} now={0} />);
+    for (let i = 0; i < 5; i++) {
+      expect(screen.getByText(`Lead message ${i}`)).toBeInTheDocument();
+      expect(screen.getByText(`lead-${i} · 1h 4m ago`)).toBeInTheDocument();
+    }
+    expect(screen.queryByText("Lead message 5")).toBeNull();
+    expect(screen.queryByText("Lead message 6")).toBeNull();
+    expect(screen.getByRole("link", { name: "2 more on the project page" })).toHaveAttribute("href", "/project?name=fleetglint");
+  });
+  it("omits the lead inbox section when the project has no open items", () => {
+    render(<ProjectCard project={{ ...project, lead_inbox: [], lead_inbox_open: 0 }} now={0} />);
+    expect(screen.queryByRole("heading", { name: "Lead inbox" })).toBeNull();
+  });
   it("shows the inbox ask, recipient and waiting duration with a zoned tooltip", () => {
     render(<ProjectCard project={{ ...project, needs_you: [inbox] }} now={0} />);
     expect(screen.getByText(inbox.detail!)).toBeTruthy();

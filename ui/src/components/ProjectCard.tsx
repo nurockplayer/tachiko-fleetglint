@@ -3,6 +3,7 @@ import type { Mark } from "../seen";
 import { ageSince, formatAgo, formatAge, formatAbsolute } from "../format";
 import { detailHref, projectHref } from "../router";
 import { StateBadge } from "./StateBadge";
+import { inboxMessage } from "./LeadInbox";
 
 const NEEDS_LIMIT = 5;
 
@@ -30,6 +31,7 @@ function More({ count, truncated, href, full }: { count: number; truncated: bool
 export function ProjectCard({ project, now, full = false, mark }: { project: Project; now: number; full?: boolean; mark?: Mark }) {
   const href = projectHref(project.project);
   const needsYou = full ? project.needs_you : project.needs_you.slice(0, NEEDS_LIMIT);
+  const leadInbox = project.lead_inbox.slice(0, NEEDS_LIMIT);
   const recent = [...project.recent.done.slice(0, full ? undefined : 3), ...project.recent.failed.slice(0, full ? undefined : 3)].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
   const recentMore = full ? 0 : Math.max(0, project.recent.done.length - 3) + Math.max(0, project.recent.failed.length - 3);
   return <article className="project-card" data-band={band(project)} style={{ borderTopColor: `var(--state-${band(project)}-border)` }}>
@@ -43,5 +45,6 @@ export function ProjectCard({ project, now, full = false, mark }: { project: Pro
     {project.in_progress.length > 0 && <section><h3>In progress</h3>{project.in_progress.map(item => <div className="project-item" key={key(item)} data-record-id={item.ref.id}><StateBadge state={item.display_state} /> <a href={detailHref(item.ref)}>{title(item)}</a><div className="quiet">{"agent" in item ? [item.worker ?? item.agent, item.model].filter(Boolean).join(" · ") : [item.kind, item.command_summary].filter(Boolean).join(" · ")}</div>{item.jobs?.map(job => <div className="project-job" key={key(job)}><StateBadge state={job.display_state} /> <a href={detailHref(job.ref)}>{title(job)}</a>{"command_summary" in job && <span className="quiet"> · {[job.kind, job.command_summary].filter(Boolean).join(" · ")}</span>}</div>)}</div>)}<More count={0} truncated={project.truncated.in_progress} href={href} full={full} /></section>}
     {project.decisions.length > 0 && <section><h3>Recent decisions</h3>{project.decisions.map(d => <div className="project-item" key={`${d.ref.source_id}/${d.ref.id}`}>{d.links[0]?.url ? <a href={d.links[0].url} target="_blank" rel="noreferrer noopener">{d.text}</a> : d.text}<div className="quiet">{d.role_id} · {formatAgo(ageSince(d.decided_at, now))}</div></div>)}<More count={0} truncated={project.truncated.decisions} href={href} full={full} /></section>}
     {recent.length > 0 && <section><h3>Recent</h3>{recent.map(item => <div className="project-item" key={key(item)}><StateBadge state={item.display_state} /> <a href={detailHref(item.ref)}>{title(item)}</a>{item.unresolved && <span className="row-tag">unresolved</span>}{"command_summary" in item && item.command_summary && item.title === null && <span className="quiet"> · {item.command_summary}</span>}</div>)}<More count={recentMore} truncated={project.truncated.recent.done || project.truncated.recent.failed} href={href} full={full} /></section>}
+    {!full && leadInbox.length > 0 && <section><h3>Lead inbox</h3>{leadInbox.map(item => <div className="project-item" key={key(item)}>{inboxMessage(item)}<div className="quiet">{item.role_id} · {formatAgo(item.age_s)}</div></div>)}<More count={Math.max(0, project.lead_inbox_open - leadInbox.length)} truncated={false} href={href} full={full} /></section>}
   </article>;
 }
