@@ -36,8 +36,8 @@ class ProjectAttributionTest(unittest.TestCase):
                 # taskbox is evidenced only by a Codex session, like a scratch test repo.
                 if name != "taskbox":
                     directory = write_job(state, name, ["true"], result=json.dumps({
-                        "started_at": "2026-11-05T06:00:00+09:00",
-                        "ended_at": "2026-11-05T06:01:00+09:00", "exit_code": 0}))
+                        "started": "2026-11-05T06:00:00+09:00",
+                        "ended": "2026-11-05T06:01:00+09:00", "exit_code": 0, "status": "ok"}))
                     (directory / "cwd").write_text(str(path) + '\n')
                     if name != "review-20261101":
                         (directory / "project").write_text(name + '\n')
@@ -48,7 +48,7 @@ class ProjectAttributionTest(unittest.TestCase):
                 '1793847600\t123\tThu Nov  5 02:00:00 2026\ttaskbox\tcheck\t0\n')
             sessions = root / 'codex/sessions'
             sessions.mkdir(parents=True)
-            (sessions / 'session.jsonl').write_text(json.dumps({
+            (sessions / 'rollout-session.jsonl').write_text(json.dumps({
                 'timestamp': '2026-11-05T06:00:00+09:00', 'type': 'session_meta',
                 'payload': {'id': '11111111-1111-4111-8111-111111111111',
                             'cwd': str(paths['taskbox'])}}) + '\n')
