@@ -1392,3 +1392,11 @@ pre,
   color: var(--state-needs-fg);
   background: var(--state-needs-bg);
 }
+
+/* Plans use the same neutral panels and native detail controls in both themes. */
+.plan-panel { overflow-wrap: anywhere; }
+.plan-panel > h2 { font-size: var(--type-section-size); }
+.plan-panel .section { margin-top: var(--space-16); }
+.plan-row { padding: var(--space-8) 0; border-bottom: 1px solid var(--line-divider); }
+.plan-links { display: flex; flex-wrap: wrap; gap: var(--space-8); }
+.plan-counts { margin: var(--space-8) 0; }

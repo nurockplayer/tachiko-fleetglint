@@ -63,6 +63,7 @@ class Config:
     abandon_days: int = 90
     history_days: int = 30
     allowed_roots: list[Path] = field(default_factory=list)
+    plan_paths: list[str] = field(default_factory=list)
     max_tail_kib: int = 64
     harness: HarnessAdapterConfig = field(default_factory=HarnessAdapterConfig)
     claude_code: ClaudeCodeAdapterConfig = field(default_factory=ClaudeCodeAdapterConfig)
@@ -131,6 +132,11 @@ def load(path=None):
     files = data.get("files", {})
     cfg.allowed_roots = [expand(p) for p in _get(files, "allowed_roots", list, [])]
     cfg.max_tail_kib = _get(files, "max_tail_kib", int, cfg.max_tail_kib)
+
+    plans = _get(data, "plans", dict, {})
+    cfg.plan_paths = _get(plans, "paths", list, [])
+    if any(not isinstance(path, str) for path in cfg.plan_paths):
+        raise ConfigError("plans.paths: expected a list of strings")
 
     adapters = data.get("adapters", {})
     for name, target, dir_key in (("tachiko_harness", cfg.harness, "state_dir"),

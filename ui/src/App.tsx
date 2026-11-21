@@ -8,6 +8,7 @@ import { Banner } from "./components/Banner";
 import { OverviewSkeleton } from "./components/Skeleton";
 import { Project } from "./screens/Project";
 import { Overview } from "./screens/Overview";
+import { Plans } from "./screens/Plans";
 import { History } from "./screens/History";
 import { RunDetail } from "./screens/RunDetail";
 import { createSeen } from "./seen";
@@ -44,7 +45,9 @@ export function App({ fetcher = defaultFetcher, pollMs = 15000 }: AppProps) {
       : "";
 
   let content: ReactNode;
-  if (route.kind === "history") {
+  if (route.kind === "plans") {
+    content = <Plans fetcher={fetcher} />;
+  } else if (route.kind === "history") {
     content = <History fetcher={fetcher} pollMs={pollMs} />;
   } else if (route.kind === "detail") {
     content = <RunDetail params={route.params} fetcher={fetcher} pollMs={pollMs} />;

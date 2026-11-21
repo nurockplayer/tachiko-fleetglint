@@ -10,12 +10,14 @@ export interface DetailParams {
 export type Route =
   | { kind: "overview" }
   | { kind: "history" }
+  | { kind: "plans" }
   | { kind: "project"; name: string | null }
   | { kind: "detail"; params: DetailParams };
 
 /** `/attention` is retired and redirects to the Overview (visual spec §5). */
 export function parseRoute(location: { pathname: string; search: string }): Route {
   if (location.pathname === "/project") return { kind: "project", name: new URLSearchParams(location.search).get("name") };
+  if (location.pathname === "/plans") return { kind: "plans" };
   if (location.pathname === "/history") return { kind: "history" };
   if (location.pathname === "/run") {
     const query = new URLSearchParams(location.search);
