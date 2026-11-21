@@ -23,12 +23,12 @@ const sevenNeedsProject = {
   needs_you_total: 7,
 };
 describe("project board", () => {
-  it("hides a session-only overview card and keeps its session on the project page", async () => {
+  it("hides session-only overview cards, Global included, and keeps its session on the project page", async () => {
     const name = "tokyo-mogu-mogu";
     const onlySession = { ...project, project: name, needs_you: [], needs_you_total: 0,
       in_progress: [], decisions: [], recent: { done: [], failed: [] },
       lead_inbox: [], lead_inbox_open: 0, sessions_recent: 1 };
-    const sessionBoard = { ...board, projects: [onlySession],
+    const sessionBoard = { ...board, projects: [onlySession, { ...onlySession, project: null }],
       sessions: [{ ...board.sessions[0], project: name, title: "Session-only activity" }], sessions_total: 1 };
     const { fetcher } = sequenceFetcher([() => jsonResponse(sessionBoard)]);
     window.history.replaceState(null, "", "/");
