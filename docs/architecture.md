@@ -481,6 +481,14 @@ automatically when `<state_dir>/worker-ledger/runs.tsv` exists. Sources
   to quarantine if the field is required).
 - No links between records unless a file states them (spec §1.3).
 
+After scanning adapters, directory evidence is shared across their records. An
+existing cwd supports a project when its repository has a remote or host config
+names the project. Otherwise its directory-derived label is removed and the
+items appear on Global, including matching completed ledger and test-job labels.
+Configured path prefixes can supply the canonical project. Verified repositories
+win over unrelated directories with the same name. Missing directories keep the
+producer's saved project so deleted worktrees retain their attribution.
+
 ### 6.2 Claude Code transcripts (`adapters/claude_code.py`)
 
 Source id `claude-code@<hostname -s>`. Reads
