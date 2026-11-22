@@ -48,6 +48,7 @@ export function TopBar({ board, receivedAt }: TopBarProps) {
             <SourceChip key={source.source_id} source={source} />
           ))}
         </div>
+        <nav aria-label="Main"><a href="/plans">Plans</a></nav>
         <div className="topbar-meta">
           {updated ? <span>updated {updated}</span> : null}
           <span className="read-only">Read only</span>

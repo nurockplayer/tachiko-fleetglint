@@ -267,6 +267,44 @@ Outside the project cards, each run or job lands in exactly one place, in this o
 `unknown` rows older than the window (and `counts.stale_lost_unknown`) are
 dropped there too.
 
+### 4.1c `GET /api/plans`
+
+Returns `{"api": 1, "refresh_s": 15, "plans": [...]}` immediately from memory.
+The default list is empty. Each configured path has `path`, `state`, `checked_at`
+(zoned ISO timestamp or null), `file_modified_at` (separate from acceptance
+verification), and `refreshing`. Before its first result the state is `pending`.
+A refresh retains the older result with its original checked-at time and marks
+it `refreshing`; a completed failure replaces it and exposes no passing counts.
+
+Completed states: `ok` only for exit 0 / valid true, `invalid` for exit 1 or
+valid false (with plan-check's errors), `unavailable` when plan-check is not on
+PATH, and `failed` for timeout, setup/IO failure, exit 2, non-JSON, unsupported
+output version or oversized output. Valid rows include `project`, `plan_state`
+(ACTIVE/DORMANT), reported `counts`, `workstreams`, `owner_decisions` and
+`text_available`. Criteria are joined to the optional complete `plan` document
+by id, with the reported status/reason/changed_files taking precedence. Without
+`plan`, ids, statuses and counts remain available and the UI requests a newer
+plan-check. Harness alone validates and decides STALE; a different HEAD is not
+itself a stale acceptance judgement.
+
+`plans.py` runs one sequential background refresh, every 15 seconds after the
+previous refresh finishes. It resolves plan-check on PATH once per refresh and
+passes the configured arguments after tilde expansion without a shell. Each
+check has a 30-second timeout and a combined stdout/stderr limit of 1 MiB. The
+whole process group, including uv/git children, is killed on timeout, overflow
+and shutdown. Git HEAD lookup is bounded to five seconds. Each configured
+path's cache key is the resolved plan path, mtime_ns, size and repository HEAD;
+results and errors expire after 180 seconds even if those inputs are unchanged.
+Empty configuration starts no worker or subprocess. HTTP requests never invoke
+checks, read plan files, accept paths or wait for a refresh. The endpoint shares
+loopback/Host checks, no CORS, no-store and recursive string redaction with the
+other read-only endpoints.
+
+`/plans` shows summaries, open Owner decisions and criteria outside PASS first,
+then native expandable workstream details and answered decisions. HTTPS evidence
+and reference links are rendered as plain links, never fetched or previewed.
+The page polls cached results every 15 seconds while visible.
+
 ### 4.2 `GET /api/record?source_id=…&type=run|job|inbox_item&id=…`
 
 One record in full, for Run detail (and job / inbox detail).
@@ -568,6 +606,9 @@ inbox_old_after_s = 14400
 segment_days = 30
 abandon_days = 90
 history_days = 30
+
+[plans]
+paths = []                # opt-in: ["~/Developer/project", "~/other/docs/plan.yaml"]
 
 [files]
 allowed_roots = []         # plus each adapter's allowed_roots and each NDJSON root

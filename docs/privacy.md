@@ -1,8 +1,9 @@
 # Privacy and security
 
 Fleetglint is a local, read-only board. It has no account, no telemetry and no
-outbound network connection. Everything it reads and stores stays on this
-machine, under the state and config directories described below.
+outbound network connection by default. The opt-in Plans tool exception is
+described below. Plan and record data stays on this machine, under the state
+and config directories described below.
 
 ## What Fleetglint reads
 
@@ -33,8 +34,24 @@ session id, event name, working directory and similar fields; Fleetglint turns
 them into session records. Installing or uninstalling hooks also reads and
 writes `~/.claude/settings.json`.
 
-Fleetglint never asks a tool to do anything. Adapters are read-only: they do
-not write to the tools they read.
+Adapters are read-only: they do not write to the tools they read.
+
+### Opt-in Plans exception
+
+Only when `[plans] paths` is set to a nonempty list, Fleetglint runs
+`plan-check <configured-path> --json` in a bounded background worker. Each entry
+is a repository directory or an explicit plan file; nothing is discovered or
+scanned, and HTTP clients cannot supply paths. The tool reads the listed plan
+files and their git history. Fleetglint also reads file metadata and repository
+HEAD for cache invalidation. It does not parse YAML or validate plans itself.
+
+`plan-check` may download its managed Python and dependencies through uv on first
+use unless installed and warmed beforehand. Run `plan-check --help >/dev/null`
+once as the service user with the same uv cache environment, and let it finish
+before enabling Plans to avoid those setup downloads during background checks.
+No HTTP request starts a tool or a download. Plan results remain in memory and
+all strings pass through the existing redaction code. Evidence and reference
+HTTPS URLs are plain links: Fleetglint never fetches or previews them.
 
 ## What is stored, and where
 

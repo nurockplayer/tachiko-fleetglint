@@ -7,6 +7,9 @@ All notable changes to Fleetglint are recorded here. The format follows
 
 ### Added
 
+- Opt-in read-only Plans page and cached `/api/plans` endpoint, fed exclusively
+  by bounded background `plan-check --json` checks.
+
 - The harness adapter reads GitHub Actions and orb-test jobs, including recent
   orb-test finishes when its finish log is available.
 

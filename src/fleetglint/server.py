@@ -224,6 +224,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "version": __version__})
         elif path == "/api/snapshot":
             self._snapshot()
+        elif path == "/api/plans":
+            self._json(200, self.server.plans.snapshot())
         elif path == "/api/board":
             self._board()
         elif path == "/api/record":
@@ -392,6 +394,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 class _Server(http.server.ThreadingHTTPServer):
+    def server_close(self):
+        if hasattr(self, "plans"):
+            self.plans.close()
+        super().server_close()
+
     def server_bind(self):
         # HTTPServer.server_bind calls socket.getfqdn, which took 35 s on a Mac with slow DNS.
         socketserver.TCPServer.server_bind(self)
@@ -402,13 +409,16 @@ def _raise_interrupt(signum, frame):
     raise KeyboardInterrupt
 
 
-def make_server(backend: Backend, port: int, web_dir: Path | None = None, clock=None) -> http.server.ThreadingHTTPServer:
+def make_server(backend: Backend, port: int, web_dir: Path | None = None, clock=None, plan_paths=()) -> http.server.ThreadingHTTPServer:
     """Bind 127.0.0.1:`port` (0 = ephemeral) and return the server; call serve_forever()."""
     root = Path(web_dir).resolve() if web_dir is not None else default_web_dir()
     server = _Server(("127.0.0.1", port), Handler)
     server.backend = backend
     server.web_root = root
     server.clock = clock or _default_clock
+    from fleetglint.plans import Plans
+    server.plans = Plans(plan_paths)
+    server.plans.start()
     return server
 
 
@@ -426,7 +436,8 @@ def start(cfg, port=None):
     try:
         conn = store.open_db(cfg.db_path)
         conn.close()
-        server = make_server(query.backend(cfg), cfg.port if port is None else port)
+        server = make_server(query.backend(cfg), cfg.port if port is None else port,
+                             plan_paths=cfg.plan_paths)
         stop_event = threading.Event()
         thread = threading.Thread(target=ingest.serve, args=(cfg, stop_event, lock), daemon=True)
         thread.start()
