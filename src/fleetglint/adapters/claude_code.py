@@ -4,6 +4,7 @@ import os
 import stat
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import cache
 from pathlib import Path
 
 from .base import ScanResult, short_hostname
@@ -166,11 +167,13 @@ class ClaudeCodeAdapter:
         self.source_id = f"claude-code@{self.hostname}"
         self.allowed_roots = []
         self._files: dict[Path, _FileState] = {}
+        self._project = cache(_project)
 
     def available(self) -> bool:
         return self.projects_dir.is_dir()
 
     def scan(self, now: datetime) -> ScanResult:
+        self._project.cache_clear()
         if not self.available():
             return ScanResult("unavailable", "projects directory not found", [])
         unreadable = 0
@@ -217,8 +220,8 @@ class ClaudeCodeAdapter:
         cut = max(0, len(found) - _MAX_SESSIONS)
         records = [record for _, record in found[:_MAX_SESSIONS]]
         return ScanResult("ok", _detail(unparseable, unreadable, without_time, mismatches, cut), records,
-                          [(_project(state.agg.cwd), state.agg.cwd) for state in states.values()
-                           if _project(state.agg.cwd)],
+                          [(self._project(state.agg.cwd), state.agg.cwd) for state in states.values()
+                           if self._project(state.agg.cwd)],
                           {(r["type"], r["id"]) for r in records if r.get("project")},
                           record_paths={(r["type"], r["id"]): record_paths[id(r)] for r in records
                                         if record_paths[id(r)] is not None})
@@ -283,7 +286,7 @@ class ClaudeCodeAdapter:
         }
         if agg.started is not None:
             record["started_at"] = agg.started
-        project = _project(agg.cwd)
+        project = self._project(agg.cwd)
         if project:
             record["project"] = project
         if agg.title:

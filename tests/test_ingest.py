@@ -585,6 +585,25 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(store.get_latest(self.conn, "tool@host", "run", "r1")["state"], "done")
         self.assertEqual(store.get_checkpoint(self.conn, "tool@host")["byte_offset"], 3)
 
+    def test_unchanged_adapter_record_skips_validation_but_changes_do_not(self):
+        adapter = FakeAdapter(records=[run(source_id="tool@host")])
+        ingestor = self.adapter_ingestor(adapter)
+        with mock.patch.object(ingestor, "_validate", wraps=ingestor._validate) as validate:
+            ingestor.scan_adapters()
+            self.assertEqual(validate.call_count, 1)
+            ingestor.scan_adapters()
+            self.assertEqual(validate.call_count, 1)
+            adapter.records[0]["state"] = "done"
+            ingestor.scan_adapters()
+            self.assertEqual(validate.call_count, 2)
+            # Python equality treats True and 1 as equal; schema validation must not.
+            adapter.records[0]["v"] = True
+            ingestor.validator = None
+            ingestor.scan_adapters()
+            self.assertEqual(validate.call_count, 3)
+        self.assertEqual(self.history_count(), 2)
+        self.assertTrue(store.quarantine_for(self.conn, "tool@host"))
+
     def test_adapter_invalid_record_is_quarantined(self):
         bad = {"v": 1, "type": "run", "id": "bad", "source_id": "tool@host",
                "updated_at": stamp()}

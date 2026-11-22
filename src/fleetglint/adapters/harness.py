@@ -12,6 +12,7 @@ import signal
 import stat
 from bisect import bisect_left
 from datetime import datetime, timedelta, timezone
+from functools import cache
 from pathlib import Path
 
 from fleetglint.adapters.base import ScanResult, short_hostname
@@ -331,7 +332,7 @@ def _lead_wait_summary(wait):
     return _command_summary(wait["wrapped"])
 
 
-def _job_project(directory, path_projects=None, read_text=_text):
+def _job_project(directory, path_projects=None, read_text=_text, resolve=project_from_path):
     try:
         project = read_text(Path(directory) / "project").strip().splitlines()
         if project:
@@ -345,7 +346,7 @@ def _job_project(directory, path_projects=None, read_text=_text):
     for prefix in sorted(path_projects or {}, key=len, reverse=True):
         if cwd.startswith(prefix):
             return _clip(path_projects[prefix], 200), False
-    return project_from_path(cwd), True
+    return resolve(cwd), True
 
 
 class _Stats:
@@ -383,6 +384,8 @@ class HarnessAdapter:
         self.source_id = f"tachiko-harness@{self.hostname}"
         self._texts = {}
         self._scan_texts = {}
+        self._jobs = {}
+        self._project = cache(project_from_path)
         self.allowed_roots = [self.state_dir / name for name in ROOTS
                               if (self.state_dir / name).is_dir()]
 
@@ -391,6 +394,7 @@ class HarnessAdapter:
 
     def scan(self, now: datetime) -> ScanResult:
         self._scan_texts = {}
+        self._project.cache_clear()
         ledger = self.state_dir / "worker-ledger" / "runs.tsv"
         if not ledger.exists():
             return ScanResult("unavailable", f"{ledger} not found")
@@ -419,8 +423,8 @@ class HarnessAdapter:
         records.extend(decisions)
         self._texts = self._scan_texts
         return ScanResult("ok", stats.detail(), records,
-                          [(project_from_path(r["cwd"]), r["cwd"]) for r in jobs
-                           if r.get("cwd") and project_from_path(r["cwd"])],
+                          [(self._project(r["cwd"]), r["cwd"]) for r in jobs
+                           if r.get("cwd") and self._project(r["cwd"])],
                           directory_jobs | {(r["type"], r["id"]) for r in records
                                             if r.get("kind") == "tachi-run"},
                           {(r["type"], r["id"]) for r in records if r["type"] == "run"}
@@ -767,19 +771,54 @@ class HarnessAdapter:
         except OSError:
             stats.unreadable += 1
             return [], by_id, workers, directory_records
+        cached_jobs = {}
         for directory in entries:
             if not directory.is_dir() or directory.name.startswith("."):
                 continue
-            built = self._job_record(directory, now, stats)
-            if built is None:
-                continue
-            record, worker, derived = built
+            signature = self._job_signature(directory)
+            cached = self._jobs.get(directory)
+            if signature is not None and cached is not None and cached[0] == signature:
+                _, saved, worker, derived = cached
+                record = dict(saved)
+                if "observed_at" in record:
+                    record["observed_at"] = _iso(now)
+                if derived:
+                    project = self._project(self._text(directory / "cwd").strip())
+                    if project is None:
+                        record.pop("project", None)
+                    else:
+                        record["project"] = project
+                cached_jobs[directory] = cached
+            else:
+                malformed, unreadable = stats.malformed, stats.unreadable
+                built = self._job_record(directory, now, stats)
+                if built is None:
+                    continue
+                record, worker, derived = built
+                if (signature is not None and stats.malformed == malformed
+                        and stats.unreadable == unreadable):
+                    cached_jobs[directory] = (signature, dict(record), worker, derived)
             if derived:
                 directory_records.add((record["type"], record["id"]))
             by_id[record["id"]] = record
             if worker:
                 workers[record["id"]] = worker
+        self._jobs = cached_jobs
         return list(by_id.values()), by_id, workers, directory_records
+
+    @staticmethod
+    def _job_signature(directory):
+        signature = []
+        for name in ("cmd", "pid", "result.json", "project", "cwd", "log"):
+            try:
+                info = (directory / name).stat()
+            except FileNotFoundError:
+                signature.append(None)
+            except OSError:
+                return None  # Let the normal reader report the unreadable input.
+            else:
+                signature.append((info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns))
+        return tuple(signature)
 
     def _job_record(self, directory, now, stats):
         """The job record and, for a wait-worker job, the worker it runs (not a field)."""
@@ -804,7 +843,7 @@ class HarnessAdapter:
             record = self._running_job(directory, summary, now, stats)
         if record is None:
             return None
-        project, derived = _job_project(directory, self.path_projects, self._text)
+        project, derived = _job_project(directory, self.path_projects, self._text, self._project)
         if project is not None:
             record["project"] = project
         try:

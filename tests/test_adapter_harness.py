@@ -1297,3 +1297,33 @@ class HarnessCacheTest(unittest.TestCase):
         shutil.rmtree(self.state / "job-run" / "lw-task-two")
         second = by_id(self.adapter.scan(NOW).records)["item"]
         self.assertEqual(second["subject"], {"type": "job", "id": "lw-task-one"})
+
+    def test_cached_job_becomes_terminal_and_project_file_appears(self):
+        directory = write_job(self.state, "live", ["echo", "ok"], pid="123")
+        self.assertEqual(by_id(self.adapter.scan(NOW).records)["live"]["state"], "running")
+        (directory / "result.json").write_text(
+            '{"status":"ok","started":"2026-11-05T09:00:00+09:00",'
+            '"ended":"2026-11-05T09:01:00+09:00","exit_code":0}')
+        (directory / "project").write_text("explicit-project\n")
+        record = by_id(self.adapter.scan(LATER).records)["live"]
+        self.assertEqual(record["state"], "done")
+        self.assertEqual(record["project"], "explicit-project")
+        self.assertNotIn("observed_at", record)
+
+    def test_project_lookup_is_shared_within_scan_and_refreshed_next_scan(self):
+        outer = self.state / "repo"
+        cwd = outer / "nested"
+        cwd.mkdir(parents=True)
+        for job_id in ("one", "two"):
+            directory = write_job(self.state, job_id, ["echo", "ok"])
+            (directory / "cwd").write_text(str(cwd))
+        with mock.patch.object(harness, "project_from_path", wraps=project_from_path) as resolve:
+            adapter = harness.HarnessAdapter(self.state, hostname="testhost")
+            first = by_id(adapter.scan(NOW).records)
+            self.assertEqual(first["one"]["project"], "nested")
+            self.assertEqual(resolve.call_count, 1)
+            (outer / ".git").mkdir()
+            second = by_id(adapter.scan(LATER).records)
+            self.assertEqual(second["one"]["project"], "repo")
+            self.assertEqual(second["two"]["project"], "repo")
+            self.assertEqual(resolve.call_count, 2)

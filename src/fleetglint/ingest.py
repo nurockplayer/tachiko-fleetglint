@@ -492,6 +492,10 @@ class Ingestor:
 
     def _apply_adapter_record(self, source_id, original, position, ingested_ts):
         """Upsert one adapter record; return whether anything visible changed."""
+        conn = self.conn
+        stored = store.get_latest(conn, source_id, original["type"], original["id"])
+        if stored is not None and store.canonical_json(original) == stored["json"]:
+            return False  # This exact record has already passed validation.
         record, reason, detail = self._validate(original, source_id)
         if record is not None and record.get("source_id") != source_id:
             record, reason, detail = None, "source_mismatch", \
@@ -503,7 +507,6 @@ class Ingestor:
             return True
         conn.execute("SAVEPOINT record")
         try:
-            stored = store.get_latest(conn, source_id, record["type"], record["id"])
             if stored is None:
                 changed = True
             else:
