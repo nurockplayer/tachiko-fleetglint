@@ -11,6 +11,60 @@ from tests.test_adapter_harness import LEDGER_HEADER, NOW, make_state, write_job
 
 
 class ProjectAttributionTest(unittest.TestCase):
+    def test_project_cache_skips_unchanged_paths_and_refreshes_remote_and_head(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "app"
+            git = root / ".git"
+            git.mkdir(parents=True)
+            config_path = git / "config"
+            config_path.write_text('[core]\n\tbare = false\n')
+            head = git / "HEAD"
+            head.write_text("ref: refs/heads/main\n")
+            cache = projects.ProjectCache()
+            with mock.patch.object(projects, "_git_repo_name", wraps=projects._git_repo_name) as resolve:
+                self.assertEqual(cache(str(root)), "app")
+                self.assertIsNone(cache.repo_name(str(root), require_remote=True))
+                calls = resolve.call_count
+                cache.begin_scan()
+                self.assertEqual(cache(str(root)), "app")
+                self.assertIsNone(cache.repo_name(str(root), require_remote=True))
+                self.assertEqual(resolve.call_count, calls)
+                config_path.write_text('[remote "origin"]\n\turl = https://example.org/app.git\n')
+                cache.begin_scan()
+                self.assertEqual(cache.repo_name(str(root), require_remote=True), "app")
+                self.assertGreater(resolve.call_count, calls)
+                config_path.write_text('[remote "origin"]\n\turl =\n')
+                cache.begin_scan()
+                self.assertIsNone(cache.repo_name(str(root), require_remote=True))
+                calls = resolve.call_count
+                head.write_text("ref: refs/heads/work\n")
+                cache.begin_scan()
+                self.assertIsNone(cache.repo_name(str(root), require_remote=True))
+                self.assertGreater(resolve.call_count, calls)
+
+    def test_project_cache_tracks_retargeted_worktree_and_common_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            worktree = root / "checkout"
+            worktree.mkdir()
+            for name in ("one", "two"):
+                metadata = root / name / ".git/worktrees/checkout"
+                metadata.mkdir(parents=True)
+                (metadata / "HEAD").write_text("ref: refs/heads/work\n")
+                (root / name / ".git/config").write_text(
+                    '[remote "origin"]\n\turl = https://example.org/repo.git\n')
+            pointer = worktree / ".git"
+            pointer.write_text(f"gitdir: {root}/one/.git/worktrees/checkout\n")
+            cache = projects.ProjectCache()
+            self.assertEqual(cache(str(worktree)), "one")
+            pointer.write_text(f"gitdir: {root}/two/.git/worktrees/checkout\n")
+            cache.begin_scan()
+            self.assertEqual(cache(str(worktree)), "two")
+            self.assertEqual(cache.repo_name(str(worktree), require_remote=True), "two")
+            (root / "two/.git/config").write_text('[core]\n\tbare = false\n')
+            cache.begin_scan()
+            self.assertIsNone(cache.repo_name(str(worktree), require_remote=True))
+
     def test_existing_scratch_labels_are_global_across_producers(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -15,6 +15,10 @@ All notable changes to Fleetglint are recorded here. The format follows
 
 ### Changed
 
+- The default adapter polling interval is 30 seconds (configurable through
+  `ingest.adapter_poll_s`) to reduce CPU use on large harness state. NDJSON
+  root polling remains at 2 seconds.
+
 - Role-based project inference removes the last hyphen segment.
 
 ### Fixed

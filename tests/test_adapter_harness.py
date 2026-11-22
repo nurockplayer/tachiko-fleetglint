@@ -406,7 +406,7 @@ class HarnessAdapterTest(unittest.TestCase):
             child.mkdir()
             with mock.patch.object(Path, "home", return_value=home):
                 self.assertEqual(project_from_path(str(child)), "vpn")
-            with mock.patch.object(Path, "exists", side_effect=PermissionError):
+            with mock.patch("fleetglint.projects.os.stat", side_effect=PermissionError):
                 self.assertEqual(project_from_path(str(child)), "vpn")
 
     def test_identity_and_allowed_roots(self):
@@ -427,7 +427,7 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertIn("not found", result.detail)
 
     def test_unreadable_ledger_is_unavailable(self):
-        with mock.patch.object(harness, "_text", side_effect=PermissionError(13, "denied")):
+        with mock.patch.object(self.adapter, "_text", side_effect=PermissionError(13, "denied")):
             result = self.adapter.scan(NOW)
         self.assertEqual(result.status, "unavailable")
         self.assertIn("cannot read", result.detail)
@@ -1234,3 +1234,172 @@ class HarnessAdapterTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HarnessCacheTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state = make_state(tmp.name)
+        self.adapter = harness.HarnessAdapter(self.state, hostname="testhost")
+
+    def test_unchanged_files_are_not_read_again_and_observation_stays_fresh(self):
+        write_job(self.state, "live", ["sleep", "5"], pid="123")
+        with mock.patch.object(harness, "_text", wraps=harness._text) as read:
+            first = by_id(self.adapter.scan(NOW).records)["live"]
+            self.assertGreater(read.call_count, 0)
+            read.reset_mock()
+            first["role_id"] = "added-by-linker"
+            second = by_id(self.adapter.scan(LATER).records)["live"]
+            read.assert_not_called()
+        self.assertNotIn("role_id", second)
+        self.assertEqual(second["observed_at"], LATER.isoformat(timespec="seconds"))
+
+    def test_changed_files_and_new_removed_directories_show_up_next_scan(self):
+        directory = write_job(self.state, "existing", ["echo", "old"])
+        self.adapter.scan(NOW)
+        cmd = directory / "cmd"
+        cmd.write_text("echo\nchanged-size\n")
+        write_job(self.state, "new", ["echo", "new"])
+        records = by_id(self.adapter.scan(NOW).records)
+        self.assertEqual(records["existing"]["command_summary"], "echo changed-size")
+        self.assertIn("new", records)
+        # Same-size rewrites must invalidate too, not only appended files.
+        cmd.write_text("echo\nchanged-text\n")
+        shutil.rmtree(self.state / "job-run" / "new")
+        records = by_id(self.adapter.scan(NOW).records)
+        self.assertEqual(records["existing"]["command_summary"], "echo changed-text")
+        self.assertNotIn("new", records)
+        shutil.rmtree(directory)
+        write_job(self.state, "existing", ["echo", "replacement"])
+        records = by_id(self.adapter.scan(NOW).records)
+        self.assertEqual(records["existing"]["command_summary"], "echo replacement")
+
+    def test_ledger_append_and_removal_invalidate_cached_text(self):
+        self.adapter.scan(NOW)
+        with mock.patch.object(self.adapter, "_ledger_record") as parse:
+            self.adapter.scan(LATER)
+            parse.assert_not_called()
+        ledger = self.state / "worker-ledger" / "runs.tsv"
+        with ledger.open("a") as stream:
+            stream.write("2026-11-05 09:00 JST\t2026-11-05 09:01 JST\tcx\talpha\tworker\tmodel\t-\t0\t-\t/tmp/worker.log\n")
+        records = self.adapter.scan(NOW).records
+        self.assertEqual(len([r for r in records if r["type"] == "run"]), 1)
+        ledger.write_text(LEDGER_HEADER)
+        self.assertFalse(any(r["type"] == "run" for r in self.adapter.scan(NOW).records))
+
+    def test_inbox_cache_reuses_parsing_and_refreshes_changed_rows(self):
+        inbox = self.state / "lead-inbox"
+        inbox.mkdir()
+        path = inbox / "owner.tsv"
+        path.write_text("item\t2026-11-05 09:00 JST\trun\ttask\tdone\tfinished\n")
+        self.adapter.scan(NOW)
+        with mock.patch.object(self.adapter, "_inbox_record",
+                               wraps=self.adapter._inbox_record) as parse:
+            self.adapter.scan(LATER)
+            parse.assert_not_called()
+            path.write_text("item\t2026-11-05 09:00 JST\trun\ttask\tfailed\tbroken\n")
+            record = by_id(self.adapter.scan(LATER).records)["item"]
+            self.assertEqual(parse.call_count, 1)
+        self.assertEqual(record["outcome"], "failed")
+        self.assertTrue(record["action_required"])
+
+    def test_label_lookup_tracks_ambiguity_after_directory_removal(self):
+        for suffix in ("one", "two"):
+            write_job(self.state, f"lw-task-{suffix}", ["echo", "ok"])
+        inbox = self.state / "lead-inbox"
+        inbox.mkdir()
+        (inbox / "owner.tsv").write_text(
+            "item\t2026-11-05 09:00 JST\trun\ttask\tdone\tfinished\n")
+        first = by_id(self.adapter.scan(NOW).records)["item"]
+        self.assertEqual(first["subject"]["type"], "external")
+        shutil.rmtree(self.state / "job-run" / "lw-task-two")
+        second = by_id(self.adapter.scan(NOW).records)["item"]
+        self.assertEqual(second["subject"], {"type": "job", "id": "lw-task-one"})
+
+    def test_cached_job_becomes_terminal_and_project_file_appears(self):
+        directory = write_job(self.state, "live", ["echo", "ok"], pid="123")
+        self.assertEqual(by_id(self.adapter.scan(NOW).records)["live"]["state"], "running")
+        (directory / "result.json").write_text(
+            '{"status":"ok","started":"2026-11-05T09:00:00+09:00",'
+            '"ended":"2026-11-05T09:01:00+09:00","exit_code":0}')
+        (directory / "project").write_text("explicit-project\n")
+        record = by_id(self.adapter.scan(LATER).records)["live"]
+        self.assertEqual(record["state"], "done")
+        self.assertEqual(record["project"], "explicit-project")
+        self.assertNotIn("observed_at", record)
+
+    def test_finished_job_checks_directory_instead_of_contents(self):
+        directory = write_job(self.state, "finished", ["echo", "ok"], result=(
+            '{"status":"ok","started":"2026-11-05T09:00:00+09:00",'
+            '"ended":"2026-11-05T09:01:00+09:00","exit_code":0}'))
+        self.adapter.scan(NOW)
+        with mock.patch.object(self.adapter, "_job_signature",
+                               wraps=self.adapter._job_signature) as signature:
+            self.assertEqual(by_id(self.adapter.scan(LATER).records)["finished"]["state"], "done")
+            signature.assert_not_called()
+            (directory / "project").write_text("added-project\n")
+            self.assertEqual(by_id(self.adapter.scan(LATER).records)["finished"]["project"],
+                             "added-project")
+            self.assertEqual(signature.call_count, 1)
+            (directory / "project").unlink()
+            self.assertNotIn("project", by_id(self.adapter.scan(LATER).records)["finished"])
+            self.assertEqual(signature.call_count, 2)
+
+    def test_running_job_is_checked_until_finished_and_directories_stay_live(self):
+        directory = write_job(self.state, "live", ["echo", "old"], pid="123")
+        self.adapter.scan(NOW)
+        with mock.patch.object(self.adapter, "_job_signature",
+                               wraps=self.adapter._job_signature) as signature:
+            (directory / "cmd").write_text("echo\nnew\n")
+            self.assertEqual(by_id(self.adapter.scan(LATER).records)["live"]["command_summary"],
+                             "echo new")
+            self.assertEqual(signature.call_count, 1)
+            (directory / "result.json").write_text(
+                '{"status":"ok","started":"2026-11-05T09:00:00+09:00",'
+                '"ended":"2026-11-05T09:01:00+09:00","exit_code":0}')
+            self.assertEqual(by_id(self.adapter.scan(LATER).records)["live"]["state"], "done")
+            self.assertEqual(signature.call_count, 2)
+            self.adapter.scan(LATER)
+            self.assertEqual(signature.call_count, 2)
+            write_job(self.state, "new", ["echo", "new"], pid="124")
+            self.assertIn("new", by_id(self.adapter.scan(LATER).records))
+            shutil.rmtree(directory)
+            records = by_id(self.adapter.scan(LATER).records)
+            self.assertNotIn("live", records)
+            self.assertIn("new", records)
+
+    def test_project_lookup_is_shared_within_scan_and_refreshed_next_scan(self):
+        outer = self.state / "repo"
+        cwd = outer / "nested"
+        cwd.mkdir(parents=True)
+        for job_id in ("one", "two"):
+            directory = write_job(self.state, job_id, ["echo", "ok"])
+            (directory / "cwd").write_text(str(cwd))
+        with mock.patch.object(harness, "project_from_path", wraps=project_from_path) as resolve:
+            adapter = harness.HarnessAdapter(self.state, hostname="testhost")
+            first = by_id(adapter.scan(NOW).records)
+            self.assertEqual(first["one"]["project"], "nested")
+            self.assertEqual(resolve.call_count, 1)
+            (outer / ".git").mkdir()
+            second = by_id(adapter.scan(LATER).records)
+            self.assertEqual(second["one"]["project"], "repo")
+            self.assertEqual(second["two"]["project"], "repo")
+            self.assertEqual(resolve.call_count, 2)
+            adapter.scan(LATER)
+            self.assertEqual(resolve.call_count, 2)
+
+    def test_finished_test_rows_refresh_when_changed_and_expire_with_time(self):
+        root = self.state / "tachi-run"
+        root.mkdir()
+        finish = root / "runs.tsv"
+        prefix = f"{int(NOW.timestamp()) - 60}\t123\tThu Nov  5 02:00:00 2026\tdemo\t"
+        finish.write_text(prefix + "first command\t0\n")
+        first = [r for r in self.adapter.scan(NOW).records if r.get("kind") == "tachi-run"]
+        self.assertEqual(first[0]["command_summary"], "first command")
+        self.assertEqual(first[0]["state"], "done")
+        finish.write_text(prefix + "second changed label\t0\n")
+        second = [r for r in self.adapter.scan(LATER).records if r.get("kind") == "tachi-run"]
+        self.assertEqual(second[0]["command_summary"], "second changed label")
+        expired = self.adapter.scan(NOW + timedelta(hours=25))
+        self.assertFalse(any(r.get("kind") == "tachi-run" for r in expired.records))

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .base import ScanResult, short_hostname
-from fleetglint.projects import project_from_path
+from fleetglint.projects import ProjectCache, project_from_path
 
 _CHUNK = 1 << 20
 _MAX_SESSIONS = 5000
@@ -33,8 +33,8 @@ def _count(value):
     return 0
 
 
-def _project(cwd):
-    return project_from_path(cwd)
+def _project(cwd, *, _repo_name=None):
+    return project_from_path(cwd, _repo_name=_repo_name)
 
 
 def _consume_stream(stream, on_line):
@@ -146,11 +146,13 @@ class CodexAdapter:
         self.source_id = f"codex-cli@{self.hostname}"
         self.allowed_roots = []
         self._files: dict[Path, _FileState] = {}
+        self._project = ProjectCache(_project)
 
     def available(self) -> bool:
         return (self.codex_home / "sessions").is_dir() or (self.codex_home / "archived_sessions").is_dir()
 
     def scan(self, now: datetime) -> ScanResult:
+        self._project.begin_scan()
         if not self.available():
             return ScanResult("unavailable", "sessions directory not found", [])
         unreadable = 0
@@ -201,8 +203,8 @@ class CodexAdapter:
         result = [record for _, record in records[:_MAX_SESSIONS]]
         detail = _detail(unparseable, unreadable, unsupported, without_meta, duplicates, cut)
         return ScanResult("ok", detail, result,
-                          [(_project(state.agg.cwd), state.agg.cwd) for state in states.values()
-                           if _project(state.agg.cwd)],
+                          [(self._project(state.agg.cwd), state.agg.cwd) for state in states.values()
+                           if self._project(state.agg.cwd)],
                           {(r["type"], r["id"]) for r in result if r.get("project")},
                           record_paths={(r["type"], r["id"]): record_paths[id(r)] for r in result
                                         if record_paths[id(r)] is not None})
@@ -264,7 +266,7 @@ class CodexAdapter:
         }
         if agg.started is not None:
             record["started_at"] = agg.started
-        project = _project(agg.cwd)
+        project = self._project(agg.cwd)
         if project:
             record["project"] = project
         if agg.provider:

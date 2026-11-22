@@ -1,6 +1,7 @@
 """Resolve a working directory to its project name."""
 import os
 import re
+import stat
 from pathlib import Path
 
 
@@ -44,7 +45,87 @@ def _has_remote(git_dir):
 
 
 
-def _git_repo_name(path, *, require_remote=False):
+def _path_stat(path):
+    try:
+        return os.stat(path)
+    except OSError:
+        return None
+
+
+def _signature(info):
+    return None if info is None else (info.st_ino, info.st_mode, info.st_size,
+                                      info.st_mtime_ns, info.st_ctime_ns)
+
+
+class ProjectCache:
+    """Keep project/repository results while their filesystem evidence is unchanged."""
+
+    def __init__(self, resolve=None):
+        self.resolve = resolve or project_from_path
+        self._projects = {}
+        self._repos = {}
+        self._stats = {}
+        self._scan_projects = {}
+        self._scan_repos = {}
+
+    def begin_scan(self):
+        self._stats = {}
+        self._scan_projects = {}
+        self._scan_repos = {}
+
+    def _stat(self, path):
+        path = os.fspath(path)
+        if path not in self._stats:
+            self._stats[path] = _path_stat(path)
+        return self._stats[path]
+
+    def _unchanged(self, evidence):
+        return all(_signature(self._stat(path)) == value for path, value in evidence.items())
+
+    def _repo(self, path, require_remote):
+        key = (path, require_remote)
+        if key in self._scan_repos:
+            return self._scan_repos[key]
+        cached = self._repos.get(key)
+        if cached is not None and self._unchanged(cached[0]):
+            self._scan_repos[key] = cached
+            return cached
+        evidence = {}
+
+        def inspect(path):
+            info = self._stat(path)
+            evidence[os.fspath(path)] = _signature(info)
+            return info
+
+        name = _git_repo_name(path, require_remote=require_remote, _stat=inspect)
+        self._repos[key] = (evidence, name)
+        self._scan_repos[key] = (evidence, name)
+        return evidence, name
+
+    def repo_name(self, path, *, require_remote=False):
+        return self._repo(path, require_remote)[1]
+
+    def __call__(self, path):
+        if path in self._scan_projects:
+            return self._scan_projects[path]
+        cached = self._projects.get(path)
+        if cached is not None and self._unchanged(cached[0]):
+            self._scan_projects[path] = cached[1]
+            return cached[1]
+        evidence = {}
+
+        def repo_name(path):
+            dependencies, name = self._repo(path, False)
+            evidence.update(dependencies)
+            return name
+
+        name = self.resolve(path, _repo_name=repo_name)
+        self._projects[path] = (evidence, name)
+        self._scan_projects[path] = name
+        return name
+
+
+def _git_repo_name(path, *, require_remote=False, _stat=_path_stat):
     """The repo a directory is in, from its `.git` entry; a worktree's `.git` file names the repo."""
     current = Path(path)
     home = Path.home()
@@ -52,18 +133,26 @@ def _git_repo_name(path, *, require_remote=False):
         if len(directory.parts) <= 2 or directory == home or directory in home.parents:
             return None
         try:
-            if not directory.exists() and re.fullmatch(r"(.+)-wt(?:-.+)?", directory.name):
+            if re.fullmatch(r"(.+)-wt(?:-.+)?", directory.name) and _stat(directory) is None:
                 return None
             entry = directory / ".git"
-            if entry.is_dir():
+            info = _stat(entry)
+            if info is None:
+                continue
+            if stat.S_ISDIR(info.st_mode):
+                _stat(entry / "config")
+                _stat(entry / "HEAD")
                 if require_remote and not _has_remote(entry):
                     continue
                 return directory.name
-            if entry.is_file():
+            if stat.S_ISREG(info.st_mode):
                 with entry.open(encoding="utf-8", errors="replace") as handle:
                     line = handle.read(4096).strip()
                 if line.startswith("gitdir:") and "/worktrees/" in line:
                     common = line[len("gitdir:"):].strip().rsplit("/worktrees/", 1)[0]
+                    _stat(directory / common / "config")
+                    _stat(directory / common / "HEAD")
+                    _stat(directory / line[len("gitdir:"):].strip() / "HEAD")
                     if require_remote and not _has_remote(directory / common):
                         continue
                     if common.endswith("/.git"):
@@ -76,13 +165,14 @@ def _git_repo_name(path, *, require_remote=False):
     return None
 
 
-def directory_attributions(project_paths, *, role_projects, path_projects):
+def directory_attributions(project_paths, *, role_projects, path_projects, repo_name=None):
     """Correct directory labels using live repository or configured project evidence.
 
     Missing directories retain the producer's saved attribution (deleted worktrees).
     Evidence is shared across producers because finished ledgers omit their cwd.
     """
     configured = set(role_projects.values()) | set(path_projects.values())
+    repo_name = repo_name or _git_repo_name
     prefixes = {os.path.expanduser(prefix): name for prefix, name in path_projects.items()}
     candidates = {}
     repo_paths = set()
@@ -90,14 +180,14 @@ def directory_attributions(project_paths, *, role_projects, path_projects):
     for project, path in set(project_paths):
         if not Path(path).is_dir():
             continue
-        if _git_repo_name(path) == project:
+        if repo_name(path) == project:
             repo_paths.add((project, path))
         if project in configured:
             continue
         resolved = next((prefixes[prefix] for prefix in sorted(prefixes, key=len, reverse=True)
                          if path.startswith(prefix)), None)
         if resolved is None:
-            resolved = _git_repo_name(path, require_remote=True)
+            resolved = repo_name(path, require_remote=True)
         path_attributions[project, path] = resolved
         candidates.setdefault(project, set()).add(resolved)
     attributions = {}
@@ -134,14 +224,14 @@ def _is_boundary(path):
     return False
 
 
-def project_from_path(path):
+def project_from_path(path, *, _repo_name=None):
     if not isinstance(path, str) or not path:
         return None
     path = path.split("/.claude/", 1)[0]
     review_repo = _review_repo_name(path)
     if review_repo:
         return _clip(review_repo, 200)
-    name = _git_repo_name(path)
+    name = (_repo_name or _git_repo_name)(path)
     if not name and _is_boundary(path):
         return None
     if not name:

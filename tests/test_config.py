@@ -25,6 +25,8 @@ class ConfigTest(unittest.TestCase):
     def test_missing_file_gives_defaults(self):
         cfg = config.load()
         self.assertEqual(cfg.port, 8765)
+        self.assertEqual(cfg.poll_s, 2)
+        self.assertEqual(cfg.adapter_poll_s, 30)
         self.assertEqual(cfg.roots, [self.dir / "state/fleetglint/sources"])
         self.assertEqual(cfg.db_path, self.dir / "state/fleetglint/fleetglint.sqlite")
         self.assertEqual(cfg.viewer_roles, ["owner"])
@@ -80,11 +82,12 @@ class ConfigTest(unittest.TestCase):
                 config.load(self.write(f'[ui]\nunowned_failure_hours = {value}\n'))
 
     def test_values_are_read(self):
-        cfg = config.load(self.write('[server]\nport = 9000\n[ingest]\nroots = ["/tmp/a"]\npoll_s = 1\n'
+        cfg = config.load(self.write('[server]\nport = 9000\n[ingest]\nroots = ["/tmp/a"]\npoll_s = 1\nadapter_poll_s = 5\n'
                                      '[adapters.tachiko_harness]\nenabled = false\n'))
         self.assertEqual(cfg.port, 9000)
         self.assertEqual(cfg.roots, [Path("/tmp/a")])
         self.assertEqual(cfg.poll_s, 1.0)
+        self.assertEqual(cfg.adapter_poll_s, 5.0)
         self.assertEqual(cfg.harness.enabled, "false")
 
     def test_adapter_dirs_follow_tool_env(self):

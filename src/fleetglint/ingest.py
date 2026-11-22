@@ -4,6 +4,7 @@ import gzip
 import hashlib
 import json
 import os
+import pickle
 import re
 import sqlite3
 import sys
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from fleetglint import config, store
 from fleetglint.demo import SOURCE_ID as DEMO_SOURCE_ID
-from fleetglint.projects import directory_attributions
+from fleetglint.projects import ProjectCache, directory_attributions
 
 _SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._-]*)?$")
 _SEGMENT_RE = re.compile(r"^(\d{10})\.ndjson(\.gz)?$")
@@ -84,6 +85,8 @@ class Ingestor:
         self.max_batch_bytes = self.MAX_BATCH_BYTES
         # Test seam: called after every line inside its transaction; raising rolls the batch back.
         self.line_hook = None
+        self._adapter_records = {}
+        self._project = ProjectCache()
 
     # --- time -------------------------------------------------------------
 
@@ -145,6 +148,7 @@ class Ingestor:
 
     def _forget_source(self, source_id):
         """Drop everything stored for a source, including its retention markers."""
+        self._adapter_records.pop(source_id, None)
         conn = self.conn
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -404,6 +408,7 @@ class Ingestor:
 
     def scan_adapters(self):
         """Run every adapter once (architecture §6)."""
+        self._project.begin_scan()
         scans = []
         for adapter in self.adapters:
             source_id = adapter.source_id
@@ -425,7 +430,7 @@ class Ingestor:
         attributions, repo_paths, path_attributions = directory_attributions(
             [pair for _, result, _ in scans for pair in result.project_paths],
             role_projects=self.cfg.harness.role_projects,
-            path_projects=self.cfg.harness.path_projects)
+            path_projects=self.cfg.harness.path_projects, repo_name=self._project.repo_name)
         repo_labels = {project for project, _ in repo_paths}
         for adapter, result, now in scans:
             for record in result.records:
@@ -471,27 +476,53 @@ class Ingestor:
             checkpoint = store.get_checkpoint(conn, source_id)
             position = checkpoint["byte_offset"] if checkpoint else 0
             ingested_ts = now.timestamp()
+            cached_records = self._adapter_records.get(source_id, {}).copy()
+            present = set()
+            stored_records = {}
+            applied = False
             for record in result.records:
                 position += 1
+                key = (record["type"], record["id"])
+                present.add(key)
+                # Pickle is only an in-memory comparison token, never loaded. Unlike
+                # dict equality, it distinguishes schema changes such as 1 -> True.
+                token = pickle.dumps(record, protocol=5)
+                if cached_records.get(key) == token:
+                    continue
+                applied = True
+                if key not in stored_records:
+                    row = conn.execute("SELECT json FROM records WHERE source_id = ? AND type = ? AND id = ?",
+                                       (source_id, *key)).fetchone()
+                    stored_records[key] = row["json"] if row else None
                 changed = self._apply_adapter_record(source_id, record, position,
-                                                     ingested_ts) or changed
+                                                     ingested_ts, stored_records) or changed
+                if stored_records.get(key) == store.canonical_json(record):
+                    cached_records[key] = token
             store.set_checkpoint(conn, source_id, 0, position)
             if existing is None or existing["status"] != "ok" or existing["detail"] is not None:
                 changed = True
             store.update_source(conn, source_id, status="ok", detail=None,
                                 last_scan_at=now.isoformat())
-            store.refresh_last_record(conn, source_id)
+            if applied:
+                store.refresh_last_record(conn, source_id)
             # A scan that changed nothing (the usual re-scan) must not move the
             # change counter, or the board's ETag never settles (architecture §10).
             if changed:
                 store.bump_change_counter(conn)
             conn.execute("COMMIT")
+            self._adapter_records[source_id] = {key: cached_records[key]
+                                               for key in present if key in cached_records}
         except BaseException:
             conn.execute("ROLLBACK")
             raise
 
-    def _apply_adapter_record(self, source_id, original, position, ingested_ts):
+    def _apply_adapter_record(self, source_id, original, position, ingested_ts, stored_records):
         """Upsert one adapter record; return whether anything visible changed."""
+        conn = self.conn
+        key = (original["type"], original["id"])
+        stored = stored_records.get(key)
+        if stored is not None and store.canonical_json(original) == stored:
+            return False  # This exact record has already passed validation.
         record, reason, detail = self._validate(original, source_id)
         if record is not None and record.get("source_id") != source_id:
             record, reason, detail = None, "source_mismatch", \
@@ -503,23 +534,24 @@ class Ingestor:
             return True
         conn.execute("SAVEPOINT record")
         try:
-            stored = store.get_latest(conn, source_id, record["type"], record["id"])
             if stored is None:
                 changed = True
             else:
-                previous = json.loads(stored["json"])
+                previous = json.loads(stored)
                 if previous == record:
                     conn.execute("RELEASE record")
                     return False
                 if _without_observed(previous) == _without_observed(record):
                     # A fresh observed_at alone reaches clients with the ETag's time bucket.
-                    store.put_latest(conn, record, 0, position)
+                    if store.put_latest(conn, record, 0, position):
+                        stored_records[key] = store.canonical_json(record)
                     conn.execute("RELEASE record")
                     return False
                 changed = True
             if changed:
                 store.insert_history(conn, record, 0, position, ingested_ts)
-                store.put_latest(conn, record, 0, position)
+                if store.put_latest(conn, record, 0, position):
+                    stored_records[key] = store.canonical_json(record)
                 store.replace_refs(conn, record)
         except (KeyError, TypeError, ValueError) as exc:
             conn.execute("ROLLBACK TO record")
@@ -624,6 +656,8 @@ class Ingestor:
             conn.execute("ROLLBACK")
             self._pending_unlink = []
             raise
+        if changed:
+            self._adapter_records.clear()
         self._unlink_retired(self._pending_unlink)
         self._pending_unlink = []
 
