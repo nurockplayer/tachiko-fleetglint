@@ -832,6 +832,26 @@ class HarnessAdapterTest(unittest.TestCase):
             self.assertEqual(record["cwd"], cwd)
             self.assertEqual(schema.validate(record), [])
 
+    def test_job_role_project_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = make_state(tmp)
+            cases = (
+                ("scratch", "/private/tmp/claude-501/scratch", None, "sheet-lead", "tachiko-sheet"),
+                ("explicit", "/private/tmp/claude-501/scratch", "explicit", "sheet-lead", "explicit"),
+                ("unmapped", "/private/tmp/claude-501/scratch", None, "other-lead", None),
+                ("repo", "/Users/example/Developer/alpha", None, "sheet-lead", "alpha"),
+            )
+            for name, cwd, project, role, _ in cases:
+                directory = write_job(state, name, lead_wait_cmd(role, "run", "tests", ["true"]))
+                (directory / "cwd").write_text(cwd)
+                if project:
+                    (directory / "project").write_text(project)
+            records = by_id(harness.HarnessAdapter(
+                state, hostname="h", role_projects={"sheet": "tachiko-sheet"}).scan(NOW).records)
+            for name, _, _, _, expected in cases:
+                with self.subTest(job=name):
+                    self.assertEqual(records[name].get("project"), expected)
+
     def test_job_without_a_readable_cwd_has_no_project(self):
         for kind in ("absent", "directory"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:

@@ -399,6 +399,11 @@ class HarnessAdapter:
         records = self._scan_runs(ledger_text, now, stats, aliases)
         jobs, jobs_by_id, workers, directory_jobs = self._scan_jobs(now, stats)
         self._link_waits(jobs_by_id, stats)
+        for job in jobs:
+            if not job.get("project") and job.get("role_id"):
+                project = self._configured_role_project(job["role_id"])
+                if project is not None:
+                    job["project"] = project
         self._link_runs_to_jobs(records, jobs_by_id)
         self._link_run_roles(records, jobs_by_id, workers)
         records.extend(jobs)
@@ -977,12 +982,18 @@ class HarnessAdapter:
     def _role_project(role):
         return role.rsplit("-", 1)[0] if "-" in role else None
 
-    def _role_project_for(self, role, aliases, known):
+    def _configured_role_project(self, role):
         prefix = self._role_project(role)
         while prefix is not None:
             if prefix in self.role_projects:
                 return self.role_projects[prefix]
             prefix = self._role_project(prefix)
+        return None
+
+    def _role_project_for(self, role, aliases, known):
+        configured = self._configured_role_project(role)
+        if configured is not None:
+            return configured
         prefix = self._role_project(role)
         while prefix is not None:
             if prefix in aliases:
