@@ -52,7 +52,7 @@ class Config:
     port: int = 8765
     roots: list[Path] = field(default_factory=lambda: [state_dir() / "sources"])
     poll_s: float = 2
-    adapter_poll_s: float = 5
+    adapter_poll_s: float = 30
     default_stale_after_s: int = 900
     window_hours: int = 24
     viewer_roles: list[str] = field(default_factory=lambda: ["owner"])

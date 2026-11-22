@@ -431,9 +431,10 @@ segment grew (or whose segment set changed) runs spec §7.3 for the new bytes,
 batch size at most 1000 lines or 4 MiB per transaction. Discontinuities per
 spec §7.4 set `sources.status = 'discontinuity'` and stop ingesting that
 source until `fleetglint source reset <id>` (acknowledge and rebuild that
-source from its remaining segments). Every `adapter_poll_s` (default 5 s)
+source from its remaining segments). Every `adapter_poll_s` (default 30 s)
 it runs each enabled adapter (§6). Retention (spec §7.5) runs once an hour
-and at start.
+and at start. The longer adapter interval reduces CPU use on large harness
+state; it remains configurable independently of the NDJSON root interval.
 
 `.gz` segments: read with `gzip`; a fully ingested `.ndjson` that becomes
 `.ndjson.gz` is checked once against the stored length and fingerprint
@@ -593,6 +594,7 @@ port = 8765                # host is always 127.0.0.1
 [ingest]
 roots = ["~/.local/state/fleetglint/sources"]
 poll_s = 2
+adapter_poll_s = 30        # reduce CPU use on large harness state
 default_stale_after_s = 900
 window_hours = 24
 
