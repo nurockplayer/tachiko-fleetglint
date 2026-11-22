@@ -406,7 +406,7 @@ class HarnessAdapterTest(unittest.TestCase):
             child.mkdir()
             with mock.patch.object(Path, "home", return_value=home):
                 self.assertEqual(project_from_path(str(child)), "vpn")
-            with mock.patch.object(Path, "exists", side_effect=PermissionError):
+            with mock.patch("fleetglint.projects.os.stat", side_effect=PermissionError):
                 self.assertEqual(project_from_path(str(child)), "vpn")
 
     def test_identity_and_allowed_roots(self):
@@ -1329,6 +1329,46 @@ class HarnessCacheTest(unittest.TestCase):
         self.assertEqual(record["project"], "explicit-project")
         self.assertNotIn("observed_at", record)
 
+    def test_finished_job_checks_directory_instead_of_contents(self):
+        directory = write_job(self.state, "finished", ["echo", "ok"], result=(
+            '{"status":"ok","started":"2026-11-05T09:00:00+09:00",'
+            '"ended":"2026-11-05T09:01:00+09:00","exit_code":0}'))
+        self.adapter.scan(NOW)
+        with mock.patch.object(self.adapter, "_job_signature",
+                               wraps=self.adapter._job_signature) as signature:
+            self.assertEqual(by_id(self.adapter.scan(LATER).records)["finished"]["state"], "done")
+            signature.assert_not_called()
+            (directory / "project").write_text("added-project\n")
+            self.assertEqual(by_id(self.adapter.scan(LATER).records)["finished"]["project"],
+                             "added-project")
+            self.assertEqual(signature.call_count, 1)
+            (directory / "project").unlink()
+            self.assertNotIn("project", by_id(self.adapter.scan(LATER).records)["finished"])
+            self.assertEqual(signature.call_count, 2)
+
+    def test_running_job_is_checked_until_finished_and_directories_stay_live(self):
+        directory = write_job(self.state, "live", ["echo", "old"], pid="123")
+        self.adapter.scan(NOW)
+        with mock.patch.object(self.adapter, "_job_signature",
+                               wraps=self.adapter._job_signature) as signature:
+            (directory / "cmd").write_text("echo\nnew\n")
+            self.assertEqual(by_id(self.adapter.scan(LATER).records)["live"]["command_summary"],
+                             "echo new")
+            self.assertEqual(signature.call_count, 1)
+            (directory / "result.json").write_text(
+                '{"status":"ok","started":"2026-11-05T09:00:00+09:00",'
+                '"ended":"2026-11-05T09:01:00+09:00","exit_code":0}')
+            self.assertEqual(by_id(self.adapter.scan(LATER).records)["live"]["state"], "done")
+            self.assertEqual(signature.call_count, 2)
+            self.adapter.scan(LATER)
+            self.assertEqual(signature.call_count, 2)
+            write_job(self.state, "new", ["echo", "new"], pid="124")
+            self.assertIn("new", by_id(self.adapter.scan(LATER).records))
+            shutil.rmtree(directory)
+            records = by_id(self.adapter.scan(LATER).records)
+            self.assertNotIn("live", records)
+            self.assertIn("new", records)
+
     def test_project_lookup_is_shared_within_scan_and_refreshed_next_scan(self):
         outer = self.state / "repo"
         cwd = outer / "nested"
@@ -1345,6 +1385,8 @@ class HarnessCacheTest(unittest.TestCase):
             second = by_id(adapter.scan(LATER).records)
             self.assertEqual(second["one"]["project"], "repo")
             self.assertEqual(second["two"]["project"], "repo")
+            self.assertEqual(resolve.call_count, 2)
+            adapter.scan(LATER)
             self.assertEqual(resolve.call_count, 2)
 
     def test_finished_test_rows_refresh_when_changed_and_expire_with_time(self):

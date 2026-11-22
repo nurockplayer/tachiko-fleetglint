@@ -17,7 +17,7 @@ from pathlib import Path
 
 from fleetglint import config, store
 from fleetglint.demo import SOURCE_ID as DEMO_SOURCE_ID
-from fleetglint.projects import directory_attributions
+from fleetglint.projects import ProjectCache, directory_attributions
 
 _SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*(@[a-z0-9][a-z0-9._-]*)?$")
 _SEGMENT_RE = re.compile(r"^(\d{10})\.ndjson(\.gz)?$")
@@ -86,6 +86,7 @@ class Ingestor:
         # Test seam: called after every line inside its transaction; raising rolls the batch back.
         self.line_hook = None
         self._adapter_records = {}
+        self._project = ProjectCache()
 
     # --- time -------------------------------------------------------------
 
@@ -407,6 +408,7 @@ class Ingestor:
 
     def scan_adapters(self):
         """Run every adapter once (architecture §6)."""
+        self._project.begin_scan()
         scans = []
         for adapter in self.adapters:
             source_id = adapter.source_id
@@ -428,7 +430,7 @@ class Ingestor:
         attributions, repo_paths, path_attributions = directory_attributions(
             [pair for _, result, _ in scans for pair in result.project_paths],
             role_projects=self.cfg.harness.role_projects,
-            path_projects=self.cfg.harness.path_projects)
+            path_projects=self.cfg.harness.path_projects, repo_name=self._project.repo_name)
         repo_labels = {project for project, _ in repo_paths}
         for adapter, result, now in scans:
             for record in result.records:
@@ -476,7 +478,8 @@ class Ingestor:
             ingested_ts = now.timestamp()
             cached_records = self._adapter_records.get(source_id, {}).copy()
             present = set()
-            stored_records = None
+            stored_records = {}
+            applied = False
             for record in result.records:
                 position += 1
                 key = (record["type"], record["id"])
@@ -486,11 +489,11 @@ class Ingestor:
                 token = pickle.dumps(record, protocol=5)
                 if cached_records.get(key) == token:
                     continue
-                if stored_records is None:
-                    stored_records = {(row["type"], row["id"]): row["json"]
-                                      for row in conn.execute(
-                                          "SELECT type, id, json FROM records WHERE source_id = ?",
-                                          (source_id,))}
+                applied = True
+                if key not in stored_records:
+                    row = conn.execute("SELECT json FROM records WHERE source_id = ? AND type = ? AND id = ?",
+                                       (source_id, *key)).fetchone()
+                    stored_records[key] = row["json"] if row else None
                 changed = self._apply_adapter_record(source_id, record, position,
                                                      ingested_ts, stored_records) or changed
                 if stored_records.get(key) == store.canonical_json(record):
@@ -500,7 +503,7 @@ class Ingestor:
                 changed = True
             store.update_source(conn, source_id, status="ok", detail=None,
                                 last_scan_at=now.isoformat())
-            if stored_records is not None:
+            if applied:
                 store.refresh_last_record(conn, source_id)
             # A scan that changed nothing (the usual re-scan) must not move the
             # change counter, or the board's ETag never settles (architecture §10).

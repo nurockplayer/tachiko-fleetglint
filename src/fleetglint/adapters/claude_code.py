@@ -4,11 +4,10 @@ import os
 import stat
 from dataclasses import dataclass, field
 from datetime import datetime
-from functools import cache
 from pathlib import Path
 
 from .base import ScanResult, short_hostname
-from fleetglint.projects import project_from_path
+from fleetglint.projects import ProjectCache, project_from_path
 
 _CHUNK = 1 << 20
 _MAX_SESSIONS = 5000
@@ -36,8 +35,8 @@ def _is_placeholder(model):
     return model.startswith("<") and model.endswith(">")
 
 
-def _project(cwd):
-    return project_from_path(cwd)
+def _project(cwd, *, _repo_name=None):
+    return project_from_path(cwd, _repo_name=_repo_name)
 
 
 def _consume_stream(stream, on_line):
@@ -167,13 +166,13 @@ class ClaudeCodeAdapter:
         self.source_id = f"claude-code@{self.hostname}"
         self.allowed_roots = []
         self._files: dict[Path, _FileState] = {}
-        self._project = cache(_project)
+        self._project = ProjectCache(_project)
 
     def available(self) -> bool:
         return self.projects_dir.is_dir()
 
     def scan(self, now: datetime) -> ScanResult:
-        self._project.cache_clear()
+        self._project.begin_scan()
         if not self.available():
             return ScanResult("unavailable", "projects directory not found", [])
         unreadable = 0
