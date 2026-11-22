@@ -4,6 +4,7 @@ import { Plans } from "./Plans";
 import type { PlanResult } from "../api/plans";
 import { jsonResponse, routeFetcher } from "../test-fetcher";
 import { formatAbsolute } from "../format";
+import css from "../app.css?raw";
 import { board } from "../test-fixtures";
 
 const plan: PlanResult = {
@@ -90,4 +91,16 @@ it("shows invalid errors without passing counts", async () => {
   expect(screen.getByText("OPEN").closest(".state-badge")).toBeTruthy();
   expect(summary.closest("details")).not.toHaveAttribute("open");
   expect(summary).toHaveTextContent("PASS: 1");
+});
+
+it("keeps the brand ahead of Plans at 390 px", async () => {
+  window.history.replaceState(null, "", "/plans");
+  render(<App fetcher={fetcherFor([])} />);
+  const brand = screen.getByRole("link", { name: "Fleetglint" });
+  const plans = screen.getByRole("link", { name: "Plans" });
+  expect(brand.compareDocumentPosition(plans) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const mobile = css.slice(css.indexOf("@media (max-width: 767px)"));
+  expect(mobile).toMatch(/\.mark\s*\{\s*order:\s*1/);
+  expect(mobile).toMatch(/\.topbar-inner nav\s*\{\s*order:\s*2/);
+  window.history.replaceState(null, "", "/");
 });
