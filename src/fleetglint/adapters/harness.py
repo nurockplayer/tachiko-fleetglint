@@ -10,6 +10,7 @@ import re
 import shlex
 import signal
 import stat
+from bisect import bisect_left
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -330,15 +331,15 @@ def _lead_wait_summary(wait):
     return _command_summary(wait["wrapped"])
 
 
-def _job_project(directory, path_projects=None):
+def _job_project(directory, path_projects=None, read_text=_text):
     try:
-        project = _text(Path(directory) / "project").strip().splitlines()
+        project = read_text(Path(directory) / "project").strip().splitlines()
         if project:
             return _clip(project[0].strip(), 200), False
     except OSError:
         pass
     try:
-        cwd = _text(Path(directory) / "cwd").strip()
+        cwd = read_text(Path(directory) / "cwd").strip()
     except OSError:
         return None, False
     for prefix in sorted(path_projects or {}, key=len, reverse=True):
@@ -380,6 +381,8 @@ class HarnessAdapter:
                               for prefix, project in (path_projects or {}).items()}
         self.hostname = hostname or short_hostname()
         self.source_id = f"tachiko-harness@{self.hostname}"
+        self._texts = {}
+        self._scan_texts = {}
         self.allowed_roots = [self.state_dir / name for name in ROOTS
                               if (self.state_dir / name).is_dir()]
 
@@ -387,12 +390,13 @@ class HarnessAdapter:
         return (self.state_dir / "worker-ledger" / "runs.tsv").exists()
 
     def scan(self, now: datetime) -> ScanResult:
+        self._scan_texts = {}
         ledger = self.state_dir / "worker-ledger" / "runs.tsv"
         if not ledger.exists():
             return ScanResult("unavailable", f"{ledger} not found")
         stats = _Stats()
         try:
-            ledger_text = _text(ledger)
+            ledger_text = self._text(ledger)
         except OSError as exc:
             return ScanResult("unavailable", f"cannot read {ledger}: {exc}")
         decisions, aliases, named = self._scan_decisions(stats)
@@ -410,9 +414,10 @@ class HarnessAdapter:
         records.extend(self._scan_ci(stats))
         records.extend(self._scan_orb_test(now, stats))
         known = {r["project"] for r in records if r.get("project")} | named
-        records.extend(self._scan_inbox(set(jobs_by_id), stats, aliases, known))
+        records.extend(self._scan_inbox(sorted(jobs_by_id), stats, aliases, known))
         records.extend(self._scan_owner_notify(stats, aliases, known))
         records.extend(decisions)
+        self._texts = self._scan_texts
         return ScanResult("ok", stats.detail(), records,
                           [(project_from_path(r["cwd"]), r["cwd"]) for r in jobs
                            if r.get("cwd") and project_from_path(r["cwd"])],
@@ -425,12 +430,23 @@ class HarnessAdapter:
         return {"v": 1, "type": record_type, "id": record_id,
                 "source_id": self.source_id, "updated_at": updated_at}
 
+    def _text(self, path):
+        """Reuse file contents until their identity, size or timestamps change."""
+        path = Path(path)
+        info = path.stat()
+        signature = (info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        cached = self._scan_texts.get(path, self._texts.get(path))
+        if cached is None or cached[0] != signature:
+            cached = (signature, _text(path))
+        self._scan_texts[path] = cached
+        return cached[1]
+
     def _scan_ci(self, stats):
         path = self.state_dir / "ci-watch" / "runs.tsv"
         if not path.exists():
             return []
         try:
-            lines = _text(path).splitlines()
+            lines = self._text(path).splitlines()
         except OSError:
             stats.unreadable += 1
             return []
@@ -515,7 +531,7 @@ class HarnessAdapter:
             lines = []
         else:
             try:
-                lines = _text(finish).splitlines()
+                lines = self._text(finish).splitlines()
             except OSError:
                 stats.unreadable += 1
                 lines = []
@@ -550,7 +566,7 @@ class HarnessAdapter:
                 if path.name.startswith(".") or path.name.endswith(".why") or not path.is_file():
                     continue
                 try:
-                    fields = _text(path).rstrip("\n").split("\t")
+                    fields = self._text(path).rstrip("\n").split("\t")
                     if name in ("queue", "holder"):
                         if len(fields) != 8 or not fields[0].isdigit() or not fields[2].isdigit():
                             raise ValueError
@@ -578,7 +594,7 @@ class HarnessAdapter:
                                              "slot": "waiting for a run slot"}.get(reason, "waiting")
                     elif name == "queue":
                         why = path.with_name(path.name + ".why")
-                        record["summary"] = _clip(_text(why).strip(), 2000) if why.is_file() else f"queued #{int(ticket)}"
+                        record["summary"] = _clip(self._text(why).strip(), 2000) if why.is_file() else f"queued #{int(ticket)}"
                     records[record["id"]] = record
                 except OSError:
                     stats.unreadable += 1
@@ -682,7 +698,7 @@ class HarnessAdapter:
         tool, key = match.group("tool"), match.group("key")
         pid = int(match.group("pid"))
         try:
-            fields = _text(path).rstrip("\n").split("\t")
+            fields = self._text(path).rstrip("\n").split("\t")
         except OSError:
             stats.unreadable += 1
             return None
@@ -772,7 +788,7 @@ class HarnessAdapter:
             stats.malformed += 1
             return None
         try:
-            argv = [line for line in _text(directory / "cmd").splitlines() if line.strip()]
+            argv = [line for line in self._text(directory / "cmd").splitlines() if line.strip()]
         except OSError:
             stats.malformed += 1
             return None
@@ -788,11 +804,11 @@ class HarnessAdapter:
             record = self._running_job(directory, summary, now, stats)
         if record is None:
             return None
-        project, derived = _job_project(directory, self.path_projects)
+        project, derived = _job_project(directory, self.path_projects, self._text)
         if project is not None:
             record["project"] = project
         try:
-            cwd = _text(directory / "cwd").strip()
+            cwd = self._text(directory / "cwd").strip()
             if os.path.isabs(cwd):
                 record["cwd"] = _clip(cwd, 4096)
         except OSError:
@@ -817,7 +833,7 @@ class HarnessAdapter:
     def _job_pid(self, directory):
         """(pid, start time) from the job's pid file, either may be None."""
         try:
-            fields = _text(directory / "pid").rstrip("\n").split("\t")
+            fields = self._text(directory / "pid").rstrip("\n").split("\t")
         except OSError:
             return None, None
         pid = int(fields[0]) if fields and fields[0].isdigit() else None
@@ -826,7 +842,7 @@ class HarnessAdapter:
 
     def _job_from_result(self, directory, result_path, summary, stats):
         try:
-            data = json.loads(_text(result_path))
+            data = json.loads(self._text(result_path))
         except (OSError, ValueError):
             data = None
         if not isinstance(data, dict):
@@ -922,7 +938,7 @@ class HarnessAdapter:
                 if path.name.startswith(".") or not path.is_file():
                     continue
                 try:
-                    fields = _text(path).strip().split("\t")
+                    fields = self._text(path).strip().split("\t")
                 except OSError:
                     stats.unreadable += 1
                     continue
@@ -957,6 +973,9 @@ class HarnessAdapter:
     def _link_run_roles(self, records, jobs_by_id, workers):
         """A run's role comes from the wait-worker job that launched it, when the job's
         worker name and its time window both fit. Titles alone are never enough."""
+        by_worker = {}
+        for job_id, worker in workers.items():
+            by_worker.setdefault(worker, []).append(jobs_by_id[job_id])
         for record in records:
             title = record.get("worker") or record.get("title")
             started = _parse_rfc3339(record.get("started_at", ""))
@@ -964,10 +983,7 @@ class HarnessAdapter:
                     or not title or started is None):
                 continue
             roles = set()
-            for job_id, worker in workers.items():
-                if worker != title:
-                    continue
-                job = jobs_by_id[job_id]
+            for job in by_worker.get(title, ()):
                 if job.get("kind") != "wait-worker":
                     continue
                 job_started = _parse_rfc3339(job.get("started_at", ""))
@@ -1025,7 +1041,7 @@ class HarnessAdapter:
                 stats.malformed += 1
                 continue
             try:
-                text = _text(path)
+                text = self._text(path)
             except OSError:
                 stats.unreadable += 1
                 continue
@@ -1104,8 +1120,12 @@ class HarnessAdapter:
         if not slug:
             return None
         prefix = f"lw-{slug}-"
-        candidates = [job_id for job_id in job_ids if job_id.startswith(prefix)]
-        return candidates[0] if len(candidates) == 1 else None
+        index = bisect_left(job_ids, prefix)
+        if index == len(job_ids) or not job_ids[index].startswith(prefix):
+            return None
+        if index + 1 < len(job_ids) and job_ids[index + 1].startswith(prefix):
+            return None
+        return job_ids[index]
 
     # -- owner-notify -----------------------------------------------------
 
@@ -1115,7 +1135,7 @@ class HarnessAdapter:
         if not path.exists():
             return []
         try:
-            text = _text(path)
+            text = self._text(path)
         except OSError:
             stats.unreadable += 1
             return []
@@ -1176,7 +1196,7 @@ class HarnessAdapter:
         if not path.exists():
             return [], {}, named
         try:
-            text = _text(path)
+            text = self._text(path)
         except OSError:
             stats.unreadable += 1
             return [], {}, named

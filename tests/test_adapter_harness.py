@@ -1234,3 +1234,66 @@ class HarnessAdapterTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HarnessCacheTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state = make_state(tmp.name)
+        self.adapter = harness.HarnessAdapter(self.state, hostname="testhost")
+
+    def test_unchanged_files_are_not_read_again_and_observation_stays_fresh(self):
+        write_job(self.state, "live", ["sleep", "5"], pid="123")
+        with mock.patch.object(harness, "_text", wraps=harness._text) as read:
+            first = by_id(self.adapter.scan(NOW).records)["live"]
+            self.assertGreater(read.call_count, 0)
+            read.reset_mock()
+            first["role_id"] = "added-by-linker"
+            second = by_id(self.adapter.scan(LATER).records)["live"]
+            read.assert_not_called()
+        self.assertNotIn("role_id", second)
+        self.assertEqual(second["observed_at"], LATER.isoformat(timespec="seconds"))
+
+    def test_changed_files_and_new_removed_directories_show_up_next_scan(self):
+        directory = write_job(self.state, "existing", ["echo", "old"])
+        self.adapter.scan(NOW)
+        cmd = directory / "cmd"
+        cmd.write_text("echo\nchanged-size\n")
+        write_job(self.state, "new", ["echo", "new"])
+        records = by_id(self.adapter.scan(NOW).records)
+        self.assertEqual(records["existing"]["command_summary"], "echo changed-size")
+        self.assertIn("new", records)
+        # Same-size rewrites must invalidate too, not only appended files.
+        cmd.write_text("echo\nchanged-text\n")
+        shutil.rmtree(self.state / "job-run" / "new")
+        records = by_id(self.adapter.scan(NOW).records)
+        self.assertEqual(records["existing"]["command_summary"], "echo changed-text")
+        self.assertNotIn("new", records)
+        shutil.rmtree(directory)
+        write_job(self.state, "existing", ["echo", "replacement"])
+        records = by_id(self.adapter.scan(NOW).records)
+        self.assertEqual(records["existing"]["command_summary"], "echo replacement")
+
+    def test_ledger_append_and_removal_invalidate_cached_text(self):
+        self.adapter.scan(NOW)
+        ledger = self.state / "worker-ledger" / "runs.tsv"
+        with ledger.open("a") as stream:
+            stream.write("2026-11-05 09:00 JST\t2026-11-05 09:01 JST\tcx\talpha\tworker\tmodel\t-\t0\t-\t/tmp/worker.log\n")
+        records = self.adapter.scan(NOW).records
+        self.assertEqual(len([r for r in records if r["type"] == "run"]), 1)
+        ledger.write_text(LEDGER_HEADER)
+        self.assertFalse(any(r["type"] == "run" for r in self.adapter.scan(NOW).records))
+
+    def test_label_lookup_tracks_ambiguity_after_directory_removal(self):
+        for suffix in ("one", "two"):
+            write_job(self.state, f"lw-task-{suffix}", ["echo", "ok"])
+        inbox = self.state / "lead-inbox"
+        inbox.mkdir()
+        (inbox / "owner.tsv").write_text(
+            "item\t2026-11-05 09:00 JST\trun\ttask\tdone\tfinished\n")
+        first = by_id(self.adapter.scan(NOW).records)["item"]
+        self.assertEqual(first["subject"]["type"], "external")
+        shutil.rmtree(self.state / "job-run" / "lw-task-two")
+        second = by_id(self.adapter.scan(NOW).records)["item"]
+        self.assertEqual(second["subject"], {"type": "job", "id": "lw-task-one"})
