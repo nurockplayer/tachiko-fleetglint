@@ -387,6 +387,8 @@ class HarnessAdapter:
         self._jobs = {}
         self._test_jobs = {}
         self._scan_test_jobs = {}
+        self._ledger_records = None
+        self._inbox_records = {}
         self._project = cache(project_from_path)
         self.allowed_roots = [self.state_dir / name for name in ROOTS
                               if (self.state_dir / name).is_dir()]
@@ -643,16 +645,28 @@ class HarnessAdapter:
     def _scan_runs(self, ledger_text, now, stats, aliases):
         records = []
         seen = set()
-        header = ledger_text.splitlines()[0].split("\t") if ledger_text.splitlines() else []
-        title_index = header.index("title") if "title" in header else None
-        for row in ledger_text.splitlines():
-            if not row.strip() or row.startswith("started\t"):
-                continue
-            record = self._ledger_record(row, stats, aliases, title_index)
-            if record is None or record["id"] in seen:
-                continue
-            seen.add(record["id"])
-            records.append(record)
+        inputs = (ledger_text, aliases)
+        if self._ledger_records is not None and self._ledger_records[0] == inputs:
+            _, saved, malformed = self._ledger_records
+            records = [dict(record) for record in saved]
+            seen = {record["id"] for record in records}
+            stats.malformed += malformed
+        else:
+            malformed = stats.malformed
+            lines = ledger_text.splitlines()
+            header = lines[0].split("\t") if lines else []
+            title_index = header.index("title") if "title" in header else None
+            for row in lines:
+                if not row.strip() or row.startswith("started\t"):
+                    continue
+                record = self._ledger_record(row, stats, aliases, title_index)
+                if record is None or record["id"] in seen:
+                    continue
+                seen.add(record["id"])
+                records.append(record)
+            self._ledger_records = ((ledger_text, dict(aliases)),
+                                    [dict(record) for record in records],
+                                    stats.malformed - malformed)
         running_dir = self.state_dir / "worker-ledger" / "running"
         if running_dir.is_dir():
             try:
@@ -1079,6 +1093,8 @@ class HarnessAdapter:
 
     def _scan_inbox(self, job_ids, stats, aliases, known):
         records = []
+        cached_files = {}
+        context = (job_ids, aliases, known)
         root = self.state_dir / "lead-inbox"
         if not root.is_dir():
             return records
@@ -1097,12 +1113,24 @@ class HarnessAdapter:
             except OSError:
                 stats.unreadable += 1
                 continue
-            for number, line in enumerate(text.splitlines(), start=1):
-                if not line.strip() or (number == 1 and line.startswith("id\t")):
-                    continue
-                record = self._inbox_record(role, line, job_ids, stats, aliases, known)
-                if record is not None:
-                    records.append(record)
+            cached = self._inbox_records.get(path)
+            if cached is not None and cached[0] == text and cached[1] == context:
+                _, _, saved, malformed = cached
+                stats.malformed += malformed
+            else:
+                malformed = stats.malformed
+                saved = []
+                for number, line in enumerate(text.splitlines(), start=1):
+                    if not line.strip() or (number == 1 and line.startswith("id\t")):
+                        continue
+                    record = self._inbox_record(role, line, job_ids, stats, aliases, known)
+                    if record is not None:
+                        saved.append(record)
+                cached = (text, (list(job_ids), dict(aliases), set(known)), saved,
+                          stats.malformed - malformed)
+            cached_files[path] = cached
+            records.extend(dict(record) for record in cached[2])
+        self._inbox_records = cached_files
         return records
 
     def _inbox_record(self, role, line, job_ids, stats, aliases, known):

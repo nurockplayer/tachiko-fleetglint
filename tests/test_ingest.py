@@ -616,6 +616,27 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(latest["byte_offset"], 3)
         self.assertEqual(self.history_count(), 3)
 
+    def test_unchanged_adapter_inputs_skip_record_storage_and_json(self):
+        adapter = FakeAdapter(records=[run(source_id="tool@host")])
+        ingestor = self.adapter_ingestor(adapter)
+        ingestor.scan_adapters()
+        with mock.patch.object(ingestor, "_apply_adapter_record") as apply, \
+                mock.patch.object(store, "canonical_json") as serialize:
+            ingestor.scan_adapters()
+            apply.assert_not_called()
+            serialize.assert_not_called()
+        self.assertEqual(store.get_checkpoint(self.conn, "tool@host")["byte_offset"], 2)
+
+    def test_retention_invalidates_adapter_input_cache(self):
+        adapter = FakeAdapter(records=[run(source_id="tool@host", state="done",
+                                            updated_at=stamp(days=-40))])
+        ingestor = self.adapter_ingestor(adapter)
+        ingestor.scan_adapters()
+        ingestor.apply_retention()
+        self.assertIsNone(store.get_latest(self.conn, "tool@host", "run", "r1"))
+        ingestor.scan_adapters()
+        self.assertIsNotNone(store.get_latest(self.conn, "tool@host", "run", "r1"))
+
     def test_adapter_invalid_record_is_quarantined(self):
         bad = {"v": 1, "type": "run", "id": "bad", "source_id": "tool@host",
                "updated_at": stamp()}

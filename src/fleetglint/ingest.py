@@ -4,6 +4,7 @@ import gzip
 import hashlib
 import json
 import os
+import pickle
 import re
 import sqlite3
 import sys
@@ -84,6 +85,7 @@ class Ingestor:
         self.max_batch_bytes = self.MAX_BATCH_BYTES
         # Test seam: called after every line inside its transaction; raising rolls the batch back.
         self.line_hook = None
+        self._adapter_records = {}
 
     # --- time -------------------------------------------------------------
 
@@ -145,6 +147,7 @@ class Ingestor:
 
     def _forget_source(self, source_id):
         """Drop everything stored for a source, including its retention markers."""
+        self._adapter_records.pop(source_id, None)
         conn = self.conn
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -471,23 +474,41 @@ class Ingestor:
             checkpoint = store.get_checkpoint(conn, source_id)
             position = checkpoint["byte_offset"] if checkpoint else 0
             ingested_ts = now.timestamp()
-            stored_records = {(row["type"], row["id"]): row["json"] for row in conn.execute(
-                "SELECT type, id, json FROM records WHERE source_id = ?", (source_id,))}
+            cached_records = self._adapter_records.get(source_id, {}).copy()
+            present = set()
+            stored_records = None
             for record in result.records:
                 position += 1
+                key = (record["type"], record["id"])
+                present.add(key)
+                # Pickle is only an in-memory comparison token, never loaded. Unlike
+                # dict equality, it distinguishes schema changes such as 1 -> True.
+                token = pickle.dumps(record, protocol=5)
+                if cached_records.get(key) == token:
+                    continue
+                if stored_records is None:
+                    stored_records = {(row["type"], row["id"]): row["json"]
+                                      for row in conn.execute(
+                                          "SELECT type, id, json FROM records WHERE source_id = ?",
+                                          (source_id,))}
                 changed = self._apply_adapter_record(source_id, record, position,
                                                      ingested_ts, stored_records) or changed
+                if stored_records.get(key) == store.canonical_json(record):
+                    cached_records[key] = token
             store.set_checkpoint(conn, source_id, 0, position)
             if existing is None or existing["status"] != "ok" or existing["detail"] is not None:
                 changed = True
             store.update_source(conn, source_id, status="ok", detail=None,
                                 last_scan_at=now.isoformat())
-            store.refresh_last_record(conn, source_id)
+            if stored_records is not None:
+                store.refresh_last_record(conn, source_id)
             # A scan that changed nothing (the usual re-scan) must not move the
             # change counter, or the board's ETag never settles (architecture §10).
             if changed:
                 store.bump_change_counter(conn)
             conn.execute("COMMIT")
+            self._adapter_records[source_id] = {key: cached_records[key]
+                                               for key in present if key in cached_records}
         except BaseException:
             conn.execute("ROLLBACK")
             raise
@@ -632,6 +653,8 @@ class Ingestor:
             conn.execute("ROLLBACK")
             self._pending_unlink = []
             raise
+        if changed:
+            self._adapter_records.clear()
         self._unlink_retired(self._pending_unlink)
         self._pending_unlink = []
 

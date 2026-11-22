@@ -1277,6 +1277,9 @@ class HarnessCacheTest(unittest.TestCase):
 
     def test_ledger_append_and_removal_invalidate_cached_text(self):
         self.adapter.scan(NOW)
+        with mock.patch.object(self.adapter, "_ledger_record") as parse:
+            self.adapter.scan(LATER)
+            parse.assert_not_called()
         ledger = self.state / "worker-ledger" / "runs.tsv"
         with ledger.open("a") as stream:
             stream.write("2026-11-05 09:00 JST\t2026-11-05 09:01 JST\tcx\talpha\tworker\tmodel\t-\t0\t-\t/tmp/worker.log\n")
@@ -1284,6 +1287,22 @@ class HarnessCacheTest(unittest.TestCase):
         self.assertEqual(len([r for r in records if r["type"] == "run"]), 1)
         ledger.write_text(LEDGER_HEADER)
         self.assertFalse(any(r["type"] == "run" for r in self.adapter.scan(NOW).records))
+
+    def test_inbox_cache_reuses_parsing_and_refreshes_changed_rows(self):
+        inbox = self.state / "lead-inbox"
+        inbox.mkdir()
+        path = inbox / "owner.tsv"
+        path.write_text("item\t2026-11-05 09:00 JST\trun\ttask\tdone\tfinished\n")
+        self.adapter.scan(NOW)
+        with mock.patch.object(self.adapter, "_inbox_record",
+                               wraps=self.adapter._inbox_record) as parse:
+            self.adapter.scan(LATER)
+            parse.assert_not_called()
+            path.write_text("item\t2026-11-05 09:00 JST\trun\ttask\tfailed\tbroken\n")
+            record = by_id(self.adapter.scan(LATER).records)["item"]
+            self.assertEqual(parse.call_count, 1)
+        self.assertEqual(record["outcome"], "failed")
+        self.assertTrue(record["action_required"])
 
     def test_label_lookup_tracks_ambiguity_after_directory_removal(self):
         for suffix in ("one", "two"):
