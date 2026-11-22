@@ -427,7 +427,7 @@ class HarnessAdapterTest(unittest.TestCase):
         self.assertIn("not found", result.detail)
 
     def test_unreadable_ledger_is_unavailable(self):
-        with mock.patch.object(harness, "_text", side_effect=PermissionError(13, "denied")):
+        with mock.patch.object(self.adapter, "_text", side_effect=PermissionError(13, "denied")):
             result = self.adapter.scan(NOW)
         self.assertEqual(result.status, "unavailable")
         self.assertIn("cannot read", result.detail)
