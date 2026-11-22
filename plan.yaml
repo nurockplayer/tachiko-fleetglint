@@ -1,0 +1,122 @@
+schema_version: 1
+project: tachiko-fleetglint
+state: ACTIVE
+owner_decisions:
+  - id: REMOTE-ACCESS
+    question: How should the Owner reach the board from a phone?
+    options: [Tailscale Serve (tailnet only), Cloudflare Tunnel + Access, home network only]
+    recommendation: Tailscale Serve (tailnet only)
+    deadline: 2026-12-07 JST
+    state: OPEN
+  - id: NDA-REPOS
+    question: Where may client/NDA repos appear on the board?
+    options: [excluded, home + tailnet only, everywhere]
+    recommendation: excluded
+    deadline: 2026-12-07 JST
+    state: OPEN
+workstreams:
+  - id: BOARD
+    title: Owner board
+    outcome: Per project, the Owner sees what needs them, what is in progress and by whom, recent decisions and recent results.
+    lead: fleetglint-lead
+    phases:
+      - id: maintain
+        title: Maintain the board
+    current_phase: maintain
+    next_step: Re-score acceptance after relevant changes.
+    criteria:
+      - id: A1
+        requirement: "The server is read-only and local: `/api/healthz` 200, any `POST` 405, a foreign `Host` 421."
+        judge: "`curl` the three requests."
+        status: PASS
+        status_detail: "200 / 405 / 421 on 2026-11-17. Known weakness: this check cannot fail (#112)."
+        verified_at: "2026-11-17 22:50 JST"
+        verified_sha: "78b3808"
+        evidence:
+          - label: Scoring PR #108
+            url: https://github.com/nurockplayer/tachiko-fleetglint/pull/108
+        watch: [src/fleetglint/server.py]
+      - id: A2
+        requirement: "Every overview card is a real project. No card is named after a role, a worktree or branch directory, or a placeholder."
+        judge: "List `projects[].project` in `/api/board`."
+        status: PASS
+        status_detail: "2026-11-22 04:52 JST, `main` a14f069: 14 rendered cards. GitHub remotes under `nurockplayer/`: `tachiko-fleetglint`, `eddington-1919`, `gteki`, `tachiko-noren`, `tachiko-sheet`, `tachiko-work`, `tachiko-harness`, `tailbox-updater`, `tokyo-mogu-mogu`, `tachinas-media`, `oracle-ego`, `quota-advisor`. `business-japanese-hub` is configured in host role mappings. `Global` is the allowed catch-all. The host config now maps `tachinas` roles to `tachinas-media`; the former `tachinas` card’s two lead-inbox items appear on `tachinas-media`. No failing names."
+        verified_at: "2026-11-22 04:52 JST"
+        verified_sha: "a14f069"
+        evidence:
+          - label: Scoring PR #128
+            url: https://github.com/nurockplayer/tachiko-fleetglint/pull/128
+      - id: A3
+        requirement: "No Overview card is empty: each has at least one needs-you, in-progress, decision, recent or lead-inbox item. Session-only groups are not Overview cards; they remain in `/api/board` for the project page."
+        judge: "Apply the Overview rendering rule to `/api/board`, excluding session-only groups, and count needs-you, in-progress, decision, recent and lead-inbox items per rendered card."
+        status: PASS
+        status_detail: "2026-11-22 04:52 JST, `main` a14f069: 14 rendered cards; none empty. `business-japanese-hub` had one lead-inbox item only; `tachinas-media` had two lead-inbox items as well as decisions and recent items."
+        verified_at: "2026-11-22 04:52 JST"
+        verified_sha: "a14f069"
+        evidence:
+          - label: Scoring PR #128
+            url: https://github.com/nurockplayer/tachiko-fleetglint/pull/128
+      - id: A4
+        requirement: "In progress shows each running item with a readable title (the brief heading, or the command summary for CI and jobs) and the model for runs; jobs a run waits on sit under it."
+        judge: "Read `in_progress` on each card."
+        status: PASS
+        status_detail: "24 items: every job has a title or command summary, every run a model. Some harness runs show the brief file name, which is the harness ledger's data."
+        verified_at: "2026-11-17 22:50 JST"
+        verified_sha: "78b3808"
+        evidence:
+          - label: Scoring PR #108
+            url: https://github.com/nurockplayer/tachiko-fleetglint/pull/108
+      - id: A5
+        requirement: "Recent decisions cover 7 days and link to their GitHub comment when one exists."
+        judge: "Check `decisions[].links`."
+        status: PASS
+        status_detail: "74 of 76 link; the two without are a repo with no remote and a decision recorded without a ref. Known weakness: this check cannot fail (#112)."
+        verified_at: "2026-11-17 22:50 JST"
+        verified_sha: "78b3808"
+        evidence:
+          - label: Scoring PR #108
+            url: https://github.com/nurockplayer/tachiko-fleetglint/pull/108
+      - id: A6
+        requirement: "Needs you holds only what someone must act on now: what is asked, of whom, and since when."
+        judge: "Read `needs_you` on each card."
+        status: PASS
+        status_detail: "2026-11-18 00:25 JST after #116: 36 work items + 8 owner items (was 94). Role-less failures older than 4 h moved to Recent failed (unresolved); the 21 left are under 4 h old."
+        verified_at: "2026-11-18 00:25 JST"
+        verified_sha: "a730e45"
+        evidence:
+          - label: Scoring PR #118
+            url: https://github.com/nurockplayer/tachiko-fleetglint/pull/118
+      - id: A7
+        requirement: "OrbStack (`tachi-run`) and GitHub CI runs show on their project's card."
+        judge: "Look for `tachi-run` and `github-actions` items."
+        status: PASS
+        status_detail: "2 `tachi-run` and 6 `github-actions` items in progress on 2026-11-17. Known weakness: this check cannot fail (#112)."
+        verified_at: "2026-11-17 22:50 JST"
+        verified_sha: "78b3808"
+        evidence:
+          - label: Scoring PR #108
+            url: https://github.com/nurockplayer/tachiko-fleetglint/pull/108
+      - id: A8
+        requirement: "A fresh install works: the empty state lists where it looked; `fleetglint demo` shows the DEMO DATA banner."
+        judge: "Isolated HOME, released package."
+        status: PASS
+        status_detail: "Verified on 0.1.1 from the public release, 2026-11-08 JST."
+        verified_at: "2026-11-17 22:50 JST"
+        verified_sha: "78b3808"
+        evidence:
+          - label: Scoring PR #108
+            url: https://github.com/nurockplayer/tachiko-fleetglint/pull/108
+  - id: PLANS
+    title: Plans view
+    outcome: The Owner can read configured plans and their acceptance.
+    lead: fleetglint-lead
+    phases:
+      - id: acceptance
+        title: Acceptance
+    current_phase: acceptance
+    next_step: Inspect the rendered page with a real plan-check.
+    criteria:
+      - id: PLANS-VIEW
+        requirement: "/plans shows each configured plan: counts, open Owner decisions, non-PASS criteria first, workstream detail with evidence links"
+        judge: fleetglint-lead looks at the rendered page with a real plan-check
+        status: PENDING
