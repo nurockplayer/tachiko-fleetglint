@@ -27,15 +27,15 @@ workstreams:
     criteria:
       - id: A1
         requirement: "The server is read-only and local: `/api/healthz` 200, any `POST` 405, a foreign `Host` 421."
-        judge: "`curl` the three requests."
+        judge: "Curl the three requests; inspect listening sockets and attempt a connection to the LAN address. Check bind and configuration code for address overrides."
         status: PASS
-        status_detail: "200 / 405 / 421 on 2026-11-17. Known weakness: this check cannot fail (#112)."
-        verified_at: "2026-11-17 22:50 JST"
-        verified_sha: "78b3808"
+        status_detail: "2026-11-22 18:44 JST, `main` f21d993: health GET 200, POST 405, foreign Host 421; one listener, 127.0.0.1:8796; LAN 192.168.8.168:8796 refused (errno 61). `server.py` binds 127.0.0.1 unconditionally; `config.py` rejects any other server.host. The only serve address option is --port; neither flag nor config changes the bind address."
+        verified_at: "2026-11-22 18:44 JST"
+        verified_sha: "f21d993"
         evidence:
-          - label: Scoring PR #108
-            url: https://github.com/nurockplayer/tachiko-fleetglint/pull/108
-        watch: [src/fleetglint/server.py]
+          - label: Issue #112
+            url: https://github.com/nurockplayer/tachiko-fleetglint/issues/112
+        watch: [src/fleetglint/server.py, src/fleetglint/config.py]
       - id: A2
         requirement: "Every overview card is a real project. No card is named after a role, a worktree or branch directory, or a placeholder."
         judge: "List `projects[].project` in `/api/board`."
