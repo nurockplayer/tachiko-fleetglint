@@ -2,7 +2,32 @@ import type { Fetcher } from "../api/client";
 import type { Criterion, OwnerDecision, PlanLink, PlanResult, PlansResponse } from "../api/plans";
 import { usePolling } from "../api/useSnapshot";
 import { Section } from "../components/Section";
+import { StateBadge } from "../components/StateBadge";
+import type { BadgeState } from "../states";
+import { formatAbsolute } from "../format";
 import { Banner } from "../components/Banner";
+
+const statusStates: Record<string, BadgeState> = {
+  PASS: "done", FAIL: "failed", BLOCKED: "waiting", PENDING: "queued", STALE: "stale",
+  OPEN: "needs", ANSWERED: "done", ACTIVE: "running",
+  pending: "queued", invalid: "failed", unavailable: "lost", failed: "failed",
+};
+
+function Status({ status }: { status: string }) {
+  return <StateBadge state={statusStates[status] ?? "unknown"} label={status} />;
+}
+
+function InlineText({ text }: { text: string }) {
+  return <>{text.split(/(`[^`]+`)/g).map((part, index) =>
+    part.startsWith("`") && part.endsWith("`") ? <code key={index}>{part.slice(1, -1)}</code> : part
+  )}</>;
+}
+
+function Counts({ counts }: { counts: Record<string, number> }) {
+  return <span className="plan-counts">{Object.entries(counts).map(([status, count]) =>
+    <span key={status}>{status === "total" ? "total" : <Status status={status} />}: {count} </span>
+  )}</span>;
+}
 
 function Links({ links = [] }: { links?: PlanLink[] }) {
   return <ul className="plan-links">{links.map((link, index) => <li key={index}>
@@ -12,14 +37,14 @@ function Links({ links = [] }: { links?: PlanLink[] }) {
 
 function CriterionRow({ row, detail = false }: { row: Criterion; detail?: boolean }) {
   return <li className="plan-row">
-    <p><strong>{row.id} · {row.status}</strong>{row.requirement ? ` · ${row.requirement}` : ""}</p>
-    {row.reason ? <p>{row.reason}</p> : null}
+    <p><strong>{row.id}</strong> · <Status status={row.status} />{row.requirement ? <> · <InlineText text={row.requirement} /></> : null}</p>
+    {row.reason ? <p><InlineText text={row.reason} /></p> : null}
     {row.changed_files?.length ? <p className="mono">Changed files: {row.changed_files.join(", ")}</p> : null}
     {detail ? <>
-      {row.status_detail ? <p>{row.status_detail}</p> : null}
-      {row.context ? <p>{row.context}</p> : null}
-      <p>Judge: {row.judge ?? "not recorded"}</p>
-      <p>Verified at: {row.verified_at ?? "not recorded"}</p>
+      {row.status_detail ? <p><InlineText text={row.status_detail} /></p> : null}
+      {row.context ? <p><InlineText text={row.context} /></p> : null}
+      <p>Judge: {row.judge ? <InlineText text={row.judge} /> : "not recorded"}</p>
+      <p>Verified at: {row.verified_at ? formatAbsolute(row.verified_at) : "not recorded"}</p>
       {row.verified_sha ? <p className="mono">Verified SHA: {row.verified_sha}</p> : null}
       <Links links={row.evidence} /><Links links={row.references} />
     </> : null}
@@ -28,11 +53,11 @@ function CriterionRow({ row, detail = false }: { row: Criterion; detail?: boolea
 
 function Decision({ decision }: { decision: OwnerDecision }) {
   return <li className="plan-row">
-    <p><strong>{decision.question}</strong> · {decision.state}</p>
-    <p>Options: {decision.options.join(" · ")}</p>
-    <p>Recommendation: {decision.recommendation}</p>
+    <p><strong><InlineText text={decision.question} /></strong> · <Status status={decision.state} /></p>
+    <p>Options: <InlineText text={decision.options.join(" · ")} /></p>
+    <p>Recommendation: <InlineText text={decision.recommendation} /></p>
     <p>Deadline: {decision.deadline}</p>
-    {decision.answer ? <p>Answer: {decision.answer}</p> : null}
+    {decision.answer ? <p>Answer: <InlineText text={decision.answer} /></p> : null}
     {decision.answer_ref ? <Links links={[{ label: "Recorded answer", url: decision.answer_ref }]} /> : null}
   </li>;
 }
@@ -42,11 +67,12 @@ function Plan({ plan }: { plan: PlanResult }) {
   const decisions = plan.owner_decisions ?? [];
   const outstanding = streams.flatMap((stream) => stream.criteria).filter((row) => row.status !== "PASS");
   return <article className="panel plan-panel">
-    <h2>{plan.project ?? plan.path}{plan.plan_state ? ` · ${plan.plan_state}` : ""}</h2>
-    <p>{plan.state}{plan.refreshing ? " · refresh in progress; showing cached result" : ""}</p>
-    {plan.state === "ok" && plan.counts ? <p className="plan-counts">{Object.entries(plan.counts).map(([status, count]) => `${status}: ${count}`).join(" · ")}</p> : null}
-    <p className="quiet">Checked at: {plan.checked_at ?? "not checked yet"}</p>
-    <p className="quiet">File modified: {plan.file_modified_at ?? "not available"}</p>
+    <h2>{plan.project ?? plan.path} {plan.plan_state ? <Status status={plan.plan_state} /> : null}</h2>
+    {plan.counts ? <p><Counts counts={plan.counts} /></p> : null}
+    {plan.state !== "ok" ? <p><Status status={plan.state} /></p> : null}
+    {plan.refreshing ? <p>Refresh in progress; showing cached result</p> : null}
+    <p className="quiet">Checked at: {plan.checked_at ? formatAbsolute(plan.checked_at) : "not checked yet"}</p>
+    <p className="quiet">File modified: {plan.file_modified_at ? formatAbsolute(plan.file_modified_at) : "not available"}</p>
     <p className="quiet mono">{plan.path}</p>
     {plan.errors?.map((error, index) => <p key={index}>{error}</p>)}
     {plan.state === "ok" ? <>
@@ -62,12 +88,12 @@ function Plan({ plan }: { plan: PlanResult }) {
         {outstanding.length ? <ul>{outstanding.map((row) => <CriterionRow key={row.id} row={row} />)}</ul> : <p>No criteria reported outside PASS.</p>}
       </Section>
       {streams.map((stream) => <details key={stream.id} className="detail-details">
-        <summary>{stream.title ?? stream.id}</summary>
-        {stream.outcome ? <p>Outcome: {stream.outcome}</p> : null}
+        <summary><span className="plan-chevron" aria-hidden="true">▸</span> {stream.title ?? stream.id} <Counts counts={stream.criteria.reduce<Record<string, number>>((counts, row) => { counts[row.status] = (counts[row.status] ?? 0) + 1; return counts; }, {})} /></summary>
+        {stream.outcome ? <p>Outcome: <InlineText text={stream.outcome} /></p> : null}
         {stream.lead ? <p>Lead: {stream.lead}</p> : null}
         {stream.phases ? <p>Phases: {stream.phases.map((phase) => `${phase.title}${phase.id === stream.current_phase ? " (current)" : ""}`).join(" → ")}</p> : null}
-        {stream.next_step ? <p>Next step: {stream.next_step}</p> : null}
-        {stream.context?.map((text, index) => <p key={index}>{text}</p>)}
+        {stream.next_step ? <p>Next step: <InlineText text={stream.next_step} /></p> : null}
+        {stream.context?.map((text, index) => <p key={index}><InlineText text={text} /></p>)}
         <Links links={stream.references} />
         <ul>{stream.criteria.map((row) => <CriterionRow key={row.id} row={row} detail />)}</ul>
       </details>)}

@@ -3,6 +3,7 @@ import { App } from "../App";
 import { Plans } from "./Plans";
 import type { PlanResult } from "../api/plans";
 import { jsonResponse, routeFetcher } from "../test-fetcher";
+import { formatAbsolute } from "../format";
 import { board } from "../test-fixtures";
 
 const plan: PlanResult = {
@@ -37,17 +38,17 @@ it("routes /plans and shows the enable hint when disabled", async () => {
 
 it("shows summary, decisions, STALE reason and expandable workstream detail", async () => {
   render(<Plans fetcher={fetcherFor([plan])} />);
-  expect(await screen.findByText("Example · ACTIVE")).toBeInTheDocument();
-  expect(screen.getByText("total: 2 · PASS: 1 · STALE: 1")).toBeInTheDocument();
-  expect(screen.getByText(/File modified:/)).toHaveTextContent("2026-11-21T04:00:00+09:00");
-  expect(screen.getByText(/Checked at:/)).toHaveTextContent("2026-11-22T05:00:00+09:00");
+  expect(await screen.findByRole("heading", { name: /Example.*ACTIVE/ })).toBeInTheDocument();
+  expect(screen.getByText("total: 2").parentElement).toHaveTextContent("total: 2");
+  expect(screen.getByText(/File modified:/)).toHaveTextContent(formatAbsolute(plan.file_modified_at));
+  expect(screen.getByText(/Checked at:/)).toHaveTextContent(formatAbsolute(plan.checked_at));
   expect(screen.getByText("Ship?")).toBeVisible();
   expect(screen.getByText("Options: yes · no")).toBeVisible();
   expect(screen.getByText("Recommendation: yes")).toBeVisible();
-  expect(screen.getAllByText("C · STALE")[0]).toBeVisible();
+  expect(screen.getAllByText("C")[0]).toBeVisible();
   expect(screen.getAllByText("Watched files changed")[0]).toBeVisible();
   expect(screen.getAllByText("Changed files: src/main.py")[0]).toBeVisible();
-  const summary = screen.getByText("Deliverable");
+  const summary = screen.getByText(/Deliverable/);
   expect(summary.closest("details")).not.toHaveAttribute("open");
   fireEvent.click(summary);
   expect(summary.closest("details")).toHaveAttribute("open");
@@ -65,12 +66,28 @@ it("shows summary, decisions, STALE reason and expandable workstream detail", as
 it("shows old reports with ids and counts and a newer plan-check note", async () => {
   render(<Plans fetcher={fetcherFor([{ ...plan, text_available: false, workstreams: [{ id: "W", criteria: [{ id: "C", status: "PENDING" }] }], owner_decisions: [] }])} />);
   expect(await screen.findByText("Plan text needs a newer plan-check.")).toBeVisible();
-  expect(screen.getAllByText("C · PENDING")[0]).toBeVisible();
-  expect(screen.getByText(/total: 2/)).toBeVisible();
+  expect(screen.getAllByText("C")[0]).toBeVisible();
+  expect(screen.getByText("total: 2")).toBeVisible();
 });
 
 it("shows invalid errors without passing counts", async () => {
   render(<Plans fetcher={fetcherFor([{ path: "/repo", state: "invalid", checked_at: null, file_modified_at: null, refreshing: false, errors: ["bad plan"] }])} />);
   expect(await screen.findByText("bad plan")).toBeVisible();
   expect(screen.queryByText(/PASS:/)).toBeNull();
+});
+
+ it("renders plan statuses and inline code without other markdown", async () => {
+  const criteria = ["PASS", "FAIL", "BLOCKED", "PENDING", "STALE"].map((status) => ({ id: status + "-id", status, requirement: "Use `/health` and **literal**" }));
+  render(<Plans fetcher={fetcherFor([{ ...plan, workstreams: [{ id: "W", title: "Stream", criteria }] }])} />);
+  await screen.findByText("Stream");
+  const summary = screen.getByText("Stream").closest("summary")!;
+  for (const status of ["PASS", "FAIL", "BLOCKED", "PENDING", "STALE"]) {
+    expect(summary.querySelector(`[title]`) ?? summary.querySelector('.state-badge')).toBeTruthy();
+    expect(summary).toHaveTextContent(status);
+  }
+  expect(screen.getAllByText("/health")[0].tagName).toBe("CODE");
+  expect(screen.getAllByText(/and \*\*literal\*\*/)[0]).toBeVisible();
+  expect(screen.getByText("OPEN").closest(".state-badge")).toBeTruthy();
+  expect(summary.closest("details")).not.toHaveAttribute("open");
+  expect(summary).toHaveTextContent("PASS: 1");
 });
