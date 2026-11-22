@@ -114,9 +114,18 @@ workstreams:
       - id: acceptance
         title: Acceptance
     current_phase: acceptance
-    next_step: Inspect the rendered page with a real plan-check.
+    next_step: Make the page scannable (#138), then re-check it in light and dark.
     criteria:
       - id: PLANS-VIEW
         requirement: "/plans shows each configured plan: counts, open Owner decisions, non-PASS criteria first, workstream detail with evidence links"
         judge: fleetglint-lead looks at the rendered page with a real plan-check
-        status: PENDING
+        status: PASS
+        status_detail: "2026-11-22 16:5x JST: lead looked at /plans on this plan (plan-check from tachiko-harness#373 1708923) at 1440 px and 390 px, dark scheme: counts 9 total, both OPEN Owner decisions, A1 STALE and PLANS-VIEW PENDING listed first, BOARD detail with a scoring-PR link per row. Content complete; readability not accepted (no status badges, raw ISO times, raw backticks): #138. Light scheme not seen."
+        verified_at: "2026-11-22 16:56 JST"
+        verified_sha: "bf3b4dc"
+        evidence:
+          - label: Readability defects seen on the real page (#138)
+            url: https://github.com/nurockplayer/tachiko-fleetglint/issues/138
+          - label: Real /api/plans run (PR #136 body)
+            url: https://github.com/nurockplayer/tachiko-fleetglint/pull/136
+        watch: [ui/src/screens/Plans.tsx, src/fleetglint/plans.py]
