@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from fleetglint import config, ingest, store
+from fleetglint import config, ingest, projects, store
 from tests.test_adapter_harness import LEDGER_HEADER, NOW, make_state, write_job
 
 
@@ -151,3 +151,51 @@ class ProjectAttributionTest(unittest.TestCase):
                         self.assertEqual(record.get('project'), expected[name])
             finally:
                 conn.close()
+
+    def test_remote_url_values_follow_git_rules(self):
+        for value, expected in (('https://example.org/team/app.git', True),
+                                ("/srv/it's-a-repo.git", True),
+                                ('"/srv/it\'s a repo.git"', True),
+                                ('"/srv/a \\"quoted\\" repo.git"', True),
+                                ('"#not-a-comment"', True),
+                                ('/srv/app.git ; comment', True),
+                                ('/srv/app.git # comment', True),
+                                ('; only a comment', False),
+                                ('# only a comment', False),
+                                ('""', False),
+                                # Git rejects these lines, so they name no remote.
+                                ('"/srv/unclosed.git', False),
+                                ('/srv/bad\\q.git', False)):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                git_dir = Path(tmp)
+                (git_dir / 'config').write_text(f'[remote "origin"]\n\turl = {value}\n')
+                self.assertEqual(projects._has_remote(git_dir), expected)
+
+    def test_apostrophe_remote_keeps_the_scan_going(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = make_state(tmp)
+            configs = {'quoted-app': "[remote \"origin\"]\n\turl = /srv/it's-a-repo.git\n",
+                       'real-app': '[remote "origin"]\n\turl = https://example.org/team/real-app.git\n',
+                       'scratch-app': '[core]\n\tbare = false\n'}
+            for name, text in configs.items():
+                (root / name / '.git').mkdir(parents=True)
+                (root / name / '.git/config').write_text(text)
+                directory = write_job(state, name, ['true'])
+                (directory / 'cwd').write_text(str(root / name) + '\n')
+                (directory / 'project').write_text(name + '\n')
+            cfg = config.Config()
+            cfg.harness.state_dir = state
+            cfg.claude_code.dir = root / 'claude'
+            cfg.codex.dir = root / 'codex'
+            cfg.db_path = root / 'board.sqlite'
+            conn = store.open_db(cfg.db_path)
+            try:
+                ingest.Ingestor(conn, cfg, adapters=ingest.default_adapters(cfg),
+                                clock=lambda: NOW).scan_adapters()
+                projects_by_id = {record['id']: record.get('project') for record in (
+                    json.loads(row[0]) for row in conn.execute('SELECT json FROM records'))}
+            finally:
+                conn.close()
+        self.assertEqual(projects_by_id, {'quoted-app': 'quoted-app', 'real-app': 'real-app',
+                                          'scratch-app': None})

@@ -1,12 +1,33 @@
 """Resolve a working directory to its project name."""
 import os
 import re
-import shlex
 from pathlib import Path
 
 
 def _clip(value, limit):
     return value[:limit] if len(value) > limit else value
+
+
+def _config_value(text):
+    """A Git config value without its quotes, escapes and comment; None where Git rejects it."""
+    # Git's rules, not a shell's: an apostrophe is an ordinary character.
+    value, quoted, chars = [], False, iter(text)
+    for char in chars:
+        if char == "\\":
+            char = next(chars, "")
+            if char == "b":
+                value = value[:-1]
+                continue
+            if char not in '\\"nt':
+                return None
+            char = {"n": "\n", "t": "\t"}.get(char, char)
+        elif char == '"':
+            quoted = not quoted
+            continue
+        elif char in ";#" and not quoted:
+            break
+        value.append(char)
+    return None if quoted else "".join(value)
 
 
 def _has_remote(git_dir):
@@ -17,12 +38,8 @@ def _has_remote(git_dir):
             remote = bool(re.match(r'^\[\s*remote\s+"(?:\\.|[^"\\])+"\s*\]', line, re.I))
         elif remote:
             match = re.match(r"url\s*=\s*(.*)", line, re.I)
-            if match:
-                value = shlex.shlex(match[1], posix=True)
-                value.whitespace_split = True
-                value.commenters = "#;"
-                if "".join(value).strip():
-                    return True
+            if match and (_config_value(match[1]) or "").strip():
+                return True
     return False
 
 

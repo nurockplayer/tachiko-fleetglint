@@ -37,6 +37,10 @@ All notable changes to Fleetglint are recorded here. The format follows
 - Untitled work on project cards uses record IDs, with job commands shown quietly.
 - Project pages use backend inbox totals even when messages are truncated, and
   omit links to more content on the same project page.
+- Remote URLs are read with Git's config value rules, so an apostrophe in a
+  repository's remote URL no longer stops the adapter scan.
+- Waiting tachi-run jobs show their recorded reason: waiting for memory, waiting
+  for a run slot, or plain waiting when the reason is unknown.
 
 ## [0.1.1] - 2026-11-08
 

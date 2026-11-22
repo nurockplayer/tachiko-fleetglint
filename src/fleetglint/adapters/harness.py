@@ -572,7 +572,10 @@ class HarnessAdapter:
                     if name == "holder":
                         record["summary"] = "heavy lock held, starting"
                     elif name == "waiting":
-                        record["summary"] = "waiting for memory"
+                        # The seventh column is tachi-run's reason; six-column markers predate slot waits.
+                        reason = fields[6] if len(fields) == 7 else "memory"
+                        record["summary"] = {"memory": "waiting for memory",
+                                             "slot": "waiting for a run slot"}.get(reason, "waiting")
                     elif name == "queue":
                         why = path.with_name(path.name + ".why")
                         record["summary"] = _clip(_text(why).strip(), 2000) if why.is_file() else f"queued #{int(ticket)}"
