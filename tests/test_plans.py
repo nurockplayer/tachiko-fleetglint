@@ -148,12 +148,19 @@ class PlansTest(unittest.TestCase):
         self.assertEqual(self.row(reader)["state"], "failed")
         self.assertIn("timed out", self.row(reader)["errors"][0])
         for pid in map(int, pids.read_text().split()):
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                continue
-            # Linux container init may retain a killed orphan as a zombie.
-            self.assertEqual(Path(f"/proc/{pid}/stat").read_text().split()[2], "Z")
+            # SIGKILL delivery to an orphan is asynchronous; wait for its exit.
+            deadline = time.monotonic() + 2
+            while True:
+                try:
+                    os.kill(pid, 0)
+                    # Linux container init may retain a killed orphan as a zombie.
+                    state = Path(f"/proc/{pid}/stat").read_text().split()[2]
+                except (ProcessLookupError, FileNotFoundError):
+                    break
+                if state == "Z":
+                    break
+                self.assertLess(time.monotonic(), deadline, f"process {pid} still running")
+                time.sleep(0.01)
 
     def test_cache_mtime_expiry_and_errors_expire(self):
         self.report()

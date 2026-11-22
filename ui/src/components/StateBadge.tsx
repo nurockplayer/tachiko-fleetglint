@@ -172,6 +172,7 @@ export interface StateBadgeProps {
   variant?: "words" | "glyph";
   age?: string | null;
   title?: string;
+  label?: string;
 }
 
 /**
@@ -179,8 +180,8 @@ export interface StateBadgeProps {
  * glyph-only variant exists for rows under a section heading that names the
  * state; it keeps the words in `aria-label`.
  */
-export function StateBadge({ state, variant = "words", age, title }: StateBadgeProps) {
-  const label = STATE_LABEL[state];
+export function StateBadge({ state, variant = "words", age, title, label: customLabel }: StateBadgeProps) {
+  const label = customLabel ?? STATE_LABEL[state];
   const kind = STATE_GLYPH[state];
 
   if (variant === "glyph") {

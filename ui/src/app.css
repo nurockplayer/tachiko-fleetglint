@@ -1280,6 +1280,8 @@ pre,
     order: 1;
   }
 
+  .topbar-inner nav { order: 2; }
+
   .topbar-meta {
     order: 2;
     margin-left: auto;
@@ -1400,3 +1402,9 @@ pre,
 .plan-row { padding: var(--space-8) 0; border-bottom: 1px solid var(--line-divider); }
 .plan-links { display: flex; flex-wrap: wrap; gap: var(--space-8); }
 .plan-counts { margin: var(--space-8) 0; }
+
+.plan-counts { display: inline-flex; flex-wrap: wrap; gap: var(--space-8); }
+.plan-panel .detail-details summary { flex-wrap: wrap; gap: var(--space-8); }
+.plan-chevron { display: inline-block; }
+.plan-panel details[open] > summary .plan-chevron { transform: rotate(90deg); }
+.plan-panel .quiet:not(.mono) { overflow-wrap: normal; }
