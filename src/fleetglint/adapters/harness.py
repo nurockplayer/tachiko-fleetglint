@@ -336,17 +336,17 @@ def _job_project(directory, path_projects=None, read_text=_text, resolve=project
     try:
         project = read_text(Path(directory) / "project").strip().splitlines()
         if project:
-            return _clip(project[0].strip(), 200), False
+            return _clip(project[0].strip(), 200), False, None
     except OSError:
         pass
     try:
         cwd = read_text(Path(directory) / "cwd").strip()
     except OSError:
-        return None, False
+        return None, False, None
     for prefix in sorted(path_projects or {}, key=len, reverse=True):
         if cwd.startswith(prefix):
-            return _clip(path_projects[prefix], 200), False
-    return resolve(cwd), True
+            return _clip(path_projects[prefix], 200), False, None
+    return resolve(cwd), True, cwd
 
 
 class _Stats:
@@ -385,6 +385,8 @@ class HarnessAdapter:
         self._texts = {}
         self._scan_texts = {}
         self._jobs = {}
+        self._test_jobs = {}
+        self._scan_test_jobs = {}
         self._project = cache(project_from_path)
         self.allowed_roots = [self.state_dir / name for name in ROOTS
                               if (self.state_dir / name).is_dir()]
@@ -394,6 +396,7 @@ class HarnessAdapter:
 
     def scan(self, now: datetime) -> ScanResult:
         self._scan_texts = {}
+        self._scan_test_jobs = {}
         self._project.cache_clear()
         ledger = self.state_dir / "worker-ledger" / "runs.tsv"
         if not ledger.exists():
@@ -422,6 +425,7 @@ class HarnessAdapter:
         records.extend(self._scan_owner_notify(stats, aliases, known))
         records.extend(decisions)
         self._texts = self._scan_texts
+        self._test_jobs = self._scan_test_jobs
         return ScanResult("ok", stats.detail(), records,
                           [(self._project(r["cwd"]), r["cwd"]) for r in jobs
                            if r.get("cwd") and self._project(r["cwd"])],
@@ -542,6 +546,11 @@ class HarnessAdapter:
         records = {}
 
         def build(pid, pstart, project, label):
+            key = (pid, pstart, project, label)
+            cached = self._test_jobs.get(key)
+            if cached is not None:
+                self._scan_test_jobs[key] = cached
+                return dict(cached, updated_at=_iso(now))
             started = _parse_lstart(pstart)
             if not pid.isdigit() or int(pid) < 1 or started is None or not _clean(project) or not _clean(label):
                 return None
@@ -555,6 +564,7 @@ class HarnessAdapter:
                 argv = label.split()
             record.update(kind="tachi-run", project=_clip(project, 200),
                           command_summary=_command_summary(argv) or "tachi-run", started_at=_iso(started))
+            self._scan_test_jobs[key] = dict(record)
             return record
 
         # Later sources override earlier ones: active beats holder and queue.
@@ -767,23 +777,25 @@ class HarnessAdapter:
         if not root.is_dir():
             return [], by_id, workers, directory_records
         try:
-            entries = sorted(root.iterdir())
+            with os.scandir(root) as directories:
+                entries = sorted(directories, key=lambda entry: entry.name)
         except OSError:
             stats.unreadable += 1
             return [], by_id, workers, directory_records
         cached_jobs = {}
-        for directory in entries:
-            if not directory.is_dir() or directory.name.startswith("."):
+        for entry in entries:
+            if not entry.is_dir() or entry.name.startswith("."):
                 continue
+            directory = Path(entry.path)
             signature = self._job_signature(directory)
             cached = self._jobs.get(directory)
             if signature is not None and cached is not None and cached[0] == signature:
-                _, saved, worker, derived = cached
+                _, saved, worker, derived, project_cwd = cached
                 record = dict(saved)
                 if "observed_at" in record:
                     record["observed_at"] = _iso(now)
                 if derived:
-                    project = self._project(self._text(directory / "cwd").strip())
+                    project = self._project(project_cwd)
                     if project is None:
                         record.pop("project", None)
                     else:
@@ -794,10 +806,10 @@ class HarnessAdapter:
                 built = self._job_record(directory, now, stats)
                 if built is None:
                     continue
-                record, worker, derived = built
+                record, worker, derived, project_cwd = built
                 if (signature is not None and stats.malformed == malformed
                         and stats.unreadable == unreadable):
-                    cached_jobs[directory] = (signature, dict(record), worker, derived)
+                    cached_jobs[directory] = (signature, dict(record), worker, derived, project_cwd)
             if derived:
                 directory_records.add((record["type"], record["id"]))
             by_id[record["id"]] = record
@@ -809,9 +821,10 @@ class HarnessAdapter:
     @staticmethod
     def _job_signature(directory):
         signature = []
+        prefix = os.fspath(directory) + os.sep
         for name in ("cmd", "pid", "result.json", "project", "cwd", "log"):
             try:
-                info = (directory / name).stat()
+                info = os.stat(prefix + name)
             except FileNotFoundError:
                 signature.append(None)
             except OSError:
@@ -843,7 +856,7 @@ class HarnessAdapter:
             record = self._running_job(directory, summary, now, stats)
         if record is None:
             return None
-        project, derived = _job_project(directory, self.path_projects, self._text, self._project)
+        project, derived, project_cwd = _job_project(directory, self.path_projects, self._text, self._project)
         if project is not None:
             record["project"] = project
         try:
@@ -852,7 +865,7 @@ class HarnessAdapter:
                 record["cwd"] = _clip(cwd, 4096)
         except OSError:
             pass
-        return record, self._apply_lead_wait(record, wait) if wait is not None else None, derived
+        return record, self._apply_lead_wait(record, wait) if wait is not None else None, derived, project_cwd
 
     def _apply_lead_wait(self, record, wait):
         """Kind, role, title and summary of a `lead-wait` job; returns its worker name."""

@@ -471,10 +471,12 @@ class Ingestor:
             checkpoint = store.get_checkpoint(conn, source_id)
             position = checkpoint["byte_offset"] if checkpoint else 0
             ingested_ts = now.timestamp()
+            stored_records = {(row["type"], row["id"]): row["json"] for row in conn.execute(
+                "SELECT type, id, json FROM records WHERE source_id = ?", (source_id,))}
             for record in result.records:
                 position += 1
                 changed = self._apply_adapter_record(source_id, record, position,
-                                                     ingested_ts) or changed
+                                                     ingested_ts, stored_records) or changed
             store.set_checkpoint(conn, source_id, 0, position)
             if existing is None or existing["status"] != "ok" or existing["detail"] is not None:
                 changed = True
@@ -490,11 +492,12 @@ class Ingestor:
             conn.execute("ROLLBACK")
             raise
 
-    def _apply_adapter_record(self, source_id, original, position, ingested_ts):
+    def _apply_adapter_record(self, source_id, original, position, ingested_ts, stored_records):
         """Upsert one adapter record; return whether anything visible changed."""
         conn = self.conn
-        stored = store.get_latest(conn, source_id, original["type"], original["id"])
-        if stored is not None and store.canonical_json(original) == stored["json"]:
+        key = (original["type"], original["id"])
+        stored = stored_records.get(key)
+        if stored is not None and store.canonical_json(original) == stored:
             return False  # This exact record has already passed validation.
         record, reason, detail = self._validate(original, source_id)
         if record is not None and record.get("source_id") != source_id:
@@ -510,19 +513,21 @@ class Ingestor:
             if stored is None:
                 changed = True
             else:
-                previous = json.loads(stored["json"])
+                previous = json.loads(stored)
                 if previous == record:
                     conn.execute("RELEASE record")
                     return False
                 if _without_observed(previous) == _without_observed(record):
                     # A fresh observed_at alone reaches clients with the ETag's time bucket.
-                    store.put_latest(conn, record, 0, position)
+                    if store.put_latest(conn, record, 0, position):
+                        stored_records[key] = store.canonical_json(record)
                     conn.execute("RELEASE record")
                     return False
                 changed = True
             if changed:
                 store.insert_history(conn, record, 0, position, ingested_ts)
-                store.put_latest(conn, record, 0, position)
+                if store.put_latest(conn, record, 0, position):
+                    stored_records[key] = store.canonical_json(record)
                 store.replace_refs(conn, record)
         except (KeyError, TypeError, ValueError) as exc:
             conn.execute("ROLLBACK TO record")

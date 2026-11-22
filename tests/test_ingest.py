@@ -604,6 +604,18 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(self.history_count(), 2)
         self.assertTrue(store.quarantine_for(self.conn, "tool@host"))
 
+    def test_adapter_bulk_lookup_preserves_multiple_updates_to_one_id(self):
+        adapter = FakeAdapter(records=[run(source_id="tool@host", state=state)
+                                       for state in ("queued", "running", "done")])
+        ingestor = self.adapter_ingestor(adapter)
+        with mock.patch.object(store, "get_latest", wraps=store.get_latest) as lookup:
+            ingestor.scan_adapters()
+            lookup.assert_not_called()
+        latest = store.get_latest(self.conn, "tool@host", "run", "r1")
+        self.assertEqual(latest["state"], "done")
+        self.assertEqual(latest["byte_offset"], 3)
+        self.assertEqual(self.history_count(), 3)
+
     def test_adapter_invalid_record_is_quarantined(self):
         bad = {"v": 1, "type": "run", "id": "bad", "source_id": "tool@host",
                "updated_at": stamp()}

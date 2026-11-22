@@ -1327,3 +1327,18 @@ class HarnessCacheTest(unittest.TestCase):
             self.assertEqual(second["one"]["project"], "repo")
             self.assertEqual(second["two"]["project"], "repo")
             self.assertEqual(resolve.call_count, 2)
+
+    def test_finished_test_rows_refresh_when_changed_and_expire_with_time(self):
+        root = self.state / "tachi-run"
+        root.mkdir()
+        finish = root / "runs.tsv"
+        prefix = f"{int(NOW.timestamp()) - 60}\t123\tThu Nov  5 02:00:00 2026\tdemo\t"
+        finish.write_text(prefix + "first command\t0\n")
+        first = [r for r in self.adapter.scan(NOW).records if r.get("kind") == "tachi-run"]
+        self.assertEqual(first[0]["command_summary"], "first command")
+        self.assertEqual(first[0]["state"], "done")
+        finish.write_text(prefix + "second changed label\t0\n")
+        second = [r for r in self.adapter.scan(LATER).records if r.get("kind") == "tachi-run"]
+        self.assertEqual(second[0]["command_summary"], "second changed label")
+        expired = self.adapter.scan(NOW + timedelta(hours=25))
+        self.assertFalse(any(r.get("kind") == "tachi-run" for r in expired.records))
