@@ -31,7 +31,8 @@ _SOURCES_SQL = (
     " FROM sources s ORDER BY s.source_id")
 
 
-_LOOKUP_KEYS = frozenset({"id", "source_id"})
+_RECORD_TYPES = ("run", "job", "inbox_item", "session", "decision")
+_TOKENS = redact.OpaqueTokens()
 
 
 def _text(value, limit=None):
@@ -42,28 +43,39 @@ def _text(value, limit=None):
     return redacted[:limit] if limit is not None else redacted
 
 
-def _redact_json(value):
-    """The raw view: every string in the JSON tree is redacted (spec §9)."""
+def _redact_json(value, credentials, identities=True):
     if isinstance(value, str):
-        return redact.redact(value)[0]
+        return redact.with_credentials(value, credentials)[0]
     if isinstance(value, list):
-        return [_redact_json(item) for item in value]
+        return [_redact_json(item, credentials, identities) for item in value]
     if isinstance(value, dict):
-        return {key: _redact_json(item) for key, item in value.items()}
+        result = {}
+        record = identities and value.get("type") in _RECORD_TYPES
+        for key, item in value.items():
+            name = _TOKENS.encode(key, reserved=value) if redact.contains_secret(key, credentials) else key
+            lookup = identities and (key == "source_id" or (key == "id" and record))
+            if lookup and isinstance(item, str):
+                result[name] = _TOKENS.encode(item) if redact.contains_secret(item, credentials) else item
+            else:
+                result[name] = _redact_json(item, credentials, identities and key != "usage")
+        return result
     return value
 
 
 def _redact_response(value):
-    """Every string leaving the API is redacted (spec §9), except the ids clients look records up by."""
-    if isinstance(value, str):
-        return redact.redact(value)[0]
-    if isinstance(value, list):
-        return [_redact_response(item) for item in value]
-    if isinstance(value, dict):
-        return {key: item if key in _LOOKUP_KEYS and isinstance(item, str)
-                else _redact_response(item)
-                for key, item in value.items()}
-    return value
+    """Redact JSON strings and keep secret-bearing names and IDs distinct."""
+    return _redact_json(value, redact.credential_values())
+
+
+def _requested_record(conn, source_id, type, id):
+    source_id = _TOKENS.resolve(source_id)
+    row = store.get_latest(conn, source_id, type, id)
+    if row is not None:
+        return row
+    original = _TOKENS.resolve(id)
+    if original != id:
+        return store.get_latest(conn, source_id, type, original)
+    return None
 
 
 def _age_text(seconds):
@@ -293,7 +305,7 @@ class _View:
             "turn_open": record.get("turn_open"),
             "entries": record.get("entries"),
             "parent_session": self.extended(record.get("parent_session"), source_id),
-            "usage": _redact_json(usage) if isinstance(usage, dict) else None,
+            "usage": usage if isinstance(usage, dict) else None,
         }
 
 
@@ -494,7 +506,7 @@ class QueryBackend:
         if conn is None:
             return None
         try:
-            row = store.get_latest(conn, source_id, type, id)
+            row = _requested_record(conn, source_id, type, id)
             if row is None:
                 return None
             view = self._view(conn, now)
@@ -504,10 +516,10 @@ class QueryBackend:
                 "api": 1,
                 "generated_at": now.isoformat(),
                 "record": view.summary(row),
-                "full": _redact_json(record),
+                "full": record,
                 "relations": _relations(view, row, record),
                 "history": self._history(conn, row),
-                "usage": _redact_json(usage) if isinstance(usage, dict) else None,
+                "usage": usage if isinstance(usage, dict) else None,
             })
         finally:
             conn.close()
@@ -529,7 +541,7 @@ class QueryBackend:
         if conn is None:
             return None
         try:
-            row = store.get_latest(conn, source_id, type, id)
+            row = _requested_record(conn, source_id, type, id)
             if row is None:
                 return None
             record = json.loads(row["json"])
