@@ -143,7 +143,7 @@ class PlansTest(unittest.TestCase):
         pids = self.root / "pids"
         self.fake("child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
                   f"Path({str(pids)!r}).write_text(f'{{os.getpid()}} {{child.pid}}')\ntime.sleep(60)\n")
-        reader = self.reader(timeout=0.4)
+        reader = self.reader(timeout=1.5)
         reader.refresh()
         self.assertEqual(self.row(reader)["state"], "failed")
         self.assertIn("timed out", self.row(reader)["errors"][0])
@@ -153,12 +153,16 @@ class PlansTest(unittest.TestCase):
             while True:
                 try:
                     os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                if sys.platform == "linux":
                     # Linux container init may retain a killed orphan as a zombie.
-                    state = Path(f"/proc/{pid}/stat").read_text().split()[2]
-                except (ProcessLookupError, FileNotFoundError):
-                    break
-                if state == "Z":
-                    break
+                    try:
+                        state = Path(f"/proc/{pid}/stat").read_text().split()[2]
+                    except FileNotFoundError:
+                        break  # Process exited after the signal probe.
+                    if state == "Z":
+                        break
                 self.assertLess(time.monotonic(), deadline, f"process {pid} still running")
                 time.sleep(0.01)
 
