@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fleetglint import cli, config, ingest, schema, store
 from fleetglint.adapters.base import ScanResult
+from fleetglint.adapters.codex import CodexAdapter
 from fleetglint.adapters.harness import HarnessAdapter
 
 BASE = datetime(2026, 11, 6, 3, 0, tzinfo=timezone.utc)
@@ -592,6 +593,32 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(record["started_at"], "2026-11-06T11:00:00+09:00")
         self.assertEqual(record["ended_at"], "2026-11-06T12:01:00+09:00")
         self.assertEqual(record["updated_at"], record["ended_at"])
+
+    def test_damaged_codex_archive_does_not_abort_adapter_ingest(self):
+        codex_home = self.dir / "codex"
+        archives = codex_home / "archived_sessions"
+        archives.mkdir(parents=True)
+        session_id = "44444444-4444-4444-8444-444444444444"
+        line = json.dumps({"timestamp": stamp(), "type": "session_meta",
+                           "payload": {"id": session_id}}) + "\n"
+        compressed = gzip.compress(line.encode("utf-8"))
+        (archives / "rollout-healthy.jsonl.gz").write_bytes(compressed)
+        damaged = archives / "rollout-damaged.jsonl.gz"
+        # After the 10-byte gzip header, DEFLATE block type 3 is invalid.
+        damaged.write_bytes(compressed[:10] + b"\x07" + compressed[11:])
+        codex = CodexAdapter(codex_home, hostname="host")
+        harness = HarnessAdapter(Path(__file__).parent / "fixtures" / "harness" / "state",
+                                 hostname="host")
+        ingestor = ingest.Ingestor(self.conn, self.cfg, adapters=(harness, codex), clock=self.clock)
+
+        ingestor.scan_adapters()
+
+        self.assertIsNotNone(store.get_latest(self.conn, codex.source_id, "session", session_id))
+        self.assertIsNotNone(store.get_latest(self.conn, harness.source_id, "job",
+                                              "build-20261105-090000-777"))
+        with mock.patch.object(codex, "_read_file", wraps=codex._read_file) as read_file:
+            self.assertEqual(codex.scan(BASE).detail, "1 unreadable file(s)")
+        self.assertEqual([call.args[0] for call in read_file.call_args_list], [damaged])
 
     def test_adapter_records_are_upserted_only_when_changed(self):
         adapter = FakeAdapter(records=[run(source_id="tool@host")])
