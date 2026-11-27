@@ -619,7 +619,7 @@ class HarnessAdapter:
             fields = line.split("\t")
             if fields[0] == "ended_epoch":
                 continue
-            if len(fields) not in (6, 10, 11):  # 10 = rows written before paused_s
+            if len(fields) not in (6, 10, 11, 13):  # 13 adds est_s and priority after paused_s.
                 stats.malformed += 1
                 continue
             ended_text, pid, pstart, project, label, exit_text = fields[:6]

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fleetglint import cli, config, ingest, schema, store
 from fleetglint.adapters.base import ScanResult
+from fleetglint.adapters.harness import HarnessAdapter
 
 BASE = datetime(2026, 11, 6, 3, 0, tzinfo=timezone.utc)
 RECORD_TYPES = {"run", "job", "inbox_item", "session"}
@@ -557,6 +558,40 @@ class IngestTest(unittest.TestCase):
     def adapter_ingestor(self, adapter):
         return ingest.Ingestor(self.conn, self.cfg, validator=fake_validator,
                                adapters=(adapter,), clock=self.clock)
+
+    def test_tachi_run_finish_row_replaces_running_job(self):
+        ledger = self.dir / "worker-ledger" / "runs.tsv"
+        ledger.parent.mkdir()
+        ledger.touch()
+        root = self.dir / "tachi-run"
+        active = root / "active/123"
+        active.parent.mkdir(parents=True)
+        pstart = "Fri Nov  6 02:00:00 2026    "
+        label = "python3 -m unittest :: python3 -m unittest tests.test_ingest"
+        active.write_text(f"demo\t123\t{pstart}\t512\t{label}\n")
+        finish = root / "runs.tsv"
+        finish.write_text("ended_epoch\tpid\tpstart\tproject\tlabel\texit_code\tqueued_epoch\t"
+                          "started_epoch\theavy\twhere\tpaused_s\test_s\tpriority\n")
+        adapter = HarnessAdapter(self.dir, hostname="host")
+        ingestor = ingest.Ingestor(self.conn, self.cfg, adapters=(adapter,), clock=self.clock)
+        queued = int((BASE - timedelta(hours=1)).timestamp())
+        job_id = f"orb-test.123.{queued}"
+        ingestor.scan_adapters()
+        self.assertEqual(store.get_latest(self.conn, adapter.source_id, "job", job_id)["state"], "running")
+
+        active.unlink()
+        self.clock.advance(minutes=1)
+        ended = int(self.clock().timestamp())
+        with finish.open("a") as handle:
+            handle.write(f"{ended}\t123\t{pstart}\tdemo\t{label}\t128\t{queued}\t{ended - 30}\t0\thost\t0\t-\t0\n")
+        ingestor.scan_adapters()
+        row = store.get_latest(self.conn, adapter.source_id, "job", job_id)
+        self.assertEqual(row["state"], "failed")
+        record = json.loads(row["json"])
+        self.assertEqual(record["exit_code"], 128)
+        self.assertEqual(record["started_at"], "2026-11-06T11:00:00+09:00")
+        self.assertEqual(record["ended_at"], "2026-11-06T12:01:00+09:00")
+        self.assertEqual(record["updated_at"], record["ended_at"])
 
     def test_adapter_records_are_upserted_only_when_changed(self):
         adapter = FakeAdapter(records=[run(source_id="tool@host")])
