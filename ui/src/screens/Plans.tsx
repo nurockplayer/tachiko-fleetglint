@@ -78,7 +78,9 @@ function Plan({ plan }: { plan: PlanResult }) {
     {plan.state === "ok" ? <>
       {!plan.text_available ? <p>Plan text needs a newer plan-check.</p> : null}
       <Section id={`decisions-${plan.path}`} heading="Open Owner decisions">
-        {decisions.some((d) => d.state === "OPEN") ? <ul>{decisions.filter((d) => d.state === "OPEN").map((d) => <Decision key={d.id} decision={d} />)}</ul> : <p>No open Owner decisions.</p>}
+        {!plan.text_available ? <p>Owner decisions are unavailable.</p>
+          : decisions.some((d) => d.state === "OPEN") ? <ul>{decisions.filter((d) => d.state === "OPEN").map((d) => <Decision key={d.id} decision={d} />)}</ul>
+          : <p>No open Owner decisions.</p>}
       </Section>
       {decisions.some((d) => d.state === "ANSWERED") ? <details className="detail-details">
         <summary>Answered Owner decisions</summary>

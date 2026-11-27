@@ -67,8 +67,15 @@ it("shows summary, decisions, STALE reason and expandable workstream detail", as
 it("shows old reports with ids and counts and a newer plan-check note", async () => {
   render(<Plans fetcher={fetcherFor([{ ...plan, text_available: false, workstreams: [{ id: "W", criteria: [{ id: "C", status: "PENDING" }] }], owner_decisions: [] }])} />);
   expect(await screen.findByText("Plan text needs a newer plan-check.")).toBeVisible();
+  expect(screen.getByText("Owner decisions are unavailable.")).toBeVisible();
+  expect(screen.queryByText("No open Owner decisions.")).not.toBeInTheDocument();
   expect(screen.getAllByText("C")[0]).toBeVisible();
   expect(screen.getByText("total: 2")).toBeVisible();
+});
+
+it("shows no open Owner decisions when the full plan has none", async () => {
+  render(<Plans fetcher={fetcherFor([{ ...plan, owner_decisions: [] }])} />);
+  expect(await screen.findByText("No open Owner decisions.")).toBeVisible();
 });
 
 it("shows invalid errors without passing counts", async () => {
