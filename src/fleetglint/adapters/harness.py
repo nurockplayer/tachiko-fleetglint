@@ -384,7 +384,6 @@ class HarnessAdapter:
         self._texts = {}
         self._scan_texts = {}
         self._jobs = {}
-        self._finished_dirs = {}
         self._test_jobs = {}
         self._scan_test_jobs = {}
         self._ledger_records = None
@@ -797,22 +796,13 @@ class HarnessAdapter:
             stats.unreadable += 1
             return [], by_id, workers, directory_records
         cached_jobs = {}
-        finished_dirs = {}
         for entry in entries:
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
-            directory = Path(entry.path)
-            cached = self._jobs.get(directory)
-            try:
-                info = entry.stat()
-                directory_signature = (info.st_ino, info.st_mtime_ns, info.st_ctime_ns)
-            except OSError:
-                directory_signature = None
-            if (cached is not None and directory_signature is not None
-                    and self._finished_dirs.get(directory) == directory_signature):
-                signature = cached[0]
-            else:
-                signature = self._job_signature(directory)
+            path = entry.path
+            cached = self._jobs.get(path)
+            finished = cached is not None and cached[1]["state"] in TERMINAL_STATES
+            signature = self._job_signature(entry, finished)
             if signature is not None and cached is not None and cached[0] == signature:
                 _, saved, worker, derived, project_cwd = cached
                 record = dict(saved)
@@ -824,33 +814,40 @@ class HarnessAdapter:
                         record.pop("project", None)
                     else:
                         record["project"] = project
-                cached_jobs[directory] = cached
+                cached_jobs[path] = cached
             else:
+                if finished:
+                    signature = self._job_signature(entry)
                 malformed, unreadable = stats.malformed, stats.unreadable
-                built = self._job_record(directory, now, stats)
+                built = self._job_record(Path(path), now, stats)
                 if built is None:
                     continue
                 record, worker, derived, project_cwd = built
                 if (signature is not None and stats.malformed == malformed
                         and stats.unreadable == unreadable):
-                    cached_jobs[directory] = (signature, dict(record), worker, derived, project_cwd)
-            if (record.get("state") in TERMINAL_STATES and directory in cached_jobs
-                    and directory_signature is not None):
-                finished_dirs[directory] = directory_signature
+                    if record["state"] in TERMINAL_STATES:
+                        signature = signature[:2]
+                    cached_jobs[path] = (signature, dict(record), worker, derived, project_cwd)
             if derived:
                 directory_records.add((record["type"], record["id"]))
             by_id[record["id"]] = record
             if worker:
                 workers[record["id"]] = worker
         self._jobs = cached_jobs
-        self._finished_dirs = finished_dirs
         return list(by_id.values()), by_id, workers, directory_records
 
     @staticmethod
-    def _job_signature(directory):
-        signature = []
-        prefix = os.fspath(directory) + os.sep
-        for name in ("cmd", "pid", "result.json", "project", "cwd", "log"):
+    def _job_signature(entry, finished=False):
+        try:
+            info = entry.stat()
+        except OSError:
+            return None
+        # Directory metadata covers added, removed, or replaced entries.
+        # Check the result separately because it can be overwritten in place.
+        signature = [(info.st_ino, info.st_mtime_ns, info.st_ctime_ns)]
+        prefix = entry.path + os.sep
+        names = ("result.json",) if finished else ("result.json", "cmd", "pid", "project", "cwd", "log")
+        for name in names:
             try:
                 info = os.stat(prefix + name)
             except FileNotFoundError:
