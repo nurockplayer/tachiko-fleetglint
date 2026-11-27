@@ -2,7 +2,24 @@ import os
 import unittest
 from unittest import mock
 
-from fleetglint.redact import redact
+from fleetglint.redact import OpaqueTokens, redact
+
+
+class OpaqueTokensTest(unittest.TestCase):
+    def test_colliding_prefixes_are_lengthened(self):
+        tokens = OpaqueTokens()
+        with mock.patch("fleetglint.redact.hmac.digest", side_effect=[
+            bytes.fromhex("a" * 12 + "b" * 52),
+            bytes.fromhex("a" * 12 + "c" * 52),
+        ]):
+            first = tokens.encode("first")
+            second = tokens.encode("second")
+        self.assertEqual(first, "[redacted:aaaaaaaaaaaa]")
+        self.assertEqual(second, "[redacted:aaaaaaaaaaaac]")
+        self.assertEqual(tokens.encode("first"), first)
+        self.assertEqual(tokens.encode("second"), second)
+        self.assertEqual(tokens.resolve(first), "first")
+        self.assertEqual(tokens.resolve(second), "second")
 
 
 class ShapeTest(unittest.TestCase):

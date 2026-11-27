@@ -17,7 +17,7 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-from fleetglint import __version__, server
+from fleetglint import __version__, config, emit, ingest, query, server, store
 
 NOW = datetime(2026, 11, 6, 3, 40, 20, tzinfo=timezone(timedelta(hours=9)))
 WINDOW = math.floor(NOW.timestamp() / 5)
@@ -124,6 +124,55 @@ def request(port, method="GET", path="/", headers=None, host=None):
         return response.status, {k.lower(): v for k, v in response.getheaders()}, body
     finally:
         conn.close()
+
+
+class RecordRedactionTest(unittest.TestCase):
+    secret = "fleetglint-issue153-synthetic"
+    identity = {"type": "job", "source_id": "work@mbp", "id": secret}
+
+    def setUp(self):
+        self.enterContext(mock.patch.dict(os.environ, {"FLEETGLINT_TEST_API_KEY": self.secret}))
+        directory = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        cfg = config.Config()
+        cfg.roots = [directory / "sources"]
+        cfg.db_path = directory / "db.sqlite"
+        cfg.harness.enabled = cfg.claude_code.enabled = cfg.codex.enabled = "false"
+        emit.append_record({
+            **self.identity, "v": 1, "state": "running", "updated_at": NOW.isoformat(),
+            "started_at": NOW.isoformat(), "command_summary": "test", "summary": self.secret,
+            self.secret: self.secret, "[redacted]": "keep this field",
+        }, cfg.roots[0])
+        conn = store.open_db(cfg.db_path)
+        self.addCleanup(conn.close)
+        ingest.Ingestor(conn, cfg, clock=lambda: NOW).scan_roots()
+        srv, thread = start_server(None, query.QueryBackend(cfg))
+        self.addCleanup(stop_server, srv, thread)
+        self.port = srv.server_address[1]
+
+    def get_body(self, path):
+        status, _, body = request(self.port, path=path)
+        self.assertEqual(status, 200)
+        return body
+
+    def test_secret_is_absent_from_record_and_board_bytes(self):
+        body = self.get_body("/api/record?" + urllib.parse.urlencode(self.identity))
+        self.assertNotIn(self.secret.encode(), body)
+        self.assertNotIn(self.secret.encode(), self.get_body("/api/board"))
+        detail = json.loads(body)
+        token = detail["record"]["ref"]["id"]
+        self.assertRegex(token, r"^\[redacted:[0-9a-f]+\]$")
+        self.assertEqual(detail["full"]["id"], token)
+        self.assertEqual(detail["full"][token], "[redacted]")
+        self.assertEqual(detail["full"]["[redacted]"], "keep this field")
+        self.assertEqual(detail["record"]["summary"], "[redacted]")
+
+    def test_board_reference_opens_redacted_record(self):
+        board = json.loads(self.get_body("/api/board"))
+        ref = board["running"][0]["ref"]
+        self.assertRegex(ref["id"], r"^\[redacted:[0-9a-f]+\]$")
+        detail = json.loads(self.get_body("/api/record?" + urllib.parse.urlencode(ref)))
+        self.assertEqual(detail["record"]["ref"], ref)
+        self.assertEqual(detail["full"]["[redacted]"], "keep this field")
 
 
 class ServerTest(unittest.TestCase):

@@ -3,8 +3,11 @@
 Ported from tachiko-harness share/redact.py (same author): credential-named environment
 values, token shapes and whole PEM private-key blocks become "[redacted]".
 """
+import hmac
 import os
 import re
+from functools import lru_cache
+from threading import Lock
 
 REPLACEMENT = "[redacted]"
 NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|_KEY$|CREDENTIAL|AUTH", re.I)
@@ -28,9 +31,12 @@ SHAPES = (
 
 def redact(text, env=None):
     """Return (redacted text, number of secret occurrences replaced)."""
-    env = os.environ if env is None else env
+    return with_credentials(text, credential_values(env))
+
+
+def with_credentials(text, values):
     text, count = _redact_pem(text)
-    for value, _name in _env_secrets(env):
+    for value in values:
         text, replaced = re.subn(re.escape(value), REPLACEMENT, text)
         count += replaced
     for pattern, replacement in SHAPES:
@@ -39,9 +45,42 @@ def redact(text, env=None):
     return text, count
 
 
-def _env_secrets(env):
-    found = [(value, name) for name, value in env.items() if len(value) >= 8 and NAME.search(name)]
-    return sorted(found, key=lambda item: len(item[0]), reverse=True)
+def credential_values(env=None):
+    env = os.environ if env is None else env
+    found = (value for name, value in env.items() if len(value) >= 8 and NAME.search(name))
+    return tuple(sorted(found, key=len, reverse=True))
+
+
+@lru_cache(maxsize=4096)
+def contains_secret(text, values):
+    return with_credentials(text, values)[1] > 0
+
+
+class OpaqueTokens:
+    """Process-local aliases for secret-bearing names and lookup IDs."""
+
+    def __init__(self):
+        self._key = os.urandom(32)
+        self._tokens = {}
+        self._originals = {}
+        self._lock = Lock()
+
+    def encode(self, original, reserved=()):
+        with self._lock:
+            token = self._tokens.get(original)
+            if token is not None and token not in reserved:
+                return token
+            digest = hmac.digest(self._key, original.encode("utf-8", "surrogatepass"), "sha256").hex()
+            for length in range(12, len(digest) + 1):
+                token = f"[redacted:{digest[:length]}]"
+                if token not in reserved and self._originals.get(token, original) == original:
+                    self._originals[token] = original
+                    self._tokens.setdefault(original, token)
+                    return token
+        raise RuntimeError("exhausted opaque redaction token")
+
+    def resolve(self, value):
+        return self._originals.get(value, value)
 
 
 def _redact_pem(text):
