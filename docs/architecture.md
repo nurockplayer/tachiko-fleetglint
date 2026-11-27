@@ -300,6 +300,9 @@ checks, read plan files, accept paths or wait for a refresh. The endpoint shares
 loopback/Host checks, no CORS, no-store and recursive string redaction with the
 other read-only endpoints.
 
+To display this repository's acceptance plan on `/plans`, follow the
+[configuration example in Acceptance](acceptance.md).
+
 `/plans` shows summaries, open Owner decisions and criteria outside PASS first,
 then native expandable workstream details and answered decisions. HTTPS evidence
 and reference links are rendered as plain links, never fetched or previewed.
