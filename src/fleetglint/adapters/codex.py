@@ -3,6 +3,7 @@ import gzip
 import json
 import os
 import stat
+import zlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -182,7 +183,7 @@ class CodexAdapter:
                 state = _FileState(inode=st.st_ino) if fresh else prev
                 try:
                     state.errors += self._read_file(path, state, compressed)
-                except (OSError, EOFError):
+                except (OSError, EOFError, zlib.error):
                     unreadable += 1
                     continue
                 state.size = st.st_size
